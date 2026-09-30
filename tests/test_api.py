@@ -65,3 +65,9 @@ def test_diagnostics_zip_never_includes_webhooks(engine, tmp_path, monkeypatch):
         blob = b"".join(z.read(n) for n in names)
     assert "pages/target-pok-mon-cards.html" in names and "status.json" in names
     assert b"SECRET" not in blob and not any("settings" in n for n in names)
+
+
+def test_keep_running_setting_defaults_off_and_saves(engine):
+    assert settings.load()["keep_running_when_closed"] is False      # X quits by default
+    make_api(engine).save_settings({"keep_running_when_closed": True})
+    assert settings.load()["keep_running_when_closed"] is True

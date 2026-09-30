@@ -247,9 +247,10 @@ details summary{cursor:pointer;font-weight:600}
       </div>
 
       <h2>This computer</h2>
+      <label class="switch"><input type="checkbox" id="sKeep"> Keep scanning in the tray when I close the window</label>
       <label class="switch"><input type="checkbox" id="sAuto"> Start Rip Radar when I sign in to Windows</label>
-      <label class="switch"><input type="checkbox" id="sAutoUpd"> Install updates automatically (only while the window is closed)</label>
-      <p class="hint" style="margin:0">Closing the window keeps Rip Radar running in the tray by the clock. Right-click the tray icon to quit.</p>
+      <label class="switch"><input type="checkbox" id="sAutoUpd"> Install updates automatically (when you open Rip Radar, or while it's in the tray)</label>
+      <p class="hint" style="margin:0">Off: clicking X quits Rip Radar and alerts stop. On: X hides it to the tray by the clock and it keeps scanning (right-click the tray icon to quit).</p>
 
       <details>
         <summary>Text messages (Twilio)</summary>
@@ -419,7 +420,8 @@ function renderSettings(){
   const hooks = s.webhooks||{};
   $("#sStores").innerHTML = Object.entries(S.channels||{}).map(([k,label]) =>
     `<label>${esc(label)} <input type="url" data-hook="${esc(k)}" id="sHook-${esc(k)}" placeholder="optional" value="${esc(hooks[k]||"")}"></label>`).join("");
-  $("#sAuto").checked = !!s.start_with_windows; $("#sAutoUpd").checked = s.auto_update !== false; $("#sBot").value = s.bot_token||""; $("#sNtfy").value = s.ntfy_topic||"";
+  $("#sAuto").checked = !!s.start_with_windows; $("#sAutoUpd").checked = s.auto_update !== false;
+  $("#sKeep").checked = !!s.keep_running_when_closed; $("#sBot").value = s.bot_token||""; $("#sNtfy").value = s.ntfy_topic||"";
   $("#sTwSid").value = tw.account_sid||""; $("#sTwTok").value = tw.auth_token||""; $("#sTwFrom").value = tw.from||""; $("#sTwTo").value = tw.to||"";
   document.querySelectorAll("#sSports input").forEach(i => i.checked = (s.sports||[]).includes(i.value));
 }
@@ -462,13 +464,14 @@ async function saveSettings(quiet){
   await api.save_settings({
     discord_webhook: $("#sHook").value.trim(), discord_webhook_urgent: $("#sHookUrgent").value.trim(),
     webhooks: Object.fromEntries([...document.querySelectorAll("[data-hook]")].map(i => [i.dataset.hook, i.value.trim()])),
-    start_with_windows: $("#sAuto").checked, auto_update: $("#sAutoUpd").checked, bot_token: $("#sBot").value.trim(), ntfy_topic: $("#sNtfy").value.trim(),
+    start_with_windows: $("#sAuto").checked, auto_update: $("#sAutoUpd").checked, keep_running_when_closed: $("#sKeep").checked, bot_token: $("#sBot").value.trim(), ntfy_topic: $("#sNtfy").value.trim(),
     sports: sports.length ? sports : ["Baseball","Basketball","Football"],
     twilio: {account_sid:$("#sTwSid").value.trim(), auth_token:$("#sTwTok").value.trim(), from:$("#sTwFrom").value.trim(), to:$("#sTwTo").value.trim()}
   });
   if(!quiet) msg($("#sSaveMsg"),"Saved.","good");
 }
 $("#sSave").onclick = () => saveSettings(false);
+$("#sKeep").addEventListener("change", () => saveSettings(true));
 const HOOK_RE = /https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\S+/;
 const NAME_HINTS = {topps:["topps","bowman"],pokemon:["pokemon center","pokémon center","pokemon","pokémon","pc"],walmart:["walmart"],
   target:["target"],dicks:["dick","dicks","dsg"],amazon:["amazon"],bestbuy:["best buy","bestbuy","bby"],main:["main","general","alerts","all","ping"]};

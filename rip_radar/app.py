@@ -82,7 +82,7 @@ class Api:
 
     # --- actions
     def save_settings(self, changes):
-        allowed = {"discord_webhook", "discord_webhook_urgent", "webhooks", "ntfy_topic", "auto_update", "twilio", "sms_for", "bot_token",
+        allowed = {"discord_webhook", "discord_webhook_urgent", "webhooks", "ntfy_topic", "auto_update", "keep_running_when_closed", "twilio", "sms_for", "bot_token",
                    "status_every_minutes", "sports", "start_with_windows"}
         s = settings.update({k: v for k, v in (changes or {}).items() if k in allowed})
         winsys.set_autostart(bool(s.get("start_with_windows")))
@@ -211,7 +211,8 @@ class App:
         self.update_info = None
         self.update_status = ""
         self.tray = None
-        self.visible = not background        # auto-updates only restart the app while it's in the tray
+        self.visible = not background        # auto-updates restart the app only in the tray or right after launch
+        self.started_at = time.time()
         self.fetcher = BrowserFetcher()
         self.engine = Engine(browser_fetch=self.fetcher)
         base_alert = self.engine.notify.on_alert
@@ -238,8 +239,22 @@ class App:
     def _on_closing(self):
         if self.quitting:
             return True
-        threading.Thread(target=self.hide, daemon=True).start()
-        return False   # cancel close; we live in the tray
+        if settings.load().get("keep_running_when_closed"):
+            threading.Thread(target=self.hide, daemon=True).start()
+            return False   # cancel close; keep scanning from the tray
+        # X = quit: stop scanning and remove the tray icon, then let the window close
+        self.quitting = True
+        log.info("window closed - quitting")
+        try:
+            self.engine.stop()
+        except Exception:
+            pass
+        if self.tray is not None:
+            try:
+                self.tray.stop()
+            except Exception:
+                pass
+        return True
 
     def show(self):
         self.visible = True
@@ -321,7 +336,8 @@ class App:
                 if info and self.engine.state.get("announced_update") != info["version"]:
                     self.engine.state["announced_update"] = info["version"]
                     auto = settings.load().get("auto_update", True)
-                    how = ("It installs itself the next time Rip Radar is in the tray (window closed)." if auto
+                    how = ("It installs itself the next time you open Rip Radar, or right away if it's in the tray. "
+                           "To get it now, click **Restart to update** in the app." if auto
                            else "Open Rip Radar and click **Restart to update**.")
                     self.engine.notify.send("normal", f"⬆️ Rip Radar {info['version']} is ready",
                                             desc=f"{(info.get('notes') or '').splitlines()[0] if info.get('notes') else ''}"
@@ -332,9 +348,10 @@ class App:
                         except Exception:
                             pass
             info = self.update_info
-            if info and settings.load().get("auto_update", True) and not self.visible \
+            just_opened = time.time() - self.started_at < 120
+            if info and settings.load().get("auto_update", True) and (not self.visible or just_opened) \
                     and not str(self.update_status).startswith("failed"):
-                self.install_update()
+                self.install_update()      # in the tray, or in the first 2 minutes after opening the app
             time.sleep(60)
 
     def _report_finished_update(self):
@@ -410,6 +427,7 @@ def main(argv=None):
     s = settings.load()
     winsys.set_autostart(bool(s.get("start_with_windows")))
     first_run = not s.get("discord_webhook")
-    app = App(background=args.background and not first_run)
+    # at sign-in, only start hidden if the user chose to keep it running in the tray
+    app = App(background=args.background and not first_run and bool(s.get("keep_running_when_closed")))
     holder["app"] = app
     app.run()

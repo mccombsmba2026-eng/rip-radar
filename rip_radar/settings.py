@@ -17,6 +17,7 @@ DEFAULTS = {
     "status_every_minutes": 5,
     "sports": ["Baseball", "Basketball", "Football"],
     "start_with_windows": True,
+    "keep_running_when_closed": False,   # False: the X quits. True: closing hides to the tray and keeps scanning
     "auto_update": True,             # install updates by itself while the app is in the tray
     "paused": False,
     "disabled_sources": [],

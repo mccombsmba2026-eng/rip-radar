@@ -16,8 +16,9 @@ captchas, and never automates purchases. Keep it that way.
    on Windows, runs `RipRadar.exe --selftest` (checks packaging + hits every non-browser source
    live), and publishes release `v<version>` with the exe attached.
 5. Installed apps (1.0.4+) check `releases/latest` every 15 min, post "⬆️ Rip Radar X is ready" to the main
-   Discord channel once, and - with auto_update on (default) - install it themselves whenever the window is
-   closed (app in tray); otherwise the blue "Restart to update" bar waits for a click. After restarting,
+   Discord channel once, and - with auto_update on (default) - install it themselves in the first 2 minutes
+   after launch or while in the tray; otherwise the blue "Restart to update" bar waits for a click.
+   Since 1.0.5 the X quits the app unless Settings → "Keep scanning in the tray" (keep_running_when_closed). After restarting,
    the app posts "✅ Rip Radar updated to X" (via `just_updated.json` in the data folder).
 6. Verify: `curl -s https://api.github.com/repos/mccombsmba2026-eng/rip-radar/releases/latest` –
    the release body contains the selftest report (live source health + current Topps list).
