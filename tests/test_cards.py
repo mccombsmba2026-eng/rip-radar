@@ -388,3 +388,29 @@ def test_calendar_shows_each_drop_once_and_no_format_rows(engine):
               if (v.get("kind") in ("topps", "drawing") or v.get("product"))
               and not (v.get("kind") == "topps" and "/products/" in v.get("url", ""))}
     assert "fmt" not in events                                  # format pages are cleared from the calendar on start
+
+
+def test_gamestop_links_and_restock_tracker(engine):
+    from rip_radar.parsing import parse_retail_tiles
+    html = ('<div><a href="/toys-games/trading-cards/products/pokemon-trading-card-game-30th-celebration-elite-trainer-box/'
+            '20036324.html"><img alt="Pokemon Trading Card Game: 30th Celebration Elite Trainer Box" src="https://i/1.jpg">'
+            '</a><span>$59.99</span><button>Add to Cart</button></div>' + PAD)
+    (x,) = parse_retail_tiles(html, "https://www.gamestop.com/search/?q=pokemon", "gamestop")
+    assert x["id"] == "20036324" and x["live"]
+    got = []
+    engine.notify.send = lambda level, title, url="", fields=None, desc="", **kw: got.append((title, fields, kw))
+    item = {"name": "Pokémon TCG: Delta Reign Elite Trainer Box", "url": "https://www.target.com/p/x/-/A-1",
+            "price": "$49.99", "image": ""}
+    rec = {}
+    engine._store_restocks("target", item, rec, [("Houston Heights", 0), ("Meyerland", 0)])     # baseline
+    assert got == []
+    engine._store_restocks("target", item, rec, [("Houston Heights", 6), ("Meyerland", 0)])
+    (title, fields, kw), = got
+    assert title == "🏬 Target Houston Heights just got 6: Pokémon TCG: Delta Reign Elite Trainer Box"
+    assert kw["channel"] == ["instore", "target"] and kw["ping"] is True                    # ETB: @everyone
+    assert "Houston Heights** 0 → **6" in fields["Restocked"]
+    title, text = engine._render_restocks()
+    assert "Target Houston Heights" in text and "1 restocks seen" in text
+    got.clear()
+    engine._store_restocks("target", item, rec, [("Houston Heights", 5), ("Meyerland", 0)])     # selling down: quiet
+    assert got == []

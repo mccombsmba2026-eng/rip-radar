@@ -71,14 +71,14 @@ def parse_target_fulfillment(*payloads):
     return out
 
 
-def target_stock(session, tcin, zip_code="", key="", timeout=15):
+def target_stock(session, tcin, zip_code="", key="", timeout=15, miles=30):
     """Exact counts for one Target item: shipping + nearby stores. None if Target didn't answer."""
     key = key or TARGET_KEY
     got = []
     tries = [(f"{REDSKY}/product_fulfillment_v1",
               {"key": key, "tcin": tcin, "zip": zip_code, "channel": "WEB", "is_bot": "false"})]
     if zip_code:
-        tries.append((f"{REDSKY}/fiats_v1", {"key": key, "tcin": tcin, "nearby": zip_code, "radius": 25, "limit": 8,
+        tries.append((f"{REDSKY}/fiats_v1", {"key": key, "tcin": tcin, "nearby": zip_code, "radius": miles, "limit": 30,
                                              "include_only_available_stores": "false", "requested_quantity": 1}))
     for url, params in tries:
         try:
@@ -104,9 +104,15 @@ def target_stock_text(info, zip_code=""):
         stock = "Sold out everywhere"
     else:
         stock = info["online_status"].replace("_", " ").title()
-    stores = [f"{n} **{q}**" for n, q in info["stores"][:6]]
+    have = [(n, q) for n, q in info["stores"] if q > 0]
+    stores = [f"{n} **{q}**" for n, q in have[:8]]
     where = f"Stores near {zip_code}" if zip_code else "Stores"
-    return stock, (f"{where}: " + " · ".join(stores)) if stores else ""
+    if not info["stores"]:
+        return stock, ""
+    if not have:
+        return stock, f"{where}: none in stock at {len(info['stores'])} stores checked"
+    more = f" · +{len(have) - 8} more" if len(have) > 8 else ""
+    return stock, f"{where}: " + " · ".join(stores) + more
 
 
 # ---------------------------------------------------------------- other stores' product pages

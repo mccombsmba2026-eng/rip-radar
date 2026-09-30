@@ -291,8 +291,11 @@ details summary{cursor:pointer;font-weight:600}
         <label>Reply <textarea id="sBotReply" rows="5"></textarea></label>
         <p class="hint">Fill-ins you can use in the reply: {uptime} {version} {last_scan} {sources_ok} {alerts_today} {problems} {time} {state}. Changes apply to the next message, no restart needed.</p>
       </details>
-      <label>Your ZIP code <input type="text" id="sZip" inputmode="numeric" maxlength="10" style="max-width:8em"></label>
-      <p class="hint">Target posts show exact stock at the stores nearest this ZIP.</p>
+      <div class="row">
+        <label>Your ZIP code <input type="text" id="sZip" inputmode="numeric" maxlength="10" style="max-width:8em"></label>
+        <label>Stores within (miles) <input type="number" id="sMiles" min="5" max="100" style="max-width:6em"></label>
+      </div>
+      <p class="hint">Target posts show exact stock at the stores in this area, and the in-store restock tracker pings when one of them gets a card product.</p>
       <details>
         <summary>ntfy push (free)</summary>
         <p class="hint">Optional. Install the ntfy app, subscribe to a long random topic name, and enter the same name here.</p>
@@ -474,7 +477,7 @@ function renderSettings(){
   $("#sStores").innerHTML = Object.entries(S.channels||{}).map(([k,label]) =>
     `<label>${esc(label)} <input type="url" data-hook="${esc(k)}" id="sHook-${esc(k)}" placeholder="optional" value="${esc(hooks[k]||"")}"></label>`).join("");
   $("#sAuto").checked = !!s.start_with_windows; $("#sAutoUpd").checked = s.auto_update !== false;
-  $("#sKeep").checked = !!s.keep_running_when_closed; $("#sBot").value = s.bot_token||""; $("#sBotTrig").value = (s.bot_triggers||[]).join(", "); $("#sBotChan").value = s.bot_channel||""; $("#sBotReply").value = s.bot_reply||""; $("#sNtfy").value = s.ntfy_topic||""; $("#sZip").value = s.zip||"";
+  $("#sKeep").checked = !!s.keep_running_when_closed; $("#sBot").value = s.bot_token||""; $("#sBotTrig").value = (s.bot_triggers||[]).join(", "); $("#sBotChan").value = s.bot_channel||""; $("#sBotReply").value = s.bot_reply||""; $("#sNtfy").value = s.ntfy_topic||""; $("#sZip").value = s.zip||""; $("#sMiles").value = s.restock_miles||30;
   $("#sTwSid").value = tw.account_sid||""; $("#sTwTok").value = tw.auth_token||""; $("#sTwFrom").value = tw.from||""; $("#sTwTo").value = tw.to||"";
   document.querySelectorAll("#sSports input").forEach(i => i.checked = (s.sports||[]).includes(i.value));
   $("#sToppsAll").checked = s.topps_all_products !== false;
@@ -519,7 +522,7 @@ async function saveSettings(quiet){
   await api.save_settings({
     discord_webhook: $("#sHook").value.trim(), discord_webhook_urgent: $("#sHookUrgent").value.trim(),
     webhooks: Object.fromEntries([...document.querySelectorAll("[data-hook]")].map(i => [i.dataset.hook, i.value.trim()])),
-    start_with_windows: $("#sAuto").checked, auto_update: $("#sAutoUpd").checked, keep_running_when_closed: $("#sKeep").checked, bot_token: $("#sBot").value.trim(), bot_triggers: $("#sBotTrig").value.split(",").map(x=>x.trim()).filter(Boolean), bot_channel: $("#sBotChan").value.trim(), bot_reply: $("#sBotReply").value, ntfy_topic: $("#sNtfy").value.trim(), zip: $("#sZip").value.trim(),
+    start_with_windows: $("#sAuto").checked, auto_update: $("#sAutoUpd").checked, keep_running_when_closed: $("#sKeep").checked, bot_token: $("#sBot").value.trim(), bot_triggers: $("#sBotTrig").value.split(",").map(x=>x.trim()).filter(Boolean), bot_channel: $("#sBotChan").value.trim(), bot_reply: $("#sBotReply").value, ntfy_topic: $("#sNtfy").value.trim(), zip: $("#sZip").value.trim(), restock_miles: parseInt($("#sMiles").value)||30,
     sports: sports.length ? sports : ["Baseball","Basketball","Football"], topps_all_products: $("#sToppsAll").checked,
     twilio: {account_sid:$("#sTwSid").value.trim(), auth_token:$("#sTwTok").value.trim(), from:$("#sTwFrom").value.trim(), to:$("#sTwTo").value.trim()}
   });
@@ -535,7 +538,8 @@ const NAME_HINTS = {drawings:["drawing","drawings","draw","raffle","raffles","lo
   target:["target"],dicks:["dick","dicks","dsg"],amazon:["amazon"],bestbuy:["best buy","bestbuy","bby"],
   costco:["costco"],samsclub:["sam's club","sams club","sams","sam's","samsclub"],
   pharmacy:["cvs","walgreens","cvs walgreens","cvs & walgreens","pharmacy","drugstore"],ace:["ace","ace hardware"],
-  barnes:["barnes","barnes & noble","barnes and noble","b&n","bn","barnes noble"],main:["main","general","alerts","all","ping"]};
+  barnes:["barnes","barnes & noble","barnes and noble","b&n","bn","barnes noble"],gamestop:["gamestop","game stop","gme"],
+  instore:["in-store","in store","instore","restock","restocks","in-store restocks","local"],main:["main","general","alerts","all","ping"]};
 $("#sBulkFill").onclick = () => {
   let filled = [], missed = 0;
   for(const line of $("#sBulk").value.split(/\n+/)){

@@ -11,7 +11,7 @@ DEFAULTS = {
     # one channel per store; empty = that store's alerts go to discord_webhook
     "webhooks": {"topps": "", "topps_calendar": "", "pokemon": "", "pokemon_queue": "", "walmart": "", "target": "",
                  "dicks": "", "amazon": "", "bestbuy": "", "costco": "", "samsclub": "", "pharmacy": "", "ace": "",
-                 "barnes": "", "drawings": "", "calendar": "", "status": ""},
+                 "barnes": "", "gamestop": "", "instore": "", "drawings": "", "calendar": "", "status": ""},
     "ntfy_topic": "",
     "twilio": {"account_sid": "", "auth_token": "", "from": "", "to": ""},
     "sms_for": ["urgent"],
@@ -23,7 +23,8 @@ DEFAULTS = {
     "bot_channel": "",
     "status_every_minutes": 5,
     "sports": ["Baseball", "Basketball", "Football"],
-    "zip": "77002",
+    "zip": "77007",                  # Target stock counts + in-store restock tracker for stores near this ZIP
+    "restock_miles": 30,
     "topps_all_products": True,      # Topps: every product line (Disney, F1, soccer...) - not just your sports                  # Target stock counts for stores near this ZIP
     "start_with_windows": True,
     "keep_running_when_closed": False,   # False: the X quits. True: closing hides to the tray and keeps scanning
@@ -57,6 +58,8 @@ def load():
         old = merged.pop("discord_webhook_pokemon", "")
         if old and not merged["webhooks"].get("pokemon"):
             merged["webhooks"]["pokemon"] = old
+        if data.get("zip") == "77002":          # the first default; M's area is 77007
+            merged["zip"] = "77007"
         return merged
 
 

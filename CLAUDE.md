@@ -86,6 +86,12 @@ captchas, and never automates purchases. Keep it that way.
   Costco: CatalogSearch?dept=All&keyword=... (the /s? search returned unrelated items).
   Ace: /pokemon-cards and /trading-card-games category pages (search is robots-blocked); names end in "Mfr# ..."
   (stripped); "Pokemon X Trading Cards" (a pack) counts as sealed.
+- GameStop (1.0.25): store key/channel `gamestop`, product ids from /products/<slug>/<id>.html, search pages.
+- In-store restock tracker (1.0.25, Target only - the one store publishing per-store counts): `_refresh_target_stock`
+  checks EVERY Target card product (incl. sold out online) - stores within `settings["restock_miles"]` (30) of
+  `settings["zip"]` (77007) via fiats_v1. `_store_restocks`: a store going 0 -> N (or +5) = restock -> post to
+  `instore` channel (else #target), @everyone for ETB/UPC; logged in `state["restock_log"]`; #in-store board
+  (`_render_restocks`) shows each store's usual restock days/time learned from the log. First look = baseline.
 - Best Buy search URLs carry `intl=nosplash` (otherwise a "choose a country" splash page = empty).
 - Every launch (incl. after an update) syncs by itself (`Engine.start` sets `sync_at`): after the first full pass all
   boards are re-posted and #app-status gets "🟢 Rip Radar X is running · all channels synced" with any failing sources.

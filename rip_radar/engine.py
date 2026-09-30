@@ -91,6 +91,8 @@ class Engine:
                                 if (v.get("kind") in ("topps", "drawing") or v.get("product"))
                                 and not (v.get("kind") == "topps" and "/products/" in v.get("url", ""))}
         self.drawings_board = LiveBoard(settings_mod.load, "drawings", self.state, "board_drawings", every_minutes=5)
+        self.restock_board = LiveBoard(settings_mod.load, "instore", self.state, "board_instore", every_minutes=15)
+        self._restock_board_dirty = False
         self.formats_board = LiveBoard(settings_mod.load, "topps", self.state, "board_topps", every_minutes=5,
                                        color=STORE_COLORS.get("topps"))
         self.sync_at = 0
@@ -709,24 +711,78 @@ class Engine:
         key = target_key_in(html)
         if key:
             self.state["target_key"] = key
-        zip_code = str(settings_mod.load().get("zip") or "").strip()
+        s = settings_mod.load()
+        zip_code = str(s.get("zip") or "").strip()
+        miles = int(s.get("restock_miles") or 30)
         session = getattr(self.fetcher, "s", None)
         if session is None:
             return
         now = time.time()
-        todo = [c for c in changed if c[1].get("live") or c[2]]
-        todo.sort(key=lambda c: (not c[2], c[1].get("stock_at", 0)))
+        # every card product, including ones sold out online: stores can have them when the website doesn't
+        todo = sorted(changed, key=lambda c: (not c[2], c[1].get("stock_at", 0)))
         n = 0
         for x, rec, event, _ in todo:
             if n >= per_run or (not event and now - rec.get("stock_at", 0) < every):
                 continue
             n += 1
-            info = target_stock(session, x["id"], zip_code, self.state.get("target_key", ""))
+            info = target_stock(session, x["id"], zip_code, self.state.get("target_key", ""), miles=miles)
             rec["stock_at"] = now
             if info:
                 rec["stock"], rec["stores"] = target_stock_text(info, zip_code)
                 if info["online"] == 0 and not info["stores"] and rec.get("live") and info["sold_out"]:
                     rec["stock"] = "Sold out everywhere (page still shows it)"
+                self._store_restocks("target", x, rec, info["stores"])
+
+    def _store_restocks(self, store, x, rec, stores):
+        """In-store restock tracker: a nearby store going from 0 to some (or jumping by 5+) is a restock.
+        Pings #in-store (else the store's channel) and logs it so each store's restock rhythm can be learned."""
+        counts = {n: q for n, q in stores}
+        prev = rec.get("store_counts")
+        rec["store_counts"] = counts
+        if prev is None:                        # first look at this product's stores: baseline, no ping
+            return
+        got = [(n, q) for n, q in counts.items() if q > 0 and (prev.get(n, 0) == 0 or q - prev.get(n, 0) >= 5)]
+        if not got:
+            return
+        got.sort(key=lambda g: -g[1])
+        label = STORE_NAMES.get(store, store)
+        now = datetime.now(CT)
+        log_ = self.state.setdefault("restock_log", [])
+        for n, q in got:
+            log_.append({"store": store, "location": n, "qty": q, "was": prev.get(n, 0), "product": x["name"],
+                         "at": now.isoformat()})
+        del log_[:-3000]
+        others = [f"{n} {q}" for n, q in sorted(counts.items(), key=lambda kv: -kv[1]) if (n, q) not in got][:6]
+        first_n, first_q = got[0]
+        title = (f"🏬 {label} {first_n} just got {first_q}" + (f" (+{len(got) - 1} more stores)" if len(got) > 1 else "")
+                 + f": {x['name']}")
+        fields = {"Restocked": " · ".join(f"**{n}** {prev.get(n, 0)} → **{q}**" for n, q in got[:8]),
+                  "Other stores": " · ".join(others), "Price": x.get("price"), "Online": rec.get("stock")}
+        self.notify.send("urgent", title[:250], x["url"], fields, image=x.get("image", ""), links=self._buy_links(x),
+                         channel=["instore", store], store=store, product=True, ping=is_etb_or_upc(x["name"]))
+        self._restock_board_dirty = True
+
+    def _render_restocks(self):
+        """#in-store board: when each nearby store usually restocks (learned from what the tracker has seen)."""
+        from collections import Counter, defaultdict
+        by_loc = defaultdict(list)
+        for e in self.state.get("restock_log", []):
+            by_loc[(e["store"], e["location"])].append(e)
+        rows = []
+        for (store, loc), evs in sorted(by_loc.items(), key=lambda kv: -len(kv[1])):
+            days = Counter(datetime.fromisoformat(e["at"]).strftime("%a") for e in evs)
+            hours = Counter(datetime.fromisoformat(e["at"]).hour for e in evs)
+            top_days = ", ".join(d for d, _ in days.most_common(2))
+            h = hours.most_common(1)[0][0]
+            part = "morning" if h < 12 else "afternoon" if h < 17 else "evening"
+            last = datetime.fromisoformat(evs[-1]["at"])
+            rows.append(f"**{STORE_NAMES.get(store, store)} {loc}** · {len(evs)} restocks seen · usually "
+                        f"**{top_days}** {part} · last {last:%a %b} {last.day} {self._clock(last)}")
+        if not rows:
+            rows = ["Nothing yet. Every time a store near you goes from 0 to having a card product, it shows up here, "
+                    "and after a few weeks you'll see each store's usual restock days."]
+        s = settings_mod.load()
+        return self._section(f"🏬 In-store restocks · within {s.get('restock_miles', 30)} mi of {s.get('zip', '')}", rows)
 
     def _refresh_page_stock(self, t, st, changed, every=1800):
         """Other stores: open a couple of in-stock product pages per run and read 'Only N left' / page data."""
@@ -1372,7 +1428,7 @@ class Engine:
     # ------------------------------------------------------------ channel boards (current state of each channel)
     def _all_boards(self):
         out = [(self.cal_board, self._render_calendar), (self.topps_board, self._render_topps_board),
-               (self.drawings_board, self._render_drawings)]      # #topps: one card per product instead
+               (self.drawings_board, self._render_drawings), (self.restock_board, self._render_restocks)]
         return out
 
     def _retire_store_boards(self):

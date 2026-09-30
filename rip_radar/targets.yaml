@@ -300,6 +300,26 @@ targets:
     verify_pages: 1
     interval_seconds: 420
 
+  - name: GameStop · Pokémon cards
+    type: retail_search
+    store: gamestop
+    products: pokemon
+    url: https://www.gamestop.com/search/?q=pokemon%20trading%20card%20game
+    browser: true
+    channel: gamestop
+    verify_pages: 1
+    interval_seconds: 300
+
+  - name: GameStop · sports cards
+    type: retail_search
+    store: gamestop
+    products: sports
+    url: https://www.gamestop.com/search/?q=sports%20trading%20cards
+    browser: true
+    channel: gamestop
+    verify_pages: 1
+    interval_seconds: 420
+
   # ===== NEWS + REDDIT (raffle announcements and drop times anywhere) =====
   - name: News · Walmart Pokémon drawings
     type: feed
