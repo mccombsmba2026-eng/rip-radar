@@ -1,0 +1,127 @@
+# Built-in sources. Ships with the app; changes here arrive through app updates.
+# Pages you add yourself in the app (Sources > Watch a page) are stored in your settings instead.
+#
+# types:
+#   topps_calendar = reads every card on topps.com/release-calendar (sports filter in Settings)
+#   listing        = alerts when a NEW product link appears on a page
+#   keywords       = alerts when a page flips live (queue page, "Enter drawing", "Request invite"...)
+#   feed           = RSS (news / Reddit): new posts about raffles, drawings, invites, queues, drop times
+# browser: true    = load with the app's built-in browser (sites with bot walls)
+default_interval_seconds: 90
+
+targets:
+  # ===== TOPPS =====
+  - name: Topps release calendar
+    type: topps_calendar
+    url: https://www.topps.com/release-calendar
+    interval_seconds: 120
+    remind_minutes_before: 15
+
+  - name: Topps.com homepage
+    type: listing
+    url: https://www.topps.com/
+    interval_seconds: 300
+    level: normal
+    link_pattern: "/(products|pages)/"
+    include: [basketball, baseball, football, bowman]
+
+  # ===== POKEMON CENTER =====
+  - name: Pokémon Center queue
+    type: keywords
+    url: https://www.pokemoncenter.com/
+    browser: true
+    interval_seconds: 60
+    category: Pokémon
+    alert_title: "🚨 POKÉMON CENTER QUEUE IS LIVE"
+    url_contains: [queue-it, queue, waitingroom, waiting-room]
+    keywords: ["you are now in line", "waiting room", "virtual queue", "estimated wait", "your place in line"]
+    alert_on_end: true
+
+  - name: Pokémon Center 30th Celebration
+    type: listing
+    url: https://www.pokemoncenter.com/30th-celebration
+    browser: true
+    interval_seconds: 120
+    link_pattern: "/product/"
+    category: Pokémon
+
+  # ===== WALMART =====
+  - name: Walmart Topps shop
+    type: listing
+    url: https://www.walmart.com/brand/topps/10013020
+    browser: true
+    interval_seconds: 300
+    link_pattern: "/ip/"
+    level: normal
+    include: [basketball, baseball, football, bowman]
+
+  # ===== NEWS + REDDIT (raffle announcements and drop times anywhere) =====
+  - name: News · Walmart Pokémon drawings
+    type: feed
+    url: https://news.google.com/rss/search?q=walmart+pokemon+(drawing+OR+lottery+OR+raffle)+when:2d&hl=en-US&gl=US&ceid=US:en
+    interval_seconds: 180
+    category: Pokémon
+    must_have: [drawing, lottery, raffle, entry, enter]
+    urgent_if: ["live now", "is live", "now open", "open now", "starts today", "today at", "tonight"]
+
+  - name: News · Pokémon raffles & invites
+    type: feed
+    url: https://news.google.com/rss/search?q=pokemon+(raffle+OR+drawing+OR+lottery+OR+invite)+(%2230th+Celebration%22+OR+%22Delta+Reign%22+OR+%22elite+trainer%22)+when:2d&hl=en-US&gl=US&ceid=US:en
+    interval_seconds: 180
+    category: Pokémon
+    must_have: [raffle, drawing, lottery, invite, entry, queue, pre-order, preorder, drop]
+    urgent_if: ["live now", "is live", "now open", "open now", "starts today", "today at", "tonight"]
+
+  - name: News · Pokémon Center queue & preorders
+    type: feed
+    url: https://news.google.com/rss/search?q=%22pokemon+center%22+(queue+OR+preorder+OR+%22pre-order%22+OR+restock+OR+drop)+when:2d&hl=en-US&gl=US&ceid=US:en
+    interval_seconds: 180
+    category: Pokémon
+    must_have: [queue, preorder, pre-order, restock, drop, live]
+    urgent_if: ["live now", "is live", "queue is", "now open", "right now"]
+
+  - name: News · Target / Amazon / Best Buy Pokémon
+    type: feed
+    url: https://news.google.com/rss/search?q=pokemon+cards+(target+OR+amazon+OR+%22best+buy%22)+(drop+OR+invite+OR+raffle+OR+drawing+OR+restock)+when:2d&hl=en-US&gl=US&ceid=US:en
+    interval_seconds: 240
+    category: Pokémon
+    must_have: [drop, invite, raffle, drawing, restock, queue, release]
+    exclude: [review, "price guide"]
+
+  - name: News · Dick's cards & Pokémon
+    type: feed
+    url: https://news.google.com/rss/search?q=%22dick%27s+sporting+goods%22+(pokemon+OR+topps+OR+%22trading+cards%22)+(raffle+OR+drawing+OR+entry+OR+release+OR+drop)+when:3d&hl=en-US&gl=US&ceid=US:en
+    interval_seconds: 240
+    must_have: [raffle, drawing, entry, release, drop, enter]
+
+  - name: News · Topps preorders & drops
+    type: feed
+    url: https://news.google.com/rss/search?q=topps+(preorder+OR+%22pre-order%22+OR+drawing+OR+%22release+date%22+OR+%22on+sale%22)+(basketball+OR+baseball+OR+football+OR+bowman)+when:2d&hl=en-US&gl=US&ceid=US:en
+    interval_seconds: 240
+    must_have: [preorder, pre-order, drawing, release, sale, drop]
+    exclude: [panini, "upper deck", hockey, soccer]
+
+  - name: Reddit · r/PokemonTCG raffles & queues
+    type: feed
+    url: https://www.reddit.com/r/PokemonTCG/search.rss?q=raffle+OR+drawing+OR+invite+OR+queue+OR+lottery&restrict_sr=on&sort=new&t=week
+    interval_seconds: 240
+    category: Pokémon
+    must_have: [raffle, drawing, invite, queue, lottery]
+
+  - name: Reddit · Walmart / Target / Dick's drawings
+    type: feed
+    url: https://www.reddit.com/search.rss?q=pokemon+(walmart+OR+target+OR+dicks)+(drawing+OR+raffle+OR+lottery)&sort=new&t=week
+    interval_seconds: 300
+    category: Pokémon
+    must_have: [drawing, raffle, lottery]
+
+# Presets for "Watch a page" in the app. Each becomes a keywords watcher with browser: true.
+watch_presets:
+  walmart:   {label: "Walmart drawing", alert: "🚨 WALMART DRAWING OPEN", keywords: ["enter drawing", "enter the drawing", "drawing ends", "limited-time drawing"]}
+  target:    {label: "Target",          alert: "🚨 TARGET LIVE",          keywords: ["enter drawing", "join the drawing", "add to cart"]}
+  dicks:     {label: "Dick's",          alert: "🚨 DICK'S ENTRY OPEN",    keywords: ["enter drawing", "enter for a chance", "enter now", "enter to win", "add to cart"]}
+  amazon:    {label: "Amazon invite",   alert: "🚨 AMAZON INVITES OPEN",  keywords: ["request invite", "request an invite"]}
+  bestbuy:   {label: "Best Buy",        alert: "🚨 BEST BUY LIVE",        keywords: ["request invite", "get invite", "add to cart"]}
+  pokemon:   {label: "Pokémon Center",  alert: "🚨 POKÉMON CENTER LIVE",  keywords: ["add to cart", "pre-order", "preorder"]}
+  topps:     {label: "Topps product",   alert: "🚨 TOPPS LIVE",           keywords: ["add to cart", "pre-order", "enter drawing", "buy now"]}
+  custom:    {label: "Other (my words)", alert: "🚨 PAGE LIVE",           keywords: []}

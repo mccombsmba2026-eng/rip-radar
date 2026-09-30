@@ -1,0 +1,87 @@
+name: Build Windows app
+
+# Every push to main runs the tests. When rip_radar/__version__ is new (no matching release yet),
+# it also builds RipRadar.exe on Windows, smoke-tests it, and publishes a release.
+# Installed apps see the new release and offer "Restart to update".
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller==6.22.3 pytest
+
+      - name: Tests
+        run: pytest -q
+
+      - name: Is this a new version?
+        id: ver
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(python -c "import rip_radar; print(rip_radar.__version__)")
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if gh release view "v$V" > /dev/null 2>&1; then
+            echo "new=false" >> "$GITHUB_OUTPUT"; echo "v$V already released - tests only."
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"; echo "Building v$V"
+          fi
+
+      - name: Build RipRadar.exe
+        if: steps.ver.outputs.new == 'true'
+        run: pyinstaller --noconfirm --clean RipRadar.spec
+
+      - name: Smoke test the exe (imports + live source check)
+        if: steps.ver.outputs.new == 'true'
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "selftest.txt"
+          $p = Start-Process -FilePath "dist\RipRadar.exe" -ArgumentList "--selftest","--selftest-out","`"$out`"" -PassThru
+          if (-not $p.WaitForExit(240000)) { $p.Kill(); throw "selftest timed out" }
+          if (Test-Path $out) { Get-Content $out -Encoding utf8 } else { throw "selftest wrote no report" }
+          if ($p.ExitCode -ne 0) { throw "selftest failed with exit code $($p.ExitCode)" }
+
+      - name: Publish release
+        if: steps.ver.outputs.new == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          {
+            git log -1 --pretty=%B
+            echo
+            echo "<!-- selftest -->"
+            echo "<details><summary>Build check</summary>"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/selftest.txt"
+            echo '```'
+            echo "</details>"
+          } > notes.md
+          gh release create "v$V" dist/RipRadar.exe --title "Rip Radar $V" --notes-file notes.md
+
+      - name: Keep the exe as a build artifact
+        if: steps.ver.outputs.new == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: RipRadar-${{ steps.ver.outputs.version }}
+          path: dist/RipRadar.exe
+          retention-days: 14

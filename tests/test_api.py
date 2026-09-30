@@ -1,0 +1,51 @@
+import json
+import types
+
+from rip_radar import settings
+from rip_radar.app import Api
+from tests.test_engine import engine  # noqa: F401  (fixture)
+
+
+def make_api(engine):
+    app = types.SimpleNamespace(engine=engine, update_info=None, update_status="up to date",
+                                refresh_tray=lambda: None, hide=lambda: None, quit=lambda: None)
+    return Api(app)
+
+
+def test_state_is_json_for_the_ui(engine):
+    api = make_api(engine)
+    state = api.get_state()
+    json.dumps(state)                                   # must cross the JS bridge
+    assert state["version"] and "presets" in state and state["sources"]
+    assert state["settings"]["sports"] == ["Baseball", "Basketball", "Football"]
+
+
+def test_save_settings_only_accepts_known_keys(engine):
+    api = make_api(engine)
+    api.save_settings({"discord_webhook": "https://discord.com/api/webhooks/1/x", "paused": True, "evil": 1})
+    s = settings.load()
+    assert s["discord_webhook"].endswith("/1/x") and s["paused"] is False and "evil" not in s
+
+
+def test_watch_page_add_validate_remove(engine):
+    api = make_api(engine)
+    assert not api.add_watch_page("x", "walmart.com/ip/1", "walmart")["ok"]           # no https
+    assert not api.add_watch_page("x", "https://a.com", "custom", "")["ok"]           # custom needs words
+    assert api.add_watch_page("ETB", "https://www.walmart.com/ip/1", "walmart")["ok"]
+    assert api.add_watch_page("Mine", "https://a.com/p", "custom", "restock, add to cart")["ok"]
+    pages = settings.load()["watch_pages"]
+    assert [p["name"] for p in pages] == ["ETB", "Mine"] and pages[1]["keywords"] == ["restock", "add to cart"]
+    names = [t["name"] for t in engine.targets()]
+    assert "ETB" in names and "Mine" in names
+    api.remove_watch_page(0)
+    assert [p["name"] for p in settings.load()["watch_pages"]] == ["Mine"]
+
+
+def test_toggle_source_and_pause(engine):
+    api = make_api(engine)
+    api.set_source_enabled("Topps.com homepage", False)
+    assert "Topps.com homepage" not in [t["name"] for t in engine.targets()]
+    api.set_source_enabled("Topps.com homepage", True)
+    assert "Topps.com homepage" in [t["name"] for t in engine.targets()]
+    api.set_paused(True)
+    assert settings.load()["paused"] and api.get_state()["paused"]

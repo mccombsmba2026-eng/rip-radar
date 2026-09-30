@@ -1,0 +1,9 @@
+requests==2.34.2
+beautifulsoup4==4.15.0
+feedparser==6.0.14
+pyyaml==6.0.3
+tzdata==2026.4
+pywebview==6.2.1
+pystray==0.19.5
+pillow==12.3.0
+discord.py==2.7.1

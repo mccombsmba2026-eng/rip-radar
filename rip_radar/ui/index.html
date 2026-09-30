@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rip Radar</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: control-room console. Left rail of four views; status strip across the top; content column. */
+:root{
+  --bg:#0f121c; --panel:#171b29; --panel2:#1d2233; --ink:#e8eaf2; --muted:#98a0b8; --line:#2a3044;
+  --accent:#6e93ff; --accent-ink:#0b0e17; --good:#4cc47e; --warn:#f0b429; --bad:#ff6b6b;
+  --poke:#f0b429; --mlb:#ff6b6b; --nba:#ff9150; --nfl:#4cc47e;
+  --f-display:"Barlow Condensed","Arial Narrow",sans-serif;
+  --f-body:"Barlow","Segoe UI",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",Consolas,monospace;
+  color-scheme:dark;
+}
+@media (prefers-color-scheme: light){:root{
+  --bg:#eef0f5; --panel:#ffffff; --panel2:#f5f6fa; --ink:#151a2c; --muted:#5b6278; --line:#d8dbe5;
+  --accent:#2350c8; --accent-ink:#ffffff; --good:#1f7a45; --warn:#9a6a00; --bad:#c2272d;
+  --poke:#b07800; --mlb:#c2272d; --nba:#c4520f; --nfl:#1f7a45; color-scheme:light}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.5 var(--f-body);display:grid;grid-template-columns:200px minmax(0,1fr);overflow:hidden}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+a{color:var(--accent)}
+/* rail */
+nav{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:18px 12px;gap:4px}
+.brand{font:800 26px/1 var(--f-display);text-transform:uppercase;letter-spacing:.02em;padding:0 8px 18px}
+.brand span{color:var(--accent)}
+.navbtn{display:flex;justify-content:space-between;align-items:center;background:none;border:0;border-radius:6px;padding:9px 10px;text-align:left;cursor:pointer;color:var(--muted);font-weight:600}
+.navbtn[aria-current="page"]{background:var(--panel2);color:var(--ink)}
+.navbtn .count{font:500 11px var(--f-mono);background:var(--bad);color:#fff;border-radius:9px;padding:0 6px}
+.navfoot{margin-top:auto;font:500 11px var(--f-mono);color:var(--muted);padding:8px}
+/* main */
+main{overflow:auto;padding-inline:24px;padding-block:0 40px;min-width:0}
+.strip{position:sticky;top:0;z-index:3;background:var(--bg);display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding-block:16px 12px;border-bottom:1px solid var(--line);margin-bottom:18px}
+.pill{display:inline-flex;align-items:center;gap:8px;font:700 14px var(--f-display);text-transform:uppercase;letter-spacing:.08em;padding:4px 12px;border-radius:999px;background:var(--panel)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--good);box-shadow:0 0 0 0 var(--good);animation:ping 2s infinite}
+.pill.paused .dot{background:var(--warn);animation:none}
+@keyframes ping{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--good) 60%,transparent)}100%{box-shadow:0 0 0 8px transparent}}
+@media (prefers-reduced-motion:reduce){.dot{animation:none}}
+.meta{color:var(--muted);font:500 12px var(--f-mono)}
+.spacer{flex:1}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:6px;padding:7px 12px;font-weight:600;cursor:pointer}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.danger{color:var(--bad)}
+.btn:disabled{opacity:.5;cursor:default}
+h1{font:800 34px/1 var(--f-display);text-transform:uppercase;letter-spacing:.01em;margin:0 0 4px}
+h2{font:700 18px var(--f-display);text-transform:uppercase;letter-spacing:.06em;margin:24px 0 10px;color:var(--muted)}
+.lede{color:var(--muted);margin:0 0 16px;max-width:65ch}
+.banner{display:flex;flex-wrap:wrap;gap:12px;align-items:center;background:var(--accent);color:var(--accent-ink);border-radius:8px;padding:12px 16px;margin-bottom:18px}
+.banner b{font:700 18px var(--f-display);text-transform:uppercase;letter-spacing:.04em}
+.banner .btn{background:var(--accent-ink);color:var(--accent);border:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px 18px}
+.setup{border-color:var(--accent);margin-bottom:18px}
+.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.stat{background:var(--panel);border-radius:8px;padding:12px 14px}
+.stat b{display:block;font:800 30px/1.05 var(--f-display);font-variant-numeric:tabular-nums}
+.stat small{color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-size:11px;font-weight:600}
+/* alerts */
+.alerts{display:flex;flex-direction:column;gap:6px}
+.alert{display:grid;grid-template-columns:4px minmax(0,1fr) auto;gap:12px;background:var(--panel);border-radius:6px;padding:10px 12px 10px 0;align-items:start}
+.alert .bar{align-self:stretch;border-radius:0 3px 3px 0;background:var(--accent)}
+.alert.urgent .bar{background:var(--bad)} .alert.system .bar{background:var(--line)}
+.alert .t{font-weight:600;overflow-wrap:anywhere}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.chip{font:600 11px var(--f-body);text-transform:uppercase;letter-spacing:.05em;padding:2px 7px;border-radius:3px;background:var(--panel2);color:var(--muted)}
+.chip.when{background:color-mix(in srgb,var(--accent) 22%,transparent);color:var(--ink)}
+.alert .desc{color:var(--muted);font-size:13px;margin-top:4px;white-space:pre-line;overflow-wrap:anywhere}
+.alert .side{display:flex;flex-direction:column;align-items:flex-end;gap:6px;font:500 11px var(--f-mono);color:var(--muted);white-space:nowrap}
+.linkbtn{background:none;border:0;color:var(--accent);cursor:pointer;padding:0;font:600 12px var(--f-body)}
+.empty{color:var(--muted);background:var(--panel);border-radius:8px;padding:22px}
+/* tables */
+.tablewrap{overflow-x:auto;background:var(--panel);border-radius:8px}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th{text-align:left;font:700 12px var(--f-display);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);padding:10px 12px;border-bottom:1px solid var(--line)}
+td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:0}
+.sport{font:700 12px var(--f-display);text-transform:uppercase;letter-spacing:.06em;border-left:3px solid var(--c,var(--line));padding-left:8px}
+.status{font:600 11px var(--f-body);text-transform:uppercase;letter-spacing:.05em;padding:2px 8px;border-radius:999px;background:var(--panel2);color:var(--muted);white-space:nowrap}
+.status.live{background:var(--bad);color:#fff}
+.filters{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.fchip{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:4px 12px;cursor:pointer;font-weight:600;font-size:13px}
+.fchip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.health{font:500 12px var(--f-mono)} .health.ok{color:var(--good)} .health.bad{color:var(--bad)}
+/* forms */
+.form{display:grid;gap:12px;max-width:640px}
+label{display:grid;gap:4px;font-weight:600}
+label small,.hint{color:var(--muted);font-weight:400;font-size:12.5px}
+input[type=text],input[type=url],input[type=password],select{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px 10px;width:100%;min-width:0}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.switch{display:flex;align-items:center;gap:10px;font-weight:600;cursor:pointer}
+.switch input{width:18px;height:18px;accent-color:var(--accent)}
+details{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 16px}
+details summary{cursor:pointer;font-weight:600}
+.msg{font-size:13px;color:var(--muted);min-height:1.2em}
+.msg.good{color:var(--good)} .msg.bad{color:var(--bad)}
+.view[hidden]{display:none}
+@media (max-width:760px){
+  body{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
+  nav{flex-direction:row;flex-wrap:wrap;padding:8px 12px;border-right:0;border-bottom:1px solid var(--line)}
+  .brand{padding:6px 8px;font-size:20px}
+  .navfoot{display:none}
+  main{padding-inline:16px}
+  .stats{grid-template-columns:1fr 1fr 1fr}
+  .two{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<nav aria-label="Views">
+  <div class="brand">Rip <span>Radar</span></div>
+  <button class="navbtn" data-view="home" aria-current="page">Home <span class="count" id="navCount" hidden></span></button>
+  <button class="navbtn" data-view="topps">Topps calendar</button>
+  <button class="navbtn" data-view="sources">Sources</button>
+  <button class="navbtn" data-view="settings">Settings</button>
+  <div class="navfoot" id="navVersion">starting…</div>
+</nav>
+
+<main>
+  <div class="strip">
+    <span class="pill" id="pill"><span class="dot"></span><span id="pillText">Starting</span></span>
+    <span class="meta" id="lastScan">Waiting for first scan</span>
+    <span class="spacer"></span>
+    <button class="btn" id="scanBtn">Scan now</button>
+    <button class="btn" id="pauseBtn">Pause</button>
+  </div>
+
+  <div class="banner" id="updateBanner" hidden>
+    <b id="updateTitle">Update ready</b>
+    <span id="updateNotes" class="spacer"></span>
+    <button class="btn" id="updateBtn">Restart to update</button>
+  </div>
+
+  <!-- HOME -->
+  <section class="view" id="view-home">
+    <div class="card setup" id="setupCard" hidden>
+      <h1>One step to finish</h1>
+      <p class="lede">Paste your Discord webhook so alerts reach your phone. In Discord: channel settings → Integrations → Webhooks → Copy Webhook URL.</p>
+      <div class="form">
+        <input type="url" id="setupHook" placeholder="https://discord.com/api/webhooks/…" aria-label="Discord webhook">
+        <div class="row"><button class="btn primary" id="setupSave">Save and send a test alert</button><span class="msg" id="setupMsg" role="status"></span></div>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="stOk">–</b><small>Sources working</small></div>
+      <div class="stat"><b id="stToday">–</b><small>Alerts today</small></div>
+      <div class="stat"><b id="stTopps">–</b><small>Topps products tracked</small></div>
+    </div>
+    <h2>Alerts</h2>
+    <div class="filters" id="alertFilters">
+      <button class="fchip" data-lvl="all" aria-pressed="true">All</button>
+      <button class="fchip" data-lvl="urgent" aria-pressed="false">Urgent</button>
+      <button class="fchip" data-lvl="normal" aria-pressed="false">Info</button>
+      <button class="fchip" data-lvl="system" aria-pressed="false">App</button>
+    </div>
+    <div class="alerts" id="alerts"><div class="empty">Alerts show up here and in Discord. The first scan takes a couple of minutes.</div></div>
+  </section>
+
+  <!-- TOPPS -->
+  <section class="view" id="view-topps" hidden>
+    <h1>Topps release calendar</h1>
+    <p class="lede">Every baseball, basketball and football product on topps.com/release-calendar. You get an alert when one is added, goes on pre-order or sale, changes date, and 15 minutes before a timed drop.</p>
+    <div class="row" style="margin-bottom:12px">
+      <div class="filters" id="toppsFilters" style="margin:0">
+        <button class="fchip" data-sport="all" aria-pressed="true">All</button>
+        <button class="fchip" data-sport="Baseball" aria-pressed="false">Baseball</button>
+        <button class="fchip" data-sport="Basketball" aria-pressed="false">Basketball</button>
+        <button class="fchip" data-sport="Football" aria-pressed="false">Football</button>
+      </div>
+      <span class="spacer"></span>
+      <button class="btn" data-open="csv">Open in Excel</button>
+      <button class="btn" data-open="calendar">Open calendar file</button>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Sport</th><th>Product</th><th>Drops (CT)</th><th>Status</th></tr></thead>
+      <tbody id="toppsBody"><tr><td colspan="4" class="hint">Loading the Topps calendar…</td></tr></tbody>
+    </table></div>
+  </section>
+
+  <!-- SOURCES -->
+  <section class="view" id="view-sources" hidden>
+    <h1>Sources</h1>
+    <p class="lede">What Rip Radar checks. Switch off anything you don't want. Pages marked "blocked" turned the scanner away; they usually recover on their own.</p>
+    <h2>Watch a page</h2>
+    <div class="card"><div class="form">
+      <p class="hint" style="margin:0">Paste a product page (Walmart, Target, Dick's, Amazon, Best Buy, Pokémon Center, Topps). You get an alert the moment it shows "Enter drawing", "Request invite" or "Add to cart".</p>
+      <div class="two">
+        <label>Name <input type="text" id="wName" placeholder="Walmart 30th Celebration ETB"></label>
+        <label>Store <select id="wPreset"></select></label>
+      </div>
+      <label>Page link <input type="url" id="wUrl" placeholder="https://www.walmart.com/ip/…"></label>
+      <label id="wWordsLabel" hidden>Words to look for <small>Separate with commas</small><input type="text" id="wWords" placeholder="enter drawing, add to cart"></label>
+      <div class="row"><button class="btn primary" id="wAdd">Watch this page</button><span class="msg" id="wMsg" role="status"></span></div>
+    </div></div>
+    <h2>Your pages</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Name</th><th>Status</th><th></th></tr></thead>
+      <tbody id="pagesBody"></tbody>
+    </table></div>
+    <h2>Built-in sources</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>On</th><th>Source</th><th>Last result</th></tr></thead>
+      <tbody id="sourcesBody"></tbody>
+    </table></div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="view" id="view-settings" hidden>
+    <h1>Settings</h1>
+    <div class="form">
+      <h2>Discord</h2>
+      <label>Alerts webhook <small>Every alert posts here. Urgent ones include @everyone so your phone buzzes.</small>
+        <input type="url" id="sHook" placeholder="https://discord.com/api/webhooks/…"></label>
+      <label>Urgent-only webhook <small>Optional second channel, e.g. #go-now</small>
+        <input type="url" id="sHookUrgent" placeholder="optional"></label>
+      <div class="row"><button class="btn" id="sTest">Send test alert</button><span class="msg" id="sTestMsg" role="status"></span></div>
+
+      <h2>What to track</h2>
+      <div class="row" id="sSports">
+        <label class="switch"><input type="checkbox" value="Baseball"> Baseball</label>
+        <label class="switch"><input type="checkbox" value="Basketball"> Basketball</label>
+        <label class="switch"><input type="checkbox" value="Football"> Football</label>
+      </div>
+
+      <h2>This computer</h2>
+      <label class="switch"><input type="checkbox" id="sAuto"> Start Rip Radar when I sign in to Windows</label>
+      <p class="hint" style="margin:0">Closing the window keeps Rip Radar running in the tray by the clock. Right-click the tray icon to quit.</p>
+
+      <details>
+        <summary>Text messages (Twilio)</summary>
+        <p class="hint">Optional. Urgent alerts also arrive by SMS. Needs a Twilio account and number (about $1–2 a month plus under 1¢ per text).</p>
+        <div class="two">
+          <label>Account SID <input type="text" id="sTwSid"></label>
+          <label>Auth token <input type="password" id="sTwTok"></label>
+          <label>Twilio number <input type="text" id="sTwFrom" placeholder="+1…"></label>
+          <label>Your cell <input type="text" id="sTwTo" placeholder="+1…"></label>
+        </div>
+      </details>
+      <details>
+        <summary>"Still running?" chat bot</summary>
+        <p class="hint">Optional. Type "still running?" in Discord and the bot answers with status. Create a bot at discord.com/developers, turn on Message Content Intent, invite it to your server, then paste its token here.</p>
+        <label>Bot token <input type="password" id="sBot"></label>
+        <p class="hint" id="sBotState"></p>
+      </details>
+      <details>
+        <summary>ntfy push (free)</summary>
+        <p class="hint">Optional. Install the ntfy app, subscribe to a long random topic name, and enter the same name here.</p>
+        <label>Topic <input type="text" id="sNtfy"></label>
+      </details>
+      <div class="row"><button class="btn primary" id="sSave">Save settings</button><span class="msg" id="sSaveMsg" role="status"></span></div>
+
+      <h2>App</h2>
+      <div class="row">
+        <button class="btn" id="sUpd">Check for updates</button>
+        <button class="btn" data-open="folder">Open data folder</button>
+        <button class="btn" data-open="log">Open log</button>
+        <button class="btn danger" id="sQuit">Quit Rip Radar</button>
+      </div>
+      <p class="msg" id="sUpdMsg" role="status"></p>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const SPORT_C = {Baseball:"var(--mlb)",Basketball:"var(--nba)",Football:"var(--nfl)","Pokémon":"var(--poke)"};
+const LIVE = new Set(["Pre-order","On sale","Drawing open"]);
+let api = null, S = null, settingsLoaded = false, alertLvl = "all", toppsSport = "all", seenUrgent = 0, view = "home";
+
+function ago(iso){
+  if(!iso) return "";
+  const s = Math.max(0,(Date.now()-new Date(iso))/1000);
+  if(s<60) return "just now"; if(s<3600) return Math.floor(s/60)+"m ago";
+  if(s<86400) return Math.floor(s/3600)+"h ago"; return Math.floor(s/86400)+"d ago";
+}
+function fmtWhen(iso, hasTime){
+  const d = new Date(iso), opt = {timeZone:"America/Chicago",weekday:"short",month:"short",day:"numeric"};
+  let s = d.toLocaleDateString("en-US",opt);
+  if(hasTime) s += ", " + d.toLocaleTimeString("en-US",{timeZone:"America/Chicago",hour:"numeric",minute:"2-digit"});
+  else s += " · time TBA";
+  return s;
+}
+function mdLink(v){ const m = /\((https?:[^)]+)\)/.exec(v||""); return m ? m[1] : null; }
+function msg(el, text, kind){ el.textContent = text; el.className = "msg" + (kind ? " "+kind : ""); }
+
+// ---------- navigation
+document.querySelectorAll(".navbtn").forEach(b => b.onclick = () => {
+  view = b.dataset.view;
+  document.querySelectorAll(".navbtn").forEach(x => x===b ? x.setAttribute("aria-current","page") : x.removeAttribute("aria-current"));
+  document.querySelectorAll(".view").forEach(v => v.hidden = v.id !== "view-"+view);
+  if(view==="home"){ seenUrgent = countUrgent(); $("#navCount").hidden = true; }
+  render();
+});
+function countUrgent(){ return S ? S.alerts.filter(a=>a.level==="urgent").length : 0; }
+
+// ---------- render
+function render(){
+  if(!S) return;
+  const paused = S.paused;
+  $("#pill").classList.toggle("paused", paused);
+  $("#pillText").textContent = paused ? "Paused" : "Scanning";
+  $("#pauseBtn").textContent = paused ? "Resume" : "Pause";
+  $("#lastScan").textContent = S.last_scan ? "Last scan " + ago(S.last_scan) : "Waiting for first scan";
+  $("#navVersion").textContent = "v" + S.version;
+  const ok = S.health.filter(h=>h.health.startsWith("ok")).length;
+  $("#stOk").textContent = S.health.length ? `${ok}/${S.health.length}` : "–";
+  $("#stToday").textContent = S.alerts_today;
+  $("#stTopps").textContent = S.topps.length || "–";
+  $("#setupCard").hidden = !!S.settings.discord_webhook;
+
+  const up = S.update;
+  $("#updateBanner").hidden = !up;
+  if(up){
+    $("#updateTitle").textContent = `Version ${up.version} is ready`;
+    $("#updateNotes").textContent = (up.notes||"").split("\n")[0].slice(0,140);
+    const busy = S.update_status==="downloading";
+    $("#updateBtn").disabled = busy; $("#updateBtn").textContent = busy ? "Downloading…" : "Restart to update";
+    if((S.update_status||"").startsWith("failed")) $("#updateNotes").textContent = S.update_status;
+  }
+  const unread = countUrgent() - seenUrgent;
+  $("#navCount").hidden = view==="home" || unread<=0; $("#navCount").textContent = unread;
+  if(view==="home") renderAlerts();
+  if(view==="topps") renderTopps();
+  if(view==="sources") renderSources();
+  if(view==="settings") renderSettings();
+}
+
+function renderAlerts(){
+  const list = S.alerts.filter(a => alertLvl==="all" || a.level===alertLvl);
+  if(!list.length){ $("#alerts").innerHTML = `<div class="empty">${S.alerts.length ? "Nothing in this filter." : "No alerts yet. New drops, raffles, queues and Topps changes will show up here and in Discord."}</div>`; return; }
+  $("#alerts").innerHTML = list.map(a => {
+    const f = a.fields||{}, cal = mdLink(f.Calendar);
+    const chips = [];
+    if(f["When (CT)"]||f["Drops (CT)"]) chips.push(`<span class="chip when">${esc(f["When (CT)"]||f["Drops (CT)"])} CT</span>`);
+    for(const k of ["Category","Sport","Status","Detected","Source"]) if(f[k]) chips.push(`<span class="chip">${esc(f[k])}</span>`);
+    return `<div class="alert ${esc(a.level)}"><span class="bar"></span>
+      <div><div class="t">${esc(a.title)}</div>${chips.length?`<div class="chips">${chips.join("")}</div>`:""}
+      ${a.desc && a.level!=="urgent" ? `<div class="desc">${esc(a.desc.replace(/\*\*/g,"").replace(/`/g,"")).slice(0,600)}</div>`:""}</div>
+      <div class="side">${ago(a.at)}
+        ${a.url?`<button class="linkbtn" data-url="${esc(a.url)}">Open page</button>`:""}
+        ${cal?`<button class="linkbtn" data-url="${esc(cal)}">Add to calendar</button>`:""}</div></div>`;
+  }).join("");
+}
+
+function renderTopps(){
+  const rows = S.topps.filter(p => toppsSport==="all" || p.sport===toppsSport);
+  $("#toppsBody").innerHTML = rows.length ? rows.map(p => `<tr>
+    <td><span class="sport" style="--c:${SPORT_C[p.sport]||"var(--line)"}">${esc(p.sport)}</span></td>
+    <td><button class="linkbtn" style="font-size:14px;text-align:left" data-url="${esc(p.url)}">${esc(p.name)}</button></td>
+    <td>${esc(fmtWhen(p.when,p.has_time))}</td>
+    <td><span class="status ${LIVE.has(p.status)?"live":""}">${esc(p.status)}</span></td></tr>`).join("")
+    : `<tr><td colspan="4" class="hint">${S.topps.length ? "No products for this sport right now." : "Waiting for the first Topps check…"}</td></tr>`;
+}
+
+function healthCell(name){
+  const h = S.health.find(x=>x.name===name);
+  if(!h) return `<span class="health">not checked yet</span>`;
+  const good = h.health.startsWith("ok");
+  return `<span class="health ${good?"ok":"bad"}">${esc(h.health)}</span> <span class="meta">${ago(h.at)}</span>`;
+}
+function renderSources(){
+  const sel = $("#wPreset");
+  if(!sel.options.length){
+    sel.innerHTML = Object.entries(S.presets).map(([k,v])=>`<option value="${esc(k)}">${esc(v)}</option>`).join("");
+  }
+  const pages = S.settings.watch_pages||[];
+  $("#pagesBody").innerHTML = pages.length ? pages.map((p,i)=>`<tr>
+      <td><button class="linkbtn" style="font-size:14px;text-align:left" data-url="${esc(p.url)}">${esc(p.name)}</button><div class="hint">${esc(S.presets[p.preset]||"")}</div></td>
+      <td>${healthCell(p.name)}</td>
+      <td><button class="btn danger" data-remove="${i}">Remove</button></td></tr>`).join("")
+    : `<tr><td colspan="3" class="hint">No pages yet. When a drawing or product page is announced, paste it above.</td></tr>`;
+  $("#sourcesBody").innerHTML = S.sources.map(s=>`<tr>
+      <td><input type="checkbox" aria-label="Turn ${esc(s.name)} on or off" data-src="${esc(s.name)}" ${s.enabled?"checked":""}></td>
+      <td>${esc(s.name)}</td><td>${s.enabled?healthCell(s.name):'<span class="health">off</span>'}</td></tr>`).join("");
+}
+
+function renderSettings(){
+  $("#sBotState").textContent = S.settings.bot_token ? "Bot: " + S.bot : "";
+  if(settingsLoaded) return;
+  settingsLoaded = true;
+  const s = S.settings, tw = s.twilio||{};
+  $("#sHook").value = s.discord_webhook||""; $("#sHookUrgent").value = s.discord_webhook_urgent||"";
+  $("#sAuto").checked = !!s.start_with_windows; $("#sBot").value = s.bot_token||""; $("#sNtfy").value = s.ntfy_topic||"";
+  $("#sTwSid").value = tw.account_sid||""; $("#sTwTok").value = tw.auth_token||""; $("#sTwFrom").value = tw.from||""; $("#sTwTo").value = tw.to||"";
+  document.querySelectorAll("#sSports input").forEach(i => i.checked = (s.sports||[]).includes(i.value));
+}
+
+// ---------- actions
+document.addEventListener("click", async e => {
+  const t = e.target.closest("[data-url],[data-open],[data-remove],[data-lvl],[data-sport]");
+  if(!t || !api) return;
+  if(t.dataset.url) api.open_url(t.dataset.url);
+  else if(t.dataset.open){ const r = await api.open_file(t.dataset.open); if(!r.ok) alertMsg(r.error); }
+  else if(t.dataset.remove!==undefined){ await api.remove_watch_page(+t.dataset.remove); refresh(); }
+  else if(t.dataset.lvl){ alertLvl = t.dataset.lvl; document.querySelectorAll("#alertFilters .fchip").forEach(x=>x.setAttribute("aria-pressed",x===t)); renderAlerts(); }
+  else if(t.dataset.sport){ toppsSport = t.dataset.sport; document.querySelectorAll("#toppsFilters .fchip").forEach(x=>x.setAttribute("aria-pressed",x===t)); renderTopps(); }
+});
+function alertMsg(text){ msg($("#sUpdMsg"), text, "bad"); }
+document.addEventListener("change", async e => {
+  if(e.target.dataset.src){ await api.set_source_enabled(e.target.dataset.src, e.target.checked); refresh(); }
+});
+$("#wPreset").addEventListener("change", e => $("#wWordsLabel").hidden = e.target.value!=="custom");
+$("#scanBtn").onclick = async () => { $("#scanBtn").disabled = true; await api.scan_now(); setTimeout(()=>$("#scanBtn").disabled=false, 3000); };
+$("#pauseBtn").onclick = async () => { await api.set_paused(!S.paused); refresh(); };
+$("#updateBtn").onclick = async () => { const r = await api.install_update(); if(!r.ok) $("#updateNotes").textContent = r.error; refresh(); };
+$("#setupSave").onclick = async () => {
+  const hook = $("#setupHook").value.trim();
+  if(!/^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//.test(hook)) return msg($("#setupMsg"),"That doesn't look like a Discord webhook link. It starts with https://discord.com/api/webhooks/","bad");
+  await api.save_settings({discord_webhook: hook});
+  msg($("#setupMsg"),"Saved. Sending a test…");
+  const r = await api.test_alert();
+  msg($("#setupMsg"), r.ok ? "Test sent. Check Discord on your phone." : "Saved, but Discord didn't accept the test. Double-check the link.", r.ok?"good":"bad");
+  settingsLoaded = false; refresh();
+};
+$("#sTest").onclick = async () => {
+  await saveSettings(true);
+  msg($("#sTestMsg"),"Sending…");
+  const r = await api.test_alert();
+  msg($("#sTestMsg"), r.ok ? "Sent. Check Discord." : "Discord didn't accept it. Check the webhook link.", r.ok?"good":"bad");
+};
+async function saveSettings(quiet){
+  const sports = [...document.querySelectorAll("#sSports input:checked")].map(i=>i.value);
+  await api.save_settings({
+    discord_webhook: $("#sHook").value.trim(), discord_webhook_urgent: $("#sHookUrgent").value.trim(),
+    start_with_windows: $("#sAuto").checked, bot_token: $("#sBot").value.trim(), ntfy_topic: $("#sNtfy").value.trim(),
+    sports: sports.length ? sports : ["Baseball","Basketball","Football"],
+    twilio: {account_sid:$("#sTwSid").value.trim(), auth_token:$("#sTwTok").value.trim(), from:$("#sTwFrom").value.trim(), to:$("#sTwTo").value.trim()}
+  });
+  if(!quiet) msg($("#sSaveMsg"),"Saved.","good");
+}
+$("#sSave").onclick = () => saveSettings(false);
+$("#sUpd").onclick = async () => {
+  msg($("#sUpdMsg"),"Checking…");
+  const r = await api.check_update();
+  msg($("#sUpdMsg"), r.update ? `Version ${r.update.version} is ready. Use the blue bar at the top.` : (r.status==="up to date" ? `You're on the latest version.` : r.status), r.update?"good":"");
+  refresh();
+};
+$("#sQuit").onclick = () => api.quit_app();
+$("#wAdd").onclick = async () => {
+  const r = await api.add_watch_page($("#wName").value, $("#wUrl").value, $("#wPreset").value, $("#wWords").value);
+  if(!r.ok) return msg($("#wMsg"), r.error, "bad");
+  msg($("#wMsg"),"Watching. First check runs in a few seconds.","good");
+  $("#wName").value = $("#wUrl").value = $("#wWords").value = "";
+  refresh();
+};
+
+// ---------- loop
+async function refresh(){
+  try { S = await api.get_state(); render(); } catch(e) { $("#lastScan").textContent = "Reconnecting…"; }
+}
+function boot(){
+  if(api || !(window.pywebview && window.pywebview.api)) return;
+  api = window.pywebview.api;
+  refresh().then(()=>{ seenUrgent = countUrgent(); });
+  setInterval(refresh, 3000);
+}
+window.addEventListener("pywebviewready", boot);
+boot();
+</script>
+</body>
+</html>
