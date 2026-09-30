@@ -527,6 +527,15 @@ class Engine:
                 continue
             if story in shared_set:                             # another search already posted this story
                 continue
+            # only raffle / drawing / invite announcements, and only when the HEADLINE is about cards
+            # (a "Smart bulbs drop to $13.99 on Amazon" story matched the search words but isn't ours)
+            head = title.lower()
+            about_cards = bool(re.search(r"pok[eé]mon|topps|bowman|trading card|\btcg\b|elite trainer|booster", head))
+            is_raffle = any(w in head for w in ("drawing", "raffle", "lottery", "invite", "sweepstakes"))
+            if not (about_cards and is_raffle):
+                shared.append(story)
+                shared_set.add(story)
+                continue
             shared.append(story)
             shared_set.add(story)
             store = store_in(title + " " + summary)

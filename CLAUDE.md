@@ -49,8 +49,9 @@ captchas, and never automates purchases. Keep it that way.
   Pokémon items only if the name says Pokémon (skips Magic, Lorcana...). `topps_calendar` gets the Topps
   calendar watcher's alerts (falls back to `topps`, then main). `calendar` is STRICT (posts only with its own
   webhook): "added to calendar" posts, 15-min reminders for news/release dates, 8 AM digest.
-  Store channels are PRODUCTS ONLY. News -> main channel (`channel="main"`), one post per story across all feeds
-  (`state["news_seen"]`). Every raffle/drawing/invite (store scanners, Walmart draw page, Topps, watched pages,
+  Store channels are PRODUCTS ONLY. NEWS (1.0.22): nothing general is posted any more - a news item is posted only when
+  its HEADLINE is about cards (pokémon/topps/bowman/trading card/tcg/elite trainer/booster) AND is a raffle / drawing /
+  lottery / invite; it goes to the store's channel + #drawings, once per story across all feeds (`state["news_seen"]`). Every raffle/drawing/invite (store scanners, Walmart draw page, Topps, watched pages,
   raffle news naming a store) posts to the store's channel AND `drawings` via `copy_to=["drawings"]`.
   `pokemon_queue` channel: `track_duration` on the queue watcher -> @everyone when up, one self-editing
   "up for X min" message, "closed · was up X" with start/end + recent history (`state["queue_history"]`). `LiveBoard` keeps a
