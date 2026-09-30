@@ -36,7 +36,9 @@ captchas, and never automates purchases. Keep it that way.
   `listing`, `keywords`, `feed`. One source runs at a time, most overdue first; a site that blocks us is paused
   5→10→20→30 min (`host_backoff`), except drawings.
   Sources marked `browser: true` load in a hidden pywebview window (real Edge/WebView2) so bot-walled
-  sites (Pokémon Center, Walmart) see a normal browser; falls back to plain HTTP.
+  sites (Pokémon Center, Walmart) see a normal browser; falls back to plain HTTP only on a real browser error -
+  "browser not ready" (right after launch) waits up to ~90 s, because plain HTTP gets client-rendered stores' empty
+  shell ("empty [HTTP 200]"). `BrowserFetcher` scrolls the page until the link count stops growing (lazy tiles).
 - `rip_radar/parsing.py` – pure parsing (dates → Central time, Topps cards, sports). Unit-tested.
 - `rip_radar/targets.yaml` – built-in sources + "Watch a page" presets. Edit here to add sources.
 - `rip_radar/notify.py` – Discord/Twilio/ntfy, self-editing status message, chat bot. One Discord channel per

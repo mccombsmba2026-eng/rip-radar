@@ -42,6 +42,22 @@ class BrowserFetcher:
             from .parsing import is_challenge
             deadline = time.time() + 25
             time.sleep(4)  # let redirects / scripts settle
+            # store pages draw their product tiles after load and more as you scroll: scroll down in steps and wait
+            # until the number of links stops growing (max ~10 s)
+            last = -1
+            for _ in range(8):
+                try:
+                    n = w.evaluate_js("window.scrollBy(0, Math.max(900, window.innerHeight)); document.links.length") or 0
+                except Exception:
+                    break
+                if n == last:
+                    break
+                last = n
+                time.sleep(1.2)
+            try:
+                w.evaluate_js("window.scrollTo(0, 0); 0")
+            except Exception:
+                pass
             while True:
                 try:
                     html = w.evaluate_js("document.documentElement.outerHTML") or ""

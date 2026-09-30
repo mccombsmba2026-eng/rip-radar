@@ -47,10 +47,19 @@ class Fetcher:
 
     def get(self, url, browser=False):
         if browser and self.browser_fetch:
-            try:
-                return self.browser_fetch(url)
-            except Exception as e:
-                log.warning("browser fetch failed for %s: %s - trying plain HTTP", url, e)
+            # right after launch the hidden browser window may still be starting: wait for it rather than falling
+            # back to plain HTTP, which gets a store's empty page shell (products are drawn by the browser)
+            for _ in range(45):
+                try:
+                    return self.browser_fetch(url)
+                except RuntimeError as e:
+                    if "not ready" not in str(e):
+                        log.warning("browser fetch failed for %s: %s - trying plain HTTP", url, e)
+                        break
+                    time.sleep(2)
+                except Exception as e:
+                    log.warning("browser fetch failed for %s: %s - trying plain HTTP", url, e)
+                    break
         headers = None
         if "reddit.com" in url:   # Reddit rate-limits generic browser agents; it asks apps to name themselves
             headers = {"User-Agent": f"windows:rip-radar:{__version__} (personal drop alerts)"}
