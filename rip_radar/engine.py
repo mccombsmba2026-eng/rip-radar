@@ -83,7 +83,7 @@ class Engine:
         self.formats_board = LiveBoard(settings_mod.load, "topps", self.state, "board_topps", every_minutes=5,
                                        color=STORE_COLORS.get("topps"))
         self.sync_at = 0
-        self.bot = ChatBot(self.status_text)
+        self.bot = ChatBot(self.status_text, settings_mod.load, self.bot_reply)
         self.started = datetime.now(CT)
         self.last_scan = None
         self.health = {}           # name -> {"health","code","at","type","url"}
@@ -1514,6 +1514,33 @@ class Engine:
                  f"Last scan: {fmt_when(self.last_scan) + ' CT' if self.last_scan else 'starting up'}",
                  f"Sources OK: {len(ok)}/{len(health)} · Alerts today: {self.alerts_today()}"]
         return "\n".join(lines + bad[:8])
+
+    def status_values(self):
+        now = datetime.now(CT)
+        mins = int((now - self.started).total_seconds()) // 60
+        with self._lock:
+            health = dict(self.health)
+        bad = [f"❌ {k}: {v['health']}" for k, v in health.items() if not v["health"].startswith("ok")]
+        ok = len(health) - len(bad)
+        return {"uptime": f"{mins // 60}h {mins % 60}m", "version": __version__,
+                "last_scan": (fmt_when(self.last_scan) + " CT") if self.last_scan else "starting up",
+                "sources_ok": f"{ok}/{len(health)}", "alerts_today": self.alerts_today(),
+                "problems": "\n".join(bad[:8]), "problems_count": len(bad),
+                "state": "paused" if settings_mod.load().get("paused") else "running",
+                "time": self._clock(now) + " CT"}
+
+    def bot_reply(self):
+        """The bot's answer, from the wording in Settings. {placeholders} fill in live values."""
+        from collections import defaultdict
+        tpl = settings_mod.load().get("bot_reply") or settings_mod.DEFAULTS["bot_reply"]
+        vals = defaultdict(str, self.status_values())
+        try:
+            text = tpl.replace("\\n", "\n").format_map(vals)
+        except (ValueError, IndexError):
+            text = tpl
+        if vals["state"] == "paused":
+            text = "⏸️ **Rip Radar is on, but paused** (no scanning until you press Resume).\n" + text
+        return "\n".join(line for line in text.split("\n")).strip() or self.status_text()
 
     def snapshot(self):
         with self._lock:

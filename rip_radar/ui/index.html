@@ -286,6 +286,10 @@ details summary{cursor:pointer;font-weight:600}
         <p class="hint">Optional. Type "still running?" in Discord and the bot answers with status. Create a bot at discord.com/developers, turn on Message Content Intent, invite it to your server, then paste its token here.</p>
         <label>Bot token <input type="password" id="sBot"></label>
         <p class="hint" id="sBotState"></p>
+        <label>Answers to (comma-separated) <input type="text" id="sBotTrig" placeholder="still running, you on, status"></label>
+        <label>Only in channel (name, blank = any) <input type="text" id="sBotChan" placeholder="app-status"></label>
+        <label>Reply <textarea id="sBotReply" rows="5"></textarea></label>
+        <p class="hint">Fill-ins you can use in the reply: {uptime} {version} {last_scan} {sources_ok} {alerts_today} {problems} {time} {state}. Changes apply to the next message, no restart needed.</p>
       </details>
       <label>Your ZIP code <input type="text" id="sZip" inputmode="numeric" maxlength="10" style="max-width:8em"></label>
       <p class="hint">Target posts show exact stock at the stores nearest this ZIP.</p>
@@ -470,7 +474,7 @@ function renderSettings(){
   $("#sStores").innerHTML = Object.entries(S.channels||{}).map(([k,label]) =>
     `<label>${esc(label)} <input type="url" data-hook="${esc(k)}" id="sHook-${esc(k)}" placeholder="optional" value="${esc(hooks[k]||"")}"></label>`).join("");
   $("#sAuto").checked = !!s.start_with_windows; $("#sAutoUpd").checked = s.auto_update !== false;
-  $("#sKeep").checked = !!s.keep_running_when_closed; $("#sBot").value = s.bot_token||""; $("#sNtfy").value = s.ntfy_topic||""; $("#sZip").value = s.zip||"";
+  $("#sKeep").checked = !!s.keep_running_when_closed; $("#sBot").value = s.bot_token||""; $("#sBotTrig").value = (s.bot_triggers||[]).join(", "); $("#sBotChan").value = s.bot_channel||""; $("#sBotReply").value = s.bot_reply||""; $("#sNtfy").value = s.ntfy_topic||""; $("#sZip").value = s.zip||"";
   $("#sTwSid").value = tw.account_sid||""; $("#sTwTok").value = tw.auth_token||""; $("#sTwFrom").value = tw.from||""; $("#sTwTo").value = tw.to||"";
   document.querySelectorAll("#sSports input").forEach(i => i.checked = (s.sports||[]).includes(i.value));
   $("#sToppsAll").checked = s.topps_all_products !== false;
@@ -515,7 +519,7 @@ async function saveSettings(quiet){
   await api.save_settings({
     discord_webhook: $("#sHook").value.trim(), discord_webhook_urgent: $("#sHookUrgent").value.trim(),
     webhooks: Object.fromEntries([...document.querySelectorAll("[data-hook]")].map(i => [i.dataset.hook, i.value.trim()])),
-    start_with_windows: $("#sAuto").checked, auto_update: $("#sAutoUpd").checked, keep_running_when_closed: $("#sKeep").checked, bot_token: $("#sBot").value.trim(), ntfy_topic: $("#sNtfy").value.trim(), zip: $("#sZip").value.trim(),
+    start_with_windows: $("#sAuto").checked, auto_update: $("#sAutoUpd").checked, keep_running_when_closed: $("#sKeep").checked, bot_token: $("#sBot").value.trim(), bot_triggers: $("#sBotTrig").value.split(",").map(x=>x.trim()).filter(Boolean), bot_channel: $("#sBotChan").value.trim(), bot_reply: $("#sBotReply").value, ntfy_topic: $("#sNtfy").value.trim(), zip: $("#sZip").value.trim(),
     sports: sports.length ? sports : ["Baseball","Basketball","Football"], topps_all_products: $("#sToppsAll").checked,
     twilio: {account_sid:$("#sTwSid").value.trim(), auth_token:$("#sTwTok").value.trim(), from:$("#sTwFrom").value.trim(), to:$("#sTwTo").value.trim()}
   });

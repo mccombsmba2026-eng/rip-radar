@@ -244,12 +244,35 @@ class StatusBoard:
             log.warning("status message failed: %s", e)
 
 
+def bot_matches(text, triggers):
+    """'Still running??' / 'you on' / 'rip radar status' -> True for a short message containing a trigger phrase."""
+    import re
+    t = re.sub(r"[^a-z0-9' ]+", " ", (text or "").lower())
+    t = " ".join(t.split())
+    if not t or len(t) > 60:
+        return False
+    for trig in triggers or []:
+        g = " ".join(re.sub(r"[^a-z0-9' ]+", " ", str(trig).lower()).split())
+        if g and (t == g or re.search(r"(^| )" + re.escape(g) + r"( |$)", t)):
+            return True
+    return False
+
+
+def bot_channel_ok(channel_name, channel_id, wanted):
+    """wanted: '' (any channel), a channel name ('app-status' / '#app-status') or a channel ID."""
+    w = str(wanted or "").strip().lstrip("#").lower()
+    return not w or w == str(channel_name or "").lower() or w == str(channel_id or "")
+
+
 class ChatBot:
-    """Answers 'still running?' / 'status' in Discord. Needs a bot token (Settings)."""
+    """Answers 'still running?' (or the phrases set in Settings) in Discord with the reply set in Settings.
+    Needs a bot token. Wording changes apply right away - it reads settings on every message."""
     TRIGGERS = {"still running", "running", "status", "you up", "alive"}
 
-    def __init__(self, status_text):
+    def __init__(self, status_text, get_settings=None, reply_text=None):
         self.status_text = status_text
+        self.get_settings = get_settings or (lambda: {})
+        self.reply_text = reply_text or (lambda: status_text())
         self.token = None
         self.state = "off"   # off | connecting | online | error: ...
         self._thread = None
@@ -283,8 +306,11 @@ class ChatBot:
         async def on_message(msg):
             if msg.author.bot:
                 return
-            if msg.content.lower().strip(" ?!.") in bot.TRIGGERS:
-                await msg.reply(bot.status_text(), mention_author=False)
+            s = bot.get_settings()
+            if not bot_channel_ok(getattr(msg.channel, "name", ""), getattr(msg.channel, "id", ""), s.get("bot_channel")):
+                return
+            if bot_matches(msg.content, s.get("bot_triggers") or list(bot.TRIGGERS)):
+                await msg.reply(bot.reply_text()[:1900], mention_author=False)
 
         self.state = "connecting"
         try:

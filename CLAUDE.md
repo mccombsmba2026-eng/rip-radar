@@ -93,6 +93,10 @@ captchas, and never automates purchases. Keep it that way.
 - Walmart pages: parse `__NEXT_DATA__` (`walmart_json_items`); the drawing page's tiles have no /ip/ links, so
   `title_tiles` (h3 titles + card text "Drawing starts Sep 30, 2:00pm PDT") is merged in. Prices read
   "$7994current price $79.94" -> use `price_in` (labelled price first).
+- "Still running?" bot (`notify.ChatBot`): settings `bot_triggers` (phrases, matched in short messages),
+  `bot_reply` (template: {uptime} {version} {last_scan} {sources_ok} {alerts_today} {problems} {time} {state}),
+  `bot_channel` (name or ID; blank = any). Read on every message. When the app/PC is off the bot is offline and
+  silent - it can't answer "no"; the stale #app-status time is the tell.
 - `rip_radar/ui/index.html` – the whole UI (vanilla JS; talks to `Api` in app.py via `pywebview.api`).
 - `rip_radar/updater.py` – GitHub Releases check + swap.
 - User data lives in `%APPDATA%\RipRadar` (settings.json holds the webhook and any tokens).

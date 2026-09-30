@@ -356,3 +356,16 @@ def test_drawing_time_from_the_page_when_tiles_dont_carry_it(engine):
 def test_queue_is_checked_every_minute_even_mid_pass(engine):
     t = next(x for x in engine.targets() if x["name"] == "Pokémon Center queue")
     assert t.get("track_duration")          # the loop lets track_duration sources re-run within a pass
+
+
+def test_bot_wording_triggers_and_channel(engine):
+    from rip_radar.notify import bot_channel_ok, bot_matches
+    trig = ["still running", "you on", "status"]
+    assert bot_matches("Still running??", trig) and bot_matches("yo you on?", trig) and bot_matches("STATUS", trig)
+    assert not bot_matches("the queue status page is weird and long " * 3, trig)     # long chatter ignored
+    assert not bot_matches("hello", trig)
+    assert bot_channel_ok("app-status", 1, "") and bot_channel_ok("app-status", 1, "#app-status")
+    assert bot_channel_ok("x", 12345, "12345") and not bot_channel_ok("walmart", 1, "app-status")
+    settings.update({"bot_reply": "🌴 Palm Tree Edge scanner is ON · v{version} · last scan {last_scan}\\n{problems}"})
+    r = engine.bot_reply()
+    assert r.startswith("🌴 Palm Tree Edge scanner is ON · v") and "{" not in r

@@ -16,6 +16,11 @@ DEFAULTS = {
     "twilio": {"account_sid": "", "auth_token": "", "from": "", "to": ""},
     "sms_for": ["urgent"],
     "bot_token": "",
+    # "still running?" bot: what it answers to, what it says, and where it listens (blank = every channel it can see)
+    "bot_triggers": ["still running", "running", "status", "you up", "you on", "are you on", "alive"],
+    "bot_reply": "🟢 **Yes, Rip Radar is on.**\nUp {uptime} · v{version}\nLast scan: {last_scan}\n"
+                 "Sources OK: {sources_ok} · Alerts today: {alerts_today}\n{problems}",
+    "bot_channel": "",
     "status_every_minutes": 5,
     "sports": ["Baseball", "Basketball", "Football"],
     "zip": "77002",
