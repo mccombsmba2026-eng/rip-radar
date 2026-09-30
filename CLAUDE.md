@@ -53,13 +53,25 @@ captchas, and never automates purchases. Keep it that way.
   `pokemon_queue` channel: `track_duration` on the queue watcher -> @everyone when up, one self-editing
   "up for X min" message, "closed · was up X" with start/end + recent history (`state["queue_history"]`). `LiveBoard` keeps a
   self-editing pinned message in `calendar` (next 14 days) and `topps_calendar` (all Topps products).
+- Store channels (target, walmart, dicks, amazon, bestbuy, pokemon) = ONE self-editing message PER PRODUCT
+  (`cards.py` `ProductCards`, background poster thread): link, ATC/Buy, big picture, price vs retail (MSRP), stock,
+  limit, nearby stores. Edits in place on changes; new / back in stock / drawing open / loaded = delete + fresh
+  post at the bottom (@everyone only for ETB/UPC). Unseen 24 h = deleted. Only card products in the user's sports
+  (`settings["sports"]`: baseball/basketball/football - no soccer, WWE, F1) or Pokémon.
+  Stock: Target = exact counts via redsky `product_fulfillment_v1` + `fiats_v1` (`stock.py`, stores near
+  `settings["zip"]`, ≤14 lookups/run, each item ≤ every 10 min); other stores open ≤2 in-stock product pages per run
+  for "Only N left" / Walmart page data.
 - Channel boards (`LiveBoard`, one self-editing message per channel, only where that channel has a webhook):
-  store channels = in stock (with ATC/Buy) + out of stock from each store's `retail_search` items (seen < 3 h);
-  #walmart + #drawings = current drawings; #topps = formats; #topps-calendar / #drop-calendar = schedules.
+  #drawings = current drawings; #topps = formats; #topps-calendar / #drop-calendar = schedules, same day-grouped
+  layout (`_day_lines`). #pokemon-queue has a self-editing "No queue right now · last checked" line.
   "Sync all channels" (app top bar) -> `engine.request_sync()`: full scan, then every board is deleted and
   re-posted at the bottom of its channel, plus "🔄 All channels synced" in #app-status.
-- Drop calendar = `state["events"]` (kind: topps / drawing / release / news, store). Fed by the Topps calendar,
-  Walmart drawings, dated news, and `calendar_only` feeds (release dates: calendar entries, no pings).
+- Drop calendar = `state["events"]` (kind: topps / drawing / release, store). ONLY the Topps calendar, Walmart
+  drawings and store product pages that show a date/countdown (`product=True`), each linked to the product.
+  News / Reddit never add calendar entries (`_add_event` rejects them).
+- Walmart pages: parse `__NEXT_DATA__` (`walmart_json_items`); the drawing page's tiles have no /ip/ links, so
+  `title_tiles` (h3 titles + card text "Drawing starts Sep 30, 2:00pm PDT") is merged in. Prices read
+  "$7994current price $79.94" -> use `price_in` (labelled price first).
 - `rip_radar/ui/index.html` – the whole UI (vanilla JS; talks to `Api` in app.py via `pywebview.api`).
 - `rip_radar/updater.py` – GitHub Releases check + swap.
 - User data lives in `%APPDATA%\RipRadar` (settings.json holds the webhook and any tokens).

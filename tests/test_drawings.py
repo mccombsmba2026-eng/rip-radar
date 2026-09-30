@@ -88,7 +88,7 @@ def test_reseller_prices_are_ignored(engine):
     titles = [x[0] for x in sent]
     assert titles == ["🟢 NEW & IN STOCK at Walmart: Pokémon TCG: Delta Reign Booster Bundle",
                       "🟢 NEW & IN STOCK at Walmart: Pokémon TCG: Delta Reign Elite Trainer Box · ⚠️ 28% above retail"]
-    assert sent[1][1]["Typical retail"] == "~$69.99"
+    assert sent[1][1]["Retail (MSRP)"] == "~$69.99"
 
 
 def test_blocked_site_gets_a_rest(engine):

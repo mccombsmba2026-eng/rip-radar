@@ -1,5 +1,7 @@
 """Pure parsing helpers: dates/times, Topps calendar cards, sport/category detection.
 No network, no files - everything here is unit-tested in tests/test_parsing.py."""
+import hashlib
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote, urljoin, urlparse
@@ -146,7 +148,9 @@ BUTTON_NOISE = re.compile(r"\b(notify me|get notified|pre-?order( now)?|buy now|
                           r"enter now)\b", re.I)
 PRODUCT_LINK = re.compile(r"/(pages|products)/", re.I)
 TOPPS_PRODUCT_LINK = re.compile(r"/products/([a-z0-9][a-z0-9-]*)", re.I)
-RE_PRICE = re.compile(r"\$\s?(\d{1,5}(?:,\d{3})*(?:\.\d{2})?)")
+RE_PRICE = re.compile(r"\$\s?(\d{1,5}(?:,\d{3})*(?:\.\d{2})?)(?![A-Za-z0-9])")
+# Walmart tiles read "$7994current price $79.94": the labelled price wins
+RE_CURRENT_PRICE = re.compile(r"(?:current price|now|sale price|price)\s*:?\s*\$\s?(\d{1,5}(?:,\d{3})*(?:\.\d{2})?)", re.I)
 
 
 def sport_of(name):
@@ -538,18 +542,191 @@ def parse_retail_tiles(html, base_url, store, live_if_price=False):
     for pid, f in found.items():
         node = _card_node(f["anchors"][0], key_of)
         text = " ".join(node.get_text(" ").split())
-        name = max((x for x in f["texts"] if not RE_PRICE.fullmatch(x.strip())), key=len, default="")
-        name = BUTTON_NOISE.sub("", RE_PRICE.sub("", name)).strip(" -|·")
+        name = best_name(f["texts"])
         if not name:
             continue
         status, live = tile_status(text, live_if_price)
-        price = RE_PRICE.search(text)
         add, buy = cart_links(store, pid)
         stock, limit = stock_hint(text)
         tiles.append({"id": pid, "name": name[:200], "url": urljoin(base_url, f["href"].split("?")[0].split("#")[0]),
-                      "image": image_in(node, base_url), "price": f"${price.group(1)}" if price else "",
+                      "image": image_in(node, base_url), "price": price_in(text),
                       "status": status, "live": live, "add_to_cart": add, "buy_now": buy, "text": text[:800],
                       "stock": stock, "limit": limit})
+    if store == "walmart":
+        tiles = _merge_walmart_json(tiles, html, base_url, live_if_price)
+    if not tiles:
+        tiles = title_tiles(soup, base_url, store, live_if_price)
+    return tiles
+
+
+def price_in(text):
+    m = RE_CURRENT_PRICE.search(text or "") or RE_PRICE.search(text or "")
+    return f"${m.group(1)}" if m else ""
+
+
+# ---------------------------------------------------------------- product names
+# store tiles wrap the title in badges: "10k+ bought in last month New at Topps™ 2026 Topps ...",
+# and the star-rating link points at the product too ("1.2 out of 5 stars with 24 ratings")
+RE_RATING = re.compile(r"\d(?:\.\d)?\s*out of\s*5\s*stars?.*?(?:reviews?|ratings?)(?:\s*\d[\d,]*\s*reviews?)?|"
+                       r"\(\d[\d,]*\)\s*$|\brated\s+\d(?:\.\d)?\s+out of\s+5\b.*$", re.I)
+NAME_NOISE = [re.compile(x, re.I) for x in (
+    r"\b\d[\d.,]*k?\+?\s*bought in (?:the )?(?:last|past) (?:month|week|day)\b",
+    r"\bnew at [^™®]{1,40}[™®]",
+    r"^(?:sponsored|new|new arrival|best ?seller|only at target|only at walmart|deal|clearance|popular pick|"
+    r"top rated|highly rated|rollback|reduced price|limited time|exclusive|pre-?order)\b[\s:·-]*",
+    r"\bcurrent price\b.*$", r"\bwas \$.*$", r"\boptions? available\b.*$", r"\b\d+ options?\b.*$")]
+
+
+def clean_name(text):
+    t = " ".join((text or "").split())
+    t = RE_RATING.sub("", t)
+    for _ in range(3):                  # badges can stack: "Sponsored New at Topps™ ..."
+        before = t
+        for rx in NAME_NOISE:
+            t = rx.sub("", t).strip(" -|·:")
+        if t == before:
+            break
+    return BUTTON_NOISE.sub("", RE_PRICE.sub("", t)).strip(" -|·:")
+
+
+def best_name(texts):
+    """The real product title among a tile's link texts / image alts."""
+    cands = []
+    for x in texts:
+        if not x or RE_PRICE.fullmatch(x.strip()) or re.search(r"out of\s*5\s*stars", x, re.I) and \
+                len(RE_RATING.sub("", x).strip()) < 12:
+            continue
+        c = clean_name(x)
+        if len(c) >= 6:
+            cands.append(c)
+    return max(cands, key=len, default="")
+
+
+# ---------------------------------------------------------------- Walmart page data
+def next_data(html):
+    m = re.search(r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>', html or "", re.S)
+    if not m:
+        return None
+    try:
+        return json.loads(m.group(1))
+    except ValueError:
+        return None
+
+
+def _walk(o, depth=0):
+    if depth > 40:
+        return
+    if isinstance(o, dict):
+        yield o
+        for v in o.values():
+            yield from _walk(v, depth + 1)
+    elif isinstance(o, list):
+        for v in o:
+            yield from _walk(v, depth + 1)
+
+
+def _strings(o, depth=0, out=None):
+    out = [] if out is None else out
+    if depth > 6 or len(out) > 200:
+        return out
+    if isinstance(o, str):
+        if 2 < len(o) < 200 and not o.startswith("http") and "{" not in o:
+            out.append(o)
+    elif isinstance(o, dict):
+        for k, v in o.items():
+            if k not in ("image", "imageInfo", "canonicalUrl", "seeSimilar", "__typename"):
+                _strings(v, depth + 1, out)
+    elif isinstance(o, list):
+        for v in o:
+            _strings(v, depth + 1, out)
+    return out
+
+
+def walmart_json_items(html, base_url="https://www.walmart.com/"):
+    """Products in Walmart's embedded page data (search, browse and drawing pages all carry it).
+    The drawing page's tiles have no product links, so this is how its items are found."""
+    data = next_data(html)
+    if not data:
+        return []
+    items = {}
+    for d in _walk(data):
+        pid, name = d.get("usItemId") or d.get("itemId"), d.get("name")
+        if not pid or not isinstance(name, str) or not isinstance(pid, (str, int)) or len(name) < 4:
+            continue
+        pid = str(pid)
+        if not pid.isdigit():
+            continue
+        price = ""
+        pi = d.get("priceInfo") or {}
+        cur = pi.get("currentPrice") if isinstance(pi, dict) else None
+        if isinstance(cur, dict) and cur.get("price"):
+            price = f"${float(cur['price']):,.2f}"
+        elif isinstance(d.get("price"), (int, float)) and d["price"]:
+            price = f"${float(d['price']):,.2f}"
+        elif isinstance(pi, dict) and isinstance(pi.get("linePrice"), str):
+            price = price_in(pi["linePrice"])
+        img = d.get("image") if isinstance(d.get("image"), str) else ""
+        if not img and isinstance(d.get("imageInfo"), dict):
+            img = d["imageInfo"].get("thumbnailUrl") or ""
+        avail = d.get("availabilityStatusV2") if isinstance(d.get("availabilityStatusV2"), dict) else {}
+        avail = str(avail.get("value") or d.get("availabilityStatus") or d.get("availabilityStatusDisplayValue") or "")
+        url = urljoin("https://www.walmart.com/", d.get("canonicalUrl") or f"/ip/{pid}").split("?")[0]
+        text = " ".join(_strings(d))
+        prev = items.get(pid)
+        if prev and len(prev["text"]) >= len(text):
+            continue
+        items[pid] = {"id": pid, "name": clean_name(name), "url": url, "image": img.split("?")[0] if img else "",
+                      "price": price, "avail": avail.upper(), "text": text[:800],
+                      "max_qty": d.get("maxOrderQuantity") or d.get("orderLimit") or ""}
+    return list(items.values())
+
+
+def _merge_walmart_json(tiles, html, base_url, live_if_price=False):
+    by_id = {x["id"]: x for x in tiles}
+    for j in walmart_json_items(html, base_url):
+        x = by_id.get(j["id"])
+        text = ((x or {}).get("text", "") + " " + j["text"]).strip()
+        status, live = tile_status(text, live_if_price)
+        if j["avail"] == "IN_STOCK" and status == "Listed":
+            status, live = "In stock", True
+        elif j["avail"] in ("OUT_OF_STOCK", "NOT_AVAILABLE") and not status.startswith("Drawing"):
+            status, live = "Out of stock", False
+        stock, limit = stock_hint(text)
+        if not limit and str(j["max_qty"]).isdigit() and 0 < int(j["max_qty"]) < 20:
+            limit = f"Limit {j['max_qty']} per order"
+        add, buy = cart_links("walmart", j["id"])
+        merged = {"id": j["id"], "name": j["name"] or (x or {}).get("name", ""), "url": j["url"],
+                  "image": j["image"] or (x or {}).get("image", ""), "price": j["price"] or (x or {}).get("price", ""),
+                  "status": status, "live": live, "add_to_cart": add, "buy_now": buy, "text": text[:1200],
+                  "stock": stock or (x or {}).get("stock", ""), "limit": limit or (x or {}).get("limit", "")}
+        by_id[j["id"]] = merged
+    return list(by_id.values())
+
+
+def title_tiles(soup, base_url, store, live_if_price=False):
+    """Last resort when tiles have no product links: product titles (h2/h3 or product-title) and their card."""
+    tiles, seen = [], set()
+    heads = soup.select('[data-automation-id="product-title"], [data-testid="product-title"]') or soup.find_all(["h2", "h3"])
+    for h in heads:
+        name = clean_name(h.get_text(" "))
+        if len(name) < 6 or name.lower() in seen:
+            continue
+        node = h
+        while node.parent is not None and node.parent.name not in ("body", "html", "[document]"):
+            if len(node.parent.find_all(["h2", "h3"])) > 1 or \
+                    len(node.parent.select('[data-automation-id="product-title"]')) > 1:
+                break
+            node = node.parent
+        text = " ".join(node.get_text(" ").split())
+        if not RE_PRICE.search(text) and "drawing" not in text.lower():
+            continue
+        seen.add(name.lower())
+        status, live = tile_status(text, live_if_price)
+        stock, limit = stock_hint(text)
+        pid = "t" + hashlib.sha1(name.lower().encode()).hexdigest()[:10]
+        tiles.append({"id": pid, "name": name[:200], "url": base_url.split("?")[0], "image": image_in(node, base_url),
+                      "price": price_in(text), "status": status, "live": live, "add_to_cart": "", "buy_now": "",
+                      "text": text[:800], "stock": stock, "limit": limit})
     return tiles
 
 

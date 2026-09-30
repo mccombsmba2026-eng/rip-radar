@@ -235,21 +235,6 @@ targets:
     must_have: [preorder, pre-order, drawing, release, sale, drop]
     exclude: [panini, "upper deck", hockey, soccer]
 
-  # ===== RELEASE DATES (drop calendar only - no pings; dated items land on the calendar) =====
-  - name: Dates · Pokémon TCG releases
-    type: feed
-    calendar_only: true
-    kind: release
-    url: https://news.google.com/rss/search?q=%22pokemon+tcg%22+(%22release+date%22+OR+%22releases+on%22+OR+%22pre-order%22+OR+%22preorders+open%22+OR+%22drops+on%22)+when:7d&hl=en-US&gl=US&ceid=US:en
-    interval_seconds: 1800
-
-  - name: Dates · sports card releases
-    type: feed
-    calendar_only: true
-    kind: release
-    url: https://news.google.com/rss/search?q=(topps+OR+bowman+OR+panini+OR+%22upper+deck%22)+(football+OR+basketball+OR+baseball)+(%22release+date%22+OR+%22preorder%22+OR+%22pre-order%22+OR+%22release+calendar%22)+when:7d&hl=en-US&gl=US&ceid=US:en
-    interval_seconds: 1800
-
 # Presets for "Watch a page" in the app. Each becomes a keywords watcher with browser: true,
 # posting to that store's Discord channel.
 watch_presets:

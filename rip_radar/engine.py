@@ -20,7 +20,10 @@ from .msrp import msrp_text, price_check
 from .notify import CHANNELS, STORE_NAMES, ChatBot, LiveBoard, Notifier, StatusBoard, store_in
 from .parsing import (CT, LIVE_STATUSES, RETAIL_STORES, categorize, extract_when, fmt_when, gcal_link, is_card_product,
                       is_etb_or_upc, is_pokemon_product, is_sports_card_product, is_tcg_product, looks_blocked, parse_retail_tiles, parse_topps_calendar,
-                      parse_topps_product_page, tile_status, drawing_window)
+                      parse_topps_product_page, tile_status, drawing_window, next_data, sport_of, stock_hint,
+                      title_tiles)
+from .cards import ProductCards
+from .stock import page_data_stock, target_key_in, target_stock, target_stock_text
 
 log = logging.getLogger("rip_radar")
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -67,9 +70,13 @@ class Engine:
         self.topps_board = LiveBoard(settings_mod.load, "topps_calendar", self.state, "topps_board_msg",
                                      every_minutes=5)
         from .notify import STORE_COLORS
-        self.store_boards = {k: LiveBoard(settings_mod.load, k, self.state, f"board_{k}", every_minutes=5,
-                                          color=STORE_COLORS.get(k))
-                             for k in ("target", "walmart", "dicks", "amazon", "bestbuy", "pokemon")}
+        # store channels: one self-editing message per product (cards.py) instead of a list board
+        self._lock = threading.RLock()
+        self.cards = ProductCards(settings_mod.load, self.state, lock=self._lock)
+        self.old_store_boards = [f"board_{k}" for k in ("target", "walmart", "dicks", "amazon", "bestbuy", "pokemon")]
+        # drop calendar = Topps calendar, drawings and products with an announced date (no news / Reddit posts)
+        self.state["events"] = {k: v for k, v in (self.state.get("events") or {}).items()
+                                if v.get("kind") in ("topps", "drawing") or v.get("product")}
         self.drawings_board = LiveBoard(settings_mod.load, "drawings", self.state, "board_drawings", every_minutes=5)
         self.formats_board = LiveBoard(settings_mod.load, "topps", self.state, "board_topps", every_minutes=5,
                                        color=STORE_COLORS.get("topps"))
@@ -84,7 +91,6 @@ class Engine:
         self.next_due = {}
         self.host_backoff = {}      # site -> (resume_at, times_blocked): give a site that blocked us a rest
         self.first_pass_done = False
-        self._lock = threading.RLock()
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread = None
@@ -279,10 +285,12 @@ class Engine:
         """Alert when a page flips live: queue page, 'Enter drawing', 'Request invite', 'Add to cart'."""
         status, final, html = self._fetch(t, st)
         url_hit = any(k.lower() in (final or "").lower() for k in t.get("url_contains", []))
-        if looks_blocked(status, html) and not url_hit:
-            return "blocked", status
-        if status >= 400 and not url_hit:
-            return "error", status
+        if (looks_blocked(status, html) or status >= 400) and not url_hit:
+            if t.get("track_duration") and st.get("active") is not True:
+                now = datetime.now(CT)
+                self._queue_watch(t, st, f"⚠️ **Couldn't check the Pokémon Center queue** · the site turned the check away at "
+                                         f"{self._clock(now)} CT. Retrying automatically.")
+            return ("blocked" if looks_blocked(status, html) else "error"), status
         text = BeautifulSoup(html, "html.parser").get_text(" ").lower()
         hits = [k for k in t.get("keywords", []) if k.lower() in text]
         active = bool(hits) or url_hit
@@ -340,6 +348,25 @@ class Engine:
         except (requests.RequestException, ValueError, KeyError) as e:
             log.warning("queue timer message: %s", e)
 
+    def _queue_watch(self, t, st, text, repost=False):
+        """The queue channel's status line. repost: move it back to the bottom (after a queue closes)."""
+        hook = self._queue_hook(t)
+        if not hook or st.get("watch_text") == text and not repost:
+            return
+        body = {"content": text}
+        try:
+            mid = st.get("watch_msg") if st.get("watch_hook") == hook else None
+            if mid and repost:
+                requests.delete(f"{hook}/messages/{mid}", timeout=15)
+            elif mid and requests.patch(f"{hook}/messages/{mid}", json=body, timeout=15).status_code < 400:
+                st["watch_text"] = text
+                return
+            r = requests.post(hook + "?wait=true", json=body, timeout=15)
+            if r.status_code < 400:
+                st["watch_msg"], st["watch_hook"], st["watch_text"] = r.json()["id"], hook, text
+        except (requests.RequestException, ValueError, KeyError) as e:
+            log.warning("queue status line: %s", e)
+
     def _track_queue(self, t, st, active, was, detected):
         now = datetime.now(CT)
         history = self.state.setdefault("queue_history", [])
@@ -349,6 +376,14 @@ class Engine:
             self.notify.send("urgent", t.get("alert_title", "🚨 POKÉMON CENTER QUEUE IS LIVE"), t["url"],
                              {"Went up (CT)": self._clock(now), "Detected": detected},
                              links=[("Join the queue", t["url"])], ping=True)
+        if not active:
+            # one self-editing line so you can see it's watching; nothing new is posted until a queue goes up
+            self._queue_watch(t, st, f"⚪ **No Pokémon Center queue right now** · last checked {self._clock(now)} CT"
+                                     f"\n-# Checked every minute. You'll get an @everyone the moment a queue goes up.",
+                              repost=was is True)
+        else:
+            self._queue_watch(t, st, f"🟢 **Queue is UP** since {self._clock(datetime.fromisoformat(st['live_since']))} CT "
+                                     f"· see the alert below")
         if active:
             since = datetime.fromisoformat(st.get("live_since") or now.isoformat())
             self._queue_live_message(t, st, f"🟢 **Pokémon Center queue is LIVE** · up for **{self._dur(now - since)}** "
@@ -449,8 +484,8 @@ class Engine:
         tiles = parse_retail_tiles(html, final, store, t.get("live_if_price", False))
         if not tiles:
             return "empty", status
-        keep = {"pokemon": is_pokemon_product, "sports": is_sports_card_product}.get(t.get("products", "cards"),
-                                                                                     is_card_product)
+        keep = {"pokemon": is_pokemon_product, "sports": self._wanted_sports_card}.get(t.get("products", "cards"),
+                                                                                       self._wanted_card)
         if store == "pokemon":
             keep = is_tcg_product       # everything at Pokémon Center is Pokémon, names don't always say so
         cap = float(t.get("max_price", 0) or 0)
@@ -474,43 +509,86 @@ class Engine:
 
         now = time.time()
         overpriced = 0
+        use_cards = self.cards.enabled(store)
+        changed = []                     # (x, rec, event headline, ping)
         for x in cards:
             prev = known.get(x["id"])
             kind = "pokemon" if is_tcg_product(x["name"] + " " + x["url"]) else "sports"
             verdict, info = price_check(x["name"], x["price"], kind)
-            extra = {"Typical retail": msrp_text(info)}
+            extra = {"Retail (MSRP)": msrp_text(info)}
             details = {"name": x["name"], "url": x["url"], "price": x["price"], "status": x["status"],
                        "add_to_cart": x.get("add_to_cart", ""), "buy_now": x.get("buy_now", ""),
-                       "stock": x.get("stock", ""), "image": x.get("image", ""), "over": verdict, "seen": now}
+                       "image": x.get("image", ""), "over": verdict, "seen": now, "limit": x.get("limit", ""),
+                       "retail": msrp_text(info), "ratio": info.get("ratio")}
+            if x.get("stock") or not (prev or {}).get("stock_at"):
+                details["stock"] = x.get("stock", "")
             if x["live"] and verdict == "way_over":
-                overpriced += 1          # reseller pricing: no ping
+                overpriced += 1          # reseller pricing: no ping, no card
                 rec = known.setdefault(x["id"], {})
                 rec.update({"live": x["live"], **details})
+                if use_cards and rec.get("carded"):
+                    self.cards.retire(store, x["id"])
+                    rec["carded"] = False
                 continue
             warn = f" · ⚠️ {int((info['ratio'] - 1) * 100)}% above retail" if verdict == "over" else ""
             big = is_etb_or_upc(x["name"])                      # ETB / UPC: @everyone in any channel
             listed_at = (prev or {}).get("first_seen")
+            up_before = ""
             if listed_at and not (prev or {}).get("live"):
                 atleast = "at least " if (prev or {}).get("baseline") else ""
-                extra = {**extra, "Link was up": f"{atleast}{self._dur(timedelta(seconds=now - listed_at))} before stock"}
+                up_before = f"{atleast}{self._dur(timedelta(seconds=now - listed_at))} before stock"
+                extra["Link was up"] = up_before
+            event = None
             if not first and x["live"] and (prev is None or not prev.get("live")):
                 if x["status"].startswith("Drawing"):
-                    self._product_alert("urgent", f"🎟️ DRAWING / INVITE OPEN at {label}: {x['name']}{warn}", x, label,
-                                        extra, copy_to=["drawings"], store=store, ping=big)
+                    event = f"🎟️ DRAWING / INVITE OPEN at {label}"
                 else:
-                    what = "NEW & IN STOCK" if prev is None else "BACK IN STOCK"
-                    self._product_alert("urgent", f"🟢 {what} at {label}: {x['name']}{warn}", x, label, extra,
-                                        store=store, ping=big)
+                    event = f"🟢 {'NEW & IN STOCK' if prev is None else 'BACK IN STOCK'} at {label}"
             elif not first and prev is None and t.get("alert_new_listed", True):
-                # the product page is up before stock: track it so we see when it goes live
-                self._product_alert("normal", f"🆕 Loaded at {label}, not in stock yet: {x['name']}", x, label, extra,
-                                    store=store, ping=big)
+                event = f"🆕 Loaded at {label}, not in stock yet"   # page is up before stock: track it
             rec = known.setdefault(x["id"], {})
             if "first_seen" not in rec:
                 rec["first_seen"], rec["baseline"] = now, bool(first)
+                rec["loaded_before_stock"] = not first and not x["live"]
             if x["status"] != "Listed" or "live" not in rec:
                 rec["live"] = x["live"]
+            if rec["live"]:
+                rec["loaded_before_stock"] = False
             rec.update(details)
+            if event and x["live"] and up_before:
+                rec["up_before"] = up_before
+            elif not rec["live"]:
+                rec.pop("up_before", None)
+            # an announced date on a product that isn't buyable yet -> drop calendar, linked to the product
+            if not x["live"]:
+                self._product_date(x, store, label)
+            if event and not use_cards:
+                title = f"{event}: {x['name']}{warn}"
+                self._product_alert("urgent" if x["live"] else "normal", title, x, label, extra,
+                                    copy_to=["drawings"] if x["status"].startswith("Drawing") else None,
+                                    store=store, ping=big)
+            elif event:
+                self._record_alert({"level": "urgent" if x["live"] else "normal", "title": f"{event}: {x['name']}{warn}",
+                                    "url": x["url"], "fields": {k: v for k, v in {"Price": x["price"], **extra}.items() if v},
+                                    "desc": "", "image": x.get("image", ""), "links": self._buy_links(x),
+                                    "channel": store, "at": datetime.now(timezone.utc).isoformat()})
+                if x["status"].startswith("Drawing"):         # the store's card bumps AND #drawings gets it
+                    self._product_alert("urgent", f"{event}: {x['name']}{warn}", x, label, extra,
+                                        channel="drawings", store=store, ping=big, strict=True, record=False)
+            changed.append((x, rec, event, big and bool(event)))
+        if store == "target":
+            self._refresh_target_stock(html, [c for c in changed], st)
+        elif t.get("stock_pages", 2):
+            self._refresh_page_stock(t, st, changed)
+        if use_cards:
+            for x, rec, event, ping in changed:
+                self.cards.request(store, x["id"], rec, bump=bool(event), ping=ping, headline=event or "")
+                rec["carded"] = True
+            # products that dropped off the store's listings for a day: remove their message
+            for pid, rec in known.items():
+                if rec.get("carded") and now - rec.get("seen", 0) > 86400:
+                    self.cards.retire(store, pid)
+                    rec["carded"] = False
         if len(known) > 3000:
             for k in sorted(known, key=lambda k: known[k].get("seen", 0))[: len(known) - 3000]:
                 known.pop(k)
@@ -519,13 +597,80 @@ class Engine:
         return (f"ok ({len(cards)} card products · {live} in stock{over} · {len(tiles) - len(cards)} other items skipped)",
                 status)
 
+    # ------------------------------------------------------------ stock counts
+    def _refresh_target_stock(self, html, changed, st, per_run=14, every=600):
+        """Exact counts from Target's stock service: online + stores near your ZIP. Just-changed items first."""
+        key = target_key_in(html)
+        if key:
+            self.state["target_key"] = key
+        zip_code = str(settings_mod.load().get("zip") or "").strip()
+        session = getattr(self.fetcher, "s", None)
+        if session is None:
+            return
+        now = time.time()
+        todo = [c for c in changed if c[1].get("live") or c[2]]
+        todo.sort(key=lambda c: (not c[2], c[1].get("stock_at", 0)))
+        n = 0
+        for x, rec, event, _ in todo:
+            if n >= per_run or (not event and now - rec.get("stock_at", 0) < every):
+                continue
+            n += 1
+            info = target_stock(session, x["id"], zip_code, self.state.get("target_key", ""))
+            rec["stock_at"] = now
+            if info:
+                rec["stock"], rec["stores"] = target_stock_text(info, zip_code)
+                if info["online"] == 0 and not info["stores"] and rec.get("live") and info["sold_out"]:
+                    rec["stock"] = "Sold out everywhere (page still shows it)"
+
+    def _refresh_page_stock(self, t, st, changed, every=1800):
+        """Other stores: open a couple of in-stock product pages per run and read 'Only N left' / page data."""
+        now = time.time()
+        todo = [c for c in changed if c[1].get("live") and (c[2] or now - c[1].get("stock_at", 0) > every)]
+        todo.sort(key=lambda c: (not c[2], c[1].get("stock_at", 0)))
+        for x, rec, event, _ in todo[: t.get("stock_pages", 2)]:
+            rec["stock_at"] = now
+            try:
+                ps, pf, ph = self._fetch({"name": t["name"], "url": x["url"], "browser": t.get("browser")}, st)
+            except Exception as e:
+                log.info("stock page %s: %s", x["url"], e)
+                continue
+            if looks_blocked(ps, ph) or ps >= 400:
+                continue
+            text = BeautifulSoup(ph, "html.parser").get_text(" ")
+            hint, limit = stock_hint(text)
+            count, max_qty = page_data_stock(next_data(ph)) if t.get("store") == "walmart" else (None, None)
+            if count is not None and count > 0:
+                rec["stock"] = f"{count} available"
+            elif hint:
+                rec["stock"] = hint
+            if limit or (max_qty and max_qty < 20):
+                rec["limit"] = limit or f"Limit {max_qty} per order"
+
+    def _product_date(self, x, store, label):
+        text = x.get("text", "")
+        low = text.lower()
+        if not any(w in low for w in ("release", "available", "coming", "launch", "pre-order", "preorder", "arrives",
+                                      "on sale", "drops", "starts", "opens")):
+            return
+        when = extract_when(text)
+        if when and when[0] > datetime.now(CT):
+            self._add_event(f"{label}: {x['name'][:120]}", x["url"], when[0], when[1], "release", store, product=True)
+
+    def _wanted_sports_card(self, text):
+        """Sealed sports cards in your sports only (Settings: baseball / basketball / football) - no soccer, WWE, F1."""
+        wanted = set(settings_mod.load().get("sports") or ["Baseball", "Basketball", "Football"])
+        return is_sports_card_product(text) and sport_of(text) in wanted
+
+    def _wanted_card(self, text):
+        return is_pokemon_product(text) or self._wanted_sports_card(text)
+
     def _product_alert(self, level, title, x, store_label, extra=None, channel=None, copy_to=None, store=None,
-                       ping=False):
+                       ping=False, strict=False, record=True):
         fields = {"Price": x.get("price"), "Stock": x.get("stock") or x.get("status"), "Limit": x.get("limit")}
         fields.update(extra or {})
         links = self._buy_links(x)
         self.notify.send(level, title, x["url"], fields, image=x.get("image", ""), channel=channel, copy_to=copy_to,
-                         links=links, store=store, product=True, ping=ping)
+                         links=links, store=store, product=True, ping=ping, strict=strict, record=record)
 
     @staticmethod
     def _buy_links(x):
@@ -546,9 +691,21 @@ class Engine:
         if status >= 400:
             return "error", status
         tiles = parse_retail_tiles(html, final, "walmart")
+        # the drawing page's tiles have no product links: add titles found on the page, and their drawing times
+        by_name = {x["name"].lower(): x for x in tiles}
+        for x in title_tiles(BeautifulSoup(html, "html.parser"), final, "walmart"):
+            same = by_name.get(x["name"].lower())
+            if same:
+                if "drawing" not in same.get("text", "").lower():
+                    same["text"] = (same.get("text", "") + " " + x["text"])[:1500]
+                same["image"] = same.get("image") or x["image"]
+                same["price"] = same.get("price") or x["price"]
+            else:
+                tiles.append(x)
+                by_name[x["name"].lower()] = x
         if not tiles:
             return "empty", status
-        cards = [x for x in tiles if is_card_product(x["name"] + " " + x["url"])]
+        cards = [x for x in tiles if self._wanted_card(x["name"] + " " + x["url"])]
         known = st.setdefault("drawings", {})
         now = datetime.now(CT)
         n_open = 0
@@ -644,8 +801,8 @@ class Engine:
 
         for p in products:
             d = datetime.fromisoformat(p["when"]) if p["when"] else None
-            fields = {"Sport": p["sport"], "Drops (CT)": self._when_text(p), "Status": p["status"],
-                      "Buy / enter": f"[Open on Topps]({p['url']})"}
+            # same layout as the #drop-calendar posts: When / Store / Calendar, title links to the product
+            fields = {"When (CT)": self._when_text(p), "Store": "Topps", "Sport": p["sport"], "Status": p["status"]}
             if d:
                 fields["Calendar"] = f"[Add to Google Calendar]({gcal_link(p['name'], d, p['url'], not p['has_time'])})"
                 if d > now - timedelta(days=1):
@@ -654,7 +811,7 @@ class Engine:
             if first:
                 continue
             if old is None:
-                self.notify.send("urgent", f"🆕 New on Topps calendar: {p['name']}", p["url"], fields, ping=True)
+                self.notify.send("urgent", f"📅 🃏 New on the Topps calendar: {p['name']}", p["url"], fields, ping=True)
                 continue
             if p["status"] != old.get("status"):
                 if p["status"] in LIVE_STATUSES:
@@ -665,7 +822,7 @@ class Engine:
                                      p["url"], fields)
             if p["when"] and old.get("when") and p["when"][:16] != old["when"][:16]:
                 fields["Was"] = fmt_when(datetime.fromisoformat(old["when"]), old.get("has_time", False))
-                self.notify.send("normal", f"📅 Topps date moved: {p['name']}", p["url"], fields, ping=True)
+                self.notify.send("normal", f"📅 🃏 Topps date moved: {p['name']}", p["url"], fields, ping=True)
 
         # heads-up before each timed drop, and again the minute it opens - both link straight to the page
         lead = int(t.get("remind_minutes_before", 15))
@@ -675,8 +832,7 @@ class Engine:
                 continue
             d = datetime.fromisoformat(p["when"])
             formats = self._format_lines(p["slug"])
-            fields = {"Sport": p["sport"], "Drops (CT)": fmt_when(d), "Status": p["status"],
-                      "Buy / enter": f"[Open on Topps]({p['url']})"}
+            fields = {"When (CT)": fmt_when(d), "Store": "Topps", "Sport": p["sport"], "Status": p["status"]}
             soon_key, open_key = f"{p['slug']}|{p['when'][:16]}", f"{p['slug']}|{p['when'][:16]}|open"
             if soon_key not in reminded and now <= d <= now + timedelta(minutes=lead):
                 mins = max(1, int((d - now).total_seconds() // 60))
@@ -772,7 +928,7 @@ class Engine:
         return "\n".join(f"• [{f['name']}]({f['url']}) {f['price']} · {f['status']}" for f in fmts[:10])
 
     # ------------------------------------------------------------ drop calendar
-    KIND_ICON = {"topps": "🃏", "drawing": "🎟️", "release": "⚡", "news": "📰"}
+    KIND_ICON = {"topps": "🃏", "drawing": "🎟️", "release": "⚡", "news": "⚡"}
 
     def upcoming_events(self, days=30, past_hours=2):
         now = datetime.now(CT)
@@ -788,29 +944,45 @@ class Engine:
         out.sort(key=lambda e: (e["start"][:10], not e["has_time"], e["start"]))
         return out
 
-    def _event_line(self, e):
+    def _event_line(self, e, extra=""):
         d = datetime.fromisoformat(e["start"])
         t = f"{d.hour % 12 or 12}:{d:%M} {'PM' if d.hour >= 12 else 'AM'}" if e["has_time"] else "All day"
-        return f"`{t:>8}` {e['icon']} [{e['title'][:90]}]({e['url']})"
+        return f"`{t:>8}` {e['icon']} [{e['title'][:90]}]({e['url']}){extra}"
 
-    def _render_calendar(self):
+    def _day_lines(self, events, extra=lambda e: ""):
+        """Calendar layout shared by #drop-calendar and #topps-calendar: bold day headers, then `time` icon link."""
         lines, day = [], None
-        for e in self.upcoming_events(days=14):
+        for e in events:
             d = datetime.fromisoformat(e["start"])
             if d.date() != day:
                 day = d.date()
                 lines.append(f"\n**{d:%A}, {d:%b} {d.day}**")
-            lines.append(self._event_line(e))
-        legend = "🃏 Topps · 🎟️ drawing · ⚡ release · 📰 news"
+            lines.append(self._event_line(e, extra(e)))
+        return lines
+
+    def _render_calendar(self):
+        lines = self._day_lines(self.upcoming_events(days=14))
+        legend = "🃏 Topps calendar · 🎟️ drawing · ⚡ product with an announced date"
         return "🗓️ Drop calendar · next 14 days (Central time)", ("\n".join(lines).strip() + f"\n\n-# {legend}")
 
     def _render_topps_board(self):
-        rows = []
+        """Same layout as the drop calendar: every Topps product by day, linked to its Topps page."""
+        dated, undated = [], []
         for p in self.topps:
-            fmts = self.topps_formats.get(p["slug"], [])
-            extra = f" · {len(fmts)} formats" if fmts else ""
-            rows.append(f"**[{p['name']}]({p['url']})**\n`{p['sport'][:4]:<4}` {self._when_text(p)} · {p['status']}{extra}")
-        return f"🃏 Topps release calendar · {len(self.topps)} products (Central time)", "\n".join(rows)
+            ev = {"title": p["name"], "url": p["url"], "icon": "🃏", "start": p["when"], "has_time": p["has_time"],
+                  "sport": p["sport"], "status": p["status"], "slug": p["slug"]}
+            (dated if p["when"] else undated).append(ev)
+        dated.sort(key=lambda e: (e["start"][:10], not e["has_time"], e["start"]))
+
+        def extra(e):
+            n = len(self.topps_formats.get(e["slug"], []))
+            return f" · {e['sport']} · {e['status']}" + (f" · {n} formats" if n else "")
+        lines = self._day_lines(dated, extra)
+        if undated:
+            lines.append("\n**Date not shown right now**")
+            lines += [f"`     now` 🃏 [{e['title'][:90]}]({e['url']}){extra(e)}" for e in undated]
+        return (f"🃏 Topps release calendar · {len(self.topps)} products (Central time)",
+                "\n".join(lines).strip() + "\n\n-# 🃏 Topps · click a product to open it on Topps")
 
     def calendar_tick(self):
         """Every loop: post newly found dates to #drop-calendar, remind 15 min before news-announced drops,
@@ -860,10 +1032,23 @@ class Engine:
     def _all_boards(self):
         out = [(self.cal_board, self._render_calendar), (self.topps_board, self._render_topps_board),
                (self.drawings_board, self._render_drawings), (self.formats_board, self._render_formats)]
-        out += [(b, (lambda k=k: self._render_store(k))) for k, b in self.store_boards.items()]
         return out
 
+    def _retire_store_boards(self):
+        """1.0.13: store channels switched from one list message to one message per product - remove the old list."""
+        hooks = settings_mod.load().get("webhooks") or {}
+        for key in self.old_store_boards:
+            saved = self.state.pop(key, None) or {}
+            if saved.get("id") and saved.get("hook") in hooks.values():
+                try:
+                    requests.delete(f"{saved['hook']}/messages/{saved['id']}", timeout=15)
+                except requests.RequestException:
+                    pass
+
     def _boards_tick(self, repost=False):
+        self._retire_store_boards()
+        if repost:
+            self.cards.resend_all()
         for board, render in self._all_boards():
             try:
                 board.tick(render, force=repost, repost=repost)
@@ -970,21 +1155,24 @@ class Engine:
 
     # ------------------------------------------------------------ calendar + csv
     def _when_fields(self, title, url, when, fields, kind="news", store=None):
+        """A date mentioned in news: shown on the post with a Google Calendar link. It does NOT go on the drop
+        calendar - that is only the Topps calendar, drawings, and products that show a date or countdown."""
         if not when:
             return
         start, has_time, tz_note = when
         fields["When (CT)"] = fmt_when(start, has_time) + tz_note
         fields["Calendar"] = f"[Add to Google Calendar]({gcal_link(title, start, url, all_day=not has_time)})"
-        self._add_event(title, url, start, has_time, kind, store)
 
-    def _add_event(self, title, url, start, has_time, kind="news", store=None):
+    def _add_event(self, title, url, start, has_time, kind="news", store=None, product=False):
         """Everything with a date lands here: the drop calendar (app tab, drops.ics, #drop-calendar)."""
         events = self.state.setdefault("events", {})
         uid = hashlib.sha1(f"{url}|{start.date()}".encode()).hexdigest()[:16]
+        if kind not in ("topps", "drawing") and not product:
+            return
         if uid in events and events[uid]["start"] == start.isoformat() and events[uid].get("kind") == kind:
             return
         events[uid] = {"title": title, "url": url, "start": start.isoformat(), "has_time": has_time,
-                       "kind": kind, "store": store or ""}
+                       "kind": kind, "store": store or "", "product": bool(product)}
         cutoff = datetime.now(CT) - timedelta(days=14)
         self.state["events"] = {k: v for k, v in events.items() if datetime.fromisoformat(v["start"]) > cutoff}
         self._write_ics()

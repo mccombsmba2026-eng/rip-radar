@@ -49,7 +49,7 @@ def test_topps_first_run_then_changes(engine):
     titles = [t for _, t in engine.sent]
     assert any("TOPPS LIVE: 2026 Bowman Football" in t for t in titles)
     assert any("date moved: 2026 Topps Museum" in t for t in titles)
-    assert any("New on Topps calendar: 2026 Topps Midnight Football" in t for t in titles)
+    assert any("New on the Topps calendar: 2026 Topps Midnight Football" in t for t in titles)
     assert paths.TOPPS_CSV.exists() and paths.ICS_FILE.exists()
 
 
@@ -162,7 +162,7 @@ def test_open_now_alert_links_to_page(engine):
     engine.check_topps_calendar(dict(TOPPS), {}, True)
     opened = [g for g in got if "OPEN NOW" in g[0]]
     assert len(opened) == 1 and opened[0][1] == "https://www.topps.com/pages/bowman-football"
-    assert "Open on Topps" in opened[0][2]["Buy / enter"]
+    assert opened[0][2]["Store"] == "Topps" and opened[0][2]["When (CT)"]
 
 
 def test_format_monitor(engine):

@@ -283,6 +283,8 @@ details summary{cursor:pointer;font-weight:600}
         <label>Bot token <input type="password" id="sBot"></label>
         <p class="hint" id="sBotState"></p>
       </details>
+      <label>Your ZIP code <input type="text" id="sZip" inputmode="numeric" maxlength="10" style="max-width:8em"></label>
+      <p class="hint">Target posts show exact stock at the stores nearest this ZIP.</p>
       <details>
         <summary>ntfy push (free)</summary>
         <p class="hint">Optional. Install the ntfy app, subscribe to a long random topic name, and enter the same name here.</p>
@@ -464,7 +466,7 @@ function renderSettings(){
   $("#sStores").innerHTML = Object.entries(S.channels||{}).map(([k,label]) =>
     `<label>${esc(label)} <input type="url" data-hook="${esc(k)}" id="sHook-${esc(k)}" placeholder="optional" value="${esc(hooks[k]||"")}"></label>`).join("");
   $("#sAuto").checked = !!s.start_with_windows; $("#sAutoUpd").checked = s.auto_update !== false;
-  $("#sKeep").checked = !!s.keep_running_when_closed; $("#sBot").value = s.bot_token||""; $("#sNtfy").value = s.ntfy_topic||"";
+  $("#sKeep").checked = !!s.keep_running_when_closed; $("#sBot").value = s.bot_token||""; $("#sNtfy").value = s.ntfy_topic||""; $("#sZip").value = s.zip||"";
   $("#sTwSid").value = tw.account_sid||""; $("#sTwTok").value = tw.auth_token||""; $("#sTwFrom").value = tw.from||""; $("#sTwTo").value = tw.to||"";
   document.querySelectorAll("#sSports input").forEach(i => i.checked = (s.sports||[]).includes(i.value));
 }
@@ -508,7 +510,7 @@ async function saveSettings(quiet){
   await api.save_settings({
     discord_webhook: $("#sHook").value.trim(), discord_webhook_urgent: $("#sHookUrgent").value.trim(),
     webhooks: Object.fromEntries([...document.querySelectorAll("[data-hook]")].map(i => [i.dataset.hook, i.value.trim()])),
-    start_with_windows: $("#sAuto").checked, auto_update: $("#sAutoUpd").checked, keep_running_when_closed: $("#sKeep").checked, bot_token: $("#sBot").value.trim(), ntfy_topic: $("#sNtfy").value.trim(),
+    start_with_windows: $("#sAuto").checked, auto_update: $("#sAutoUpd").checked, keep_running_when_closed: $("#sKeep").checked, bot_token: $("#sBot").value.trim(), ntfy_topic: $("#sNtfy").value.trim(), zip: $("#sZip").value.trim(),
     sports: sports.length ? sports : ["Baseball","Basketball","Football"],
     twilio: {account_sid:$("#sTwSid").value.trim(), auth_token:$("#sTwTok").value.trim(), from:$("#sTwFrom").value.trim(), to:$("#sTwTo").value.trim()}
   });

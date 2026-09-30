@@ -42,11 +42,14 @@ def test_calendar_tick_baseline_added_reminder_digest(engine):
     engine._add_event("Walmart drawing: 30th Booster Bundle", "https://walmart/draw", now + timedelta(hours=5), True,
                       "drawing", "walmart")
     engine._add_event("Pokémon Center 30th restock drops", "https://news/1", now + timedelta(minutes=10), True, "news",
-                      "pokemon")
+                      "pokemon")                                     # news: not a calendar entry
+    engine._add_event("Target: Pokémon TCG Delta Reign ETB", "https://www.target.com/p/x/-/A-1", now + timedelta(minutes=10),
+                      True, "release", "target", product=True)       # a product page showing its date: yes
     engine.calendar_tick()
     titles = [t for _, t, _ in got]
     assert "📅 🎟️ Added to the calendar: Walmart drawing: 30th Booster Bundle" in titles
-    assert any(t.startswith("⏰ In ") and "Pokémon Center 30th restock" in t for t in titles)   # news drops get reminded
+    assert not any("restock" in t for t in titles)
+    assert any(t.startswith("⏰ In ") and "Delta Reign ETB" in t for t in titles)
     assert all(kw.get("channel") == "calendar" for _, _, kw in got)
     n = len(got)
     engine.calendar_tick()                                           # no repeats, digest only once a day
@@ -55,7 +58,7 @@ def test_calendar_tick_baseline_added_reminder_digest(engine):
     assert "Drop calendar" in title and "🎟️" in desc and "Walmart drawing" in desc
 
 
-def test_release_date_feed_adds_dates_without_pinging(engine):
+def test_news_and_reddit_never_add_to_the_calendar(engine):
     got = capture(engine)
     items = [("Pokémon TCG Delta Reign release date: November 6, 2026", "https://news/dr")]
     body = "".join(f"<item><title>{t}</title><link>{l}</link><guid>{l}</guid>"
@@ -69,8 +72,7 @@ def test_release_date_feed_adds_dates_without_pinging(engine):
     engine.fetcher = FakeFetch(rss)
     engine.check_feed(t, st, False)
     assert got == []                                                 # no ping
-    ev = [e for e in engine.state["events"].values() if e["url"] == "https://news/dr"]
-    assert ev and ev[0]["kind"] == "release" and ev[0]["start"].startswith("2026-11-06")
+    assert not [e for e in engine.state["events"].values() if e["url"] == "https://news/dr"]
 
 
 def test_topps_board_lists_products(engine):

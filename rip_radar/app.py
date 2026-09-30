@@ -83,7 +83,7 @@ class Api:
     # --- actions
     def save_settings(self, changes):
         allowed = {"discord_webhook", "discord_webhook_urgent", "webhooks", "ntfy_topic", "auto_update", "keep_running_when_closed", "twilio", "sms_for", "bot_token",
-                   "status_every_minutes", "sports", "start_with_windows"}
+                   "status_every_minutes", "sports", "start_with_windows", "zip"}
         s = settings.update({k: v for k, v in (changes or {}).items() if k in allowed})
         winsys.set_autostart(bool(s.get("start_with_windows")))
         self._app.engine.reload()
