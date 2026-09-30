@@ -83,6 +83,7 @@ class Engine:
         self.formats_board = LiveBoard(settings_mod.load, "topps", self.state, "board_topps", every_minutes=5,
                                        color=STORE_COLORS.get("topps"))
         self.sync_at = 0
+        self.startup_sync = False
         self.bot = ChatBot(self.status_text, settings_mod.load, self.bot_reply)
         self.started = datetime.now(CT)
         self.last_scan = None
@@ -101,6 +102,9 @@ class Engine:
     def start(self):
         if self._thread and self._thread.is_alive():
             return
+        # every launch (including after an update) syncs by itself: first full scan, then every board is posted
+        # fresh - no need to press "Sync all channels"
+        self.sync_at, self.startup_sync = time.time(), True
         self._thread = threading.Thread(target=self._loop, daemon=True, name="engine")
         self._thread.start()
 
@@ -184,8 +188,15 @@ class Engine:
                 self.sync_at = 0
                 self.first_pass_done = True
                 self._boards_tick(repost=True)       # fresh board at the bottom of every channel
-                self.notify.send("normal", "🔄 All channels synced", desc="Each channel has a fresh board with "
-                                 "its current state. Pin them; they keep themselves up to date.", channel="status")
+                if getattr(self, "startup_sync", False):
+                    self.startup_sync = False
+                    ok = sum(1 for v in report.values() if v.startswith("ok"))
+                    bad = [f"❌ **{k}**: {v}" for k, v in report.items() if not v.startswith("ok")]
+                    self.notify.send("system", f"🟢 Rip Radar {__version__} is running · all channels synced",
+                                     desc=f"{ok}/{len(report)} sources working.\n" + "\n".join(bad)[:3500])
+                else:
+                    self.notify.send("normal", "🔄 All channels synced", desc="Each channel has a fresh board with "
+                                     "its current state. They keep themselves up to date.", channel="status")
             if report and not self.first_pass_done and len(report) >= len(targets):
                 self.first_pass_done = True
                 lines = [f"{'✅' if v.startswith('ok') else '❌'} **{k}**: {v}" for k, v in report.items()]
@@ -924,39 +935,38 @@ class Engine:
         self._write_topps_csv(products)
         self._save_debug(t["name"], html)
 
-        if first:
-            lines = [f"`{p['sport'][:4]}` **{p['name']}** · {self._when_text(p)} · {p['status']}" for p in products]
-            self.notify.send("normal", f"Topps calendar: {len(products)} products", t["url"], desc="\n".join(lines))
-
+        # calendar changes don't post one by one: the whole #topps-calendar board is re-posted fresh at the
+        # bottom with @everyone and a one-line list of what changed. Drop alerts (live / 15 min / open) go to #topps.
+        changes = []
         for p in products:
             d = datetime.fromisoformat(p["when"]) if p["when"] else None
-            # same layout as the #drop-calendar posts: When / Store / Calendar, title links to the product
             fields = {"When (CT)": self._when_text(p), "Store": "Topps", "Sport": p["sport"], "Status": p["status"]}
-            if d:
-                fields["Calendar"] = f"[Add to Google Calendar]({gcal_link(p['name'], d, p['url'], not p['has_time'])})"
-                if d > now - timedelta(days=1):
-                    self._add_event(f"Topps: {p['name']}", p["url"], d, p["has_time"], "topps", "topps")
+            if d and d > now - timedelta(days=1):
+                self._add_event(f"Topps: {p['name']}", p["url"], d, p["has_time"], "topps", "topps")
             old = known.get(p["slug"])
             if first:
                 continue
             if old is None:
-                self.notify.send("urgent", f"📅 🃏 New on the Topps calendar: {p['name']}", p["url"], fields, ping=True)
+                changes.append(f"🆕 added **{p['name']}** · {self._when_text(p)}")
                 continue
             if p["status"] != old.get("status"):
                 if p["status"] in LIVE_STATUSES:
                     self.notify.send("urgent", f"🚨 TOPPS LIVE: {p['name']} · {p['status']}", p["url"], fields, ping=True,
+                                     channel="topps", links=[("Open on Topps", p["url"])],
                                      copy_to=["drawings"] if p["status"] == "Drawing open" else None)
-                else:
-                    self.notify.send("normal", f"Topps: {p['name']} ({old.get('status')} → {p['status']})",
-                                     p["url"], fields)
+                changes.append(f"🔄 **{p['name']}**: {old.get('status')} → {p['status']}")
             if p["when"] and old.get("when") and p["when"][:16] != old["when"][:16]:
                 was = datetime.fromisoformat(old["when"])
                 if p["has_time"] and not old.get("has_time") and d and d.date() == was.date():
-                    self.notify.send("normal", f"🕐 Topps time announced: {p['name']} · {p.get('time_from_page', 'Drops')} "
-                                               f"{self._clock(d)} CT", p["url"], fields, ping=True)
+                    changes.append(f"🕐 time announced for **{p['name']}**: {p.get('time_from_page', 'Drops')} "
+                                   f"{self._clock(d)} CT")
                 else:
-                    fields["Was"] = fmt_when(was, old.get("has_time", False))
-                    self.notify.send("normal", f"📅 🃏 Topps date moved: {p['name']}", p["url"], fields, ping=True)
+                    changes.append(f"📅 **{p['name']}** moved: {fmt_when(was, old.get('has_time', False))} → "
+                                   f"{self._when_text(p)}")
+        gone = [v.get("name", k) for k, v in known.items() if k not in {p["slug"] for p in products}] if not first else []
+        changes += [f"➖ removed **{n}**" for n in gone[:5]]
+        if changes:
+            self._post_topps_calendar(changes, t)
 
         # heads-up before each timed drop, and again the minute it opens - both link straight to the page
         lead = int(t.get("remind_minutes_before", 15))
@@ -971,16 +981,31 @@ class Engine:
             if soon_key not in reminded and now <= d <= now + timedelta(minutes=lead):
                 mins = max(1, int((d - now).total_seconds() // 60))
                 self.notify.send("urgent", f"⏰ Topps drop in {mins} min: {p['name']}", p["url"], fields, ping=True,
-                                 desc=formats, links=[("Open on Topps", p["url"])])
+                                 desc=formats, links=[("Open on Topps", p["url"])], channel="topps")
                 reminded.add(soon_key)
             if open_key not in reminded and d <= now <= d + timedelta(minutes=10):
                 self.notify.send("urgent", f"🟢 OPEN NOW on Topps: {p['name']}", p["url"], fields, desc=formats, ping=True,
-                                 links=[("Open on Topps", p["url"])])
+                                 links=[("Open on Topps", p["url"])], channel="topps")
                 reminded.add(open_key)
         st["reminded"] = list(reminded)[-300:]
         st["products"] = {p["slug"]: {"status": p["status"], "when": p["when"], "has_time": p["has_time"],
                                       "name": p["name"]} for p in products}
         return f"ok ({len(products)} products)", status
+
+    def _post_topps_calendar(self, changes, t):
+        """The updated Topps calendar, posted fresh with @everyone and what changed (no separate messages)."""
+        summary = "@everyone · Topps calendar updated\n" + "\n".join(f"• {c}" for c in changes[:12])
+        if len(changes) > 12:
+            summary += f"\n• …and {len(changes) - 12} more"
+        for c in changes:
+            self._record_alert({"level": "urgent", "title": "Topps calendar: " + re.sub(r"\*\*", "", c), "url": t["url"],
+                                "fields": {}, "desc": "", "image": "", "links": [], "channel": "topps_calendar",
+                                "at": datetime.now(timezone.utc).isoformat()})
+        if self.topps_board.hook().startswith("http"):
+            self.topps_board.tick(self._render_topps_board, force=True, repost=True, content=summary)
+        else:   # no #topps-calendar webhook: one message with the changes to #topps / main instead
+            self.notify.send("urgent", "📅 Topps calendar updated", t["url"], desc="\n".join(changes)[:3900],
+                             channel=["topps", "main"], ping=True, record=False)
 
     def check_topps_products(self, t, st, first):
         """Open each calendar product's Topps page and track every format on it (Hobby, Mega, Blaster...).
@@ -1263,37 +1288,15 @@ class Engine:
         if self.state.get("cal_announced") is None:          # first run: everything already known is baseline
             self.state["cal_announced"] = list(events)
         ann = set(self.state["cal_announced"])
-        for uid, ev in sorted(events.items(), key=lambda kv: kv[1]["start"]):
-            d = datetime.fromisoformat(ev["start"])
-            icon = self.KIND_ICON.get(ev.get("kind"), "📰")
-            fields = {"When (CT)": fmt_when(d, ev["has_time"]), "Store": STORE_NAMES.get(ev.get("store"), ""),
-                      "Calendar": f"[Add to Google Calendar]({gcal_link(ev['title'], d, ev['url'], not ev['has_time'])})"}
-            if uid not in ann and d > now - timedelta(hours=1):
-                self.notify.send("normal", f"📅 {icon} Added to the calendar: {ev['title'][:200]}", ev["url"], fields,
-                                 channel="calendar", strict=True, record=False)
-                ann.add(uid)
-            # Topps and drawings send their own reminders; news-announced drops get one here
-            rkey = uid + "|remind"
-            if ev.get("kind") in ("news", "release") and ev["has_time"] and rkey not in ann \
-                    and now <= d <= now + timedelta(minutes=15):
-                mins = max(1, int((d - now).total_seconds() // 60))
-                self.notify.send("urgent", f"⏰ In {mins} min: {ev['title'][:200]}", ev["url"], fields,
-                                 channel="calendar", strict=True)
-                ann.add(rkey)
+        added = [ev for uid, ev in events.items()
+                 if uid not in ann and datetime.fromisoformat(ev["start"]) > now - timedelta(hours=1)]
+        ann |= set(events)
         self.state["cal_announced"] = list(ann)[-3000:]
-        if now.hour >= 8 and self.state.get("cal_digest_day") != now.date().isoformat():
-            self.state["cal_digest_day"] = now.date().isoformat()
-            soon = [e for e in self.upcoming_events(days=2, past_hours=0)]
-            if soon:
-                lines, day = [], None
-                for e in soon:
-                    d = datetime.fromisoformat(e["start"])
-                    if d.date() != day:
-                        day = d.date()
-                        lines.append(f"\n**{'Today' if day == now.date() else 'Tomorrow' if day == now.date() + timedelta(days=1) else f'{d:%a %b} {d.day}'}**")
-                    lines.append(self._event_line(e))
-                self.notify.send("normal", f"🗓️ Drops today and tomorrow · {now:%a %b} {now.day}", "",
-                                 desc="\n".join(lines).strip(), channel="calendar", strict=True, record=False)
+        if added:
+            # no separate "added" messages: the whole calendar is re-posted fresh at the bottom of #drop-calendar
+            what = "\n".join(f"• {self.KIND_ICON.get(e.get('kind'), '⚡')} {e['title'][:120]}" for e in added[:10])
+            self.cal_board.tick(self._render_calendar, force=True, repost=True,
+                                content=f"🗓️ Calendar updated\n{what}")
         self._boards_tick()
 
     # ------------------------------------------------------------ channel boards (current state of each channel)

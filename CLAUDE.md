@@ -69,6 +69,13 @@ captchas, and never automates purchases. Keep it that way.
   layout (`_day_lines`). #pokemon-queue has a self-editing "No queue right now · last checked" line.
   "Sync all channels" (app top bar) -> `engine.request_sync()`: full scan, then every board is deleted and
   re-posted at the bottom of its channel, plus "🔄 All channels synced" in #app-status.
+- Calendar channels (#topps-calendar, #drop-calendar) get NO single messages - only the full board. When something
+  changes, the board is deleted and re-posted fresh at the bottom (`LiveBoard.tick(repost=True, content=...)`):
+  Topps calendar with "@everyone · Topps calendar updated" + a bullet list of changes; drop calendar with
+  "🗓️ Calendar updated" + what was added (no @everyone). No "added to calendar" posts, no 15-min reminders, no 8 AM
+  digest there. Topps drop alerts (LIVE / 15 min / OPEN NOW) go to #topps.
+- Every launch (incl. after an update) syncs by itself (`Engine.start` sets `sync_at`): after the first full pass all
+  boards are re-posted and #app-status gets "🟢 Rip Radar X is running · all channels synced" with any failing sources.
 - Drop calendar = `state["events"]` (kind: topps / drawing / release, store). ONLY the Topps calendar, Walmart
   drawings and store product pages that show a date/countdown (`product=True`), each linked to the product.
   News / Reddit never add calendar entries (`_add_event` rejects them).
@@ -105,8 +112,8 @@ captchas, and never automates purchases. Keep it that way.
   Parser tests with fixtures live in `tests/test_retail.py`.
 
 ## Rules
-- @everyone (`ping=True`) ONLY for: Pokémon Center queue going live; every Topps calendar change (new product,
-  date moved, pre-order/sale/drawing, 15-min, open now); Topps formats listed or going live; and any ETB / UPC
+- @everyone (`ping=True`) ONLY for: Pokémon Center queue going live; every Topps calendar change (as ONE re-posted
+  calendar with the list of changes), Topps drops going live / 15-min / open now (in #topps); Topps formats listed or going live; and any ETB / UPC
   (`parsing.is_etb_or_upc`) loaded-not-in-stock, in stock, back in stock, or drawing - in any channel, incl. news.
   Everything else posts without @everyone. Store scanners ping "Loaded at X, not in stock yet" for every new
   card product (`alert_new_listed` defaults on) and back-in-stock pings show "Link was up X before stock".

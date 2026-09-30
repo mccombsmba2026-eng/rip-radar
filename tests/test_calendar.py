@@ -32,12 +32,14 @@ def test_calendar_channels_never_spill_into_main(engine, monkeypatch):
 def test_calendar_tick_baseline_added_reminder_digest(engine):
     got = capture(engine)
     engine.first_pass_done = True
-    engine.cal_board.tick = lambda render, force=False: render()     # render only, no network
-    engine.topps_board.tick = lambda render, force=False: render()
+    engine.state["boards_redropped"] = "1.0.14"                      # skip the one-time re-post
+    boards = []
+    engine.cal_board.tick = lambda render, force=False, repost=False, content=None: boards.append((repost, content, render()))
+    engine.topps_board.tick = lambda render, force=False, repost=False, content=None: render()
     now = datetime.now(CT)
     engine._add_event("Topps: 2026 Bowman Football", "https://topps/b", now + timedelta(days=1), False, "topps", "topps")
     engine.calendar_tick()                                           # first run: existing dates are baseline
-    assert not any("Added to the calendar" in t for _, t, _ in got)
+    assert not [b for b in boards if b[0]]
     got.clear()
     engine._add_event("Walmart drawing: 30th Booster Bundle", "https://walmart/draw", now + timedelta(hours=5), True,
                       "drawing", "walmart")
@@ -45,15 +47,15 @@ def test_calendar_tick_baseline_added_reminder_digest(engine):
                       "pokemon")                                     # news: not a calendar entry
     engine._add_event("Target: Pokémon TCG Delta Reign ETB", "https://www.target.com/p/x/-/A-1", now + timedelta(minutes=10),
                       True, "release", "target", product=True)       # a product page showing its date: yes
+    boards.clear()
     engine.calendar_tick()
-    titles = [t for _, t, _ in got]
-    assert "📅 🎟️ Added to the calendar: Walmart drawing: 30th Booster Bundle" in titles
-    assert not any("restock" in t for t in titles)
-    assert any(t.startswith("⏰ In ") and "Delta Reign ETB" in t for t in titles)
-    assert all(kw.get("channel") == "calendar" for _, _, kw in got)
-    n = len(got)
-    engine.calendar_tick()                                           # no repeats, digest only once a day
-    assert len(got) == n
+    assert got == []                                                 # never single posts in the calendar channel
+    reposts = [b for b in boards if b[0]]
+    assert len(reposts) == 1 and "Walmart drawing: 30th Booster Bundle" in reposts[0][1] and "Delta Reign ETB" in reposts[0][1]
+    assert "restock" not in reposts[0][1]
+    boards.clear()
+    engine.calendar_tick()                                           # nothing new: no fresh post
+    assert not [b for b in boards if b[0]]
     title, desc = engine._render_calendar()
     assert "Drop calendar" in title and "🎟️" in desc and "Walmart drawing" in desc
 

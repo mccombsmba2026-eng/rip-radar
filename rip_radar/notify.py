@@ -189,8 +189,9 @@ class LiveBoard:
         embeds[-1]["footer"] = {"text": "Updates itself every few minutes · pin this message"}
         return {"embeds": embeds}
 
-    def tick(self, render, force=False, repost=False):
-        """force: update now. repost: delete the old message and post a fresh one at the bottom of the channel."""
+    def tick(self, render, force=False, repost=False, content=None):
+        """force: update now. repost: delete the old message and post a fresh one at the bottom of the channel.
+        content: text above the board on a fresh post (e.g. '@everyone · what changed')."""
         hook = self.hook()
         if not hook.startswith("http") or (time.time() < self.next and not force and not repost):
             return False
@@ -207,6 +208,8 @@ class LiveBoard:
                 elif requests.patch(f"{hook}/messages/{saved['id']}", json=body, timeout=15).status_code < 400:
                     self.last_body = sig
                     return True
+            if content:
+                body["content"] = content[:1900]
             r = requests.post(hook + "?wait=true", json=body, timeout=15)
             if r.status_code < 400:
                 self.state[self.key] = {"hook": hook, "id": r.json()["id"]}

@@ -36,8 +36,8 @@ def test_topps_first_run_then_changes(engine):
     engine.fetcher = FakeFetch(page())
     health, _ = engine.check_topps_calendar(dict(TOPPS), st, True)
     assert health.startswith("ok (5 products)")                      # tennis filtered out
-    # one summary, no spam (a real drop-time reminder may also fire, depending on today's clock)
-    assert [lvl for lvl, t in engine.sent if "drop in" not in t and "OPEN NOW" not in t] == ["normal"]
+    # first look: quiet (a real drop-time reminder may still fire, depending on today's clock)
+    assert [lvl for lvl, t in engine.sent if "drop in" not in t and "OPEN NOW" not in t] == []
     engine.sent.clear()
     soon = [list(c) for c in SOON]
     soon[3][3] = "Pre-order"                                          # unchanged
@@ -48,8 +48,10 @@ def test_topps_first_run_then_changes(engine):
     engine.check_topps_calendar(dict(TOPPS), st, False)
     titles = [t for _, t in engine.sent]
     assert any("TOPPS LIVE: 2026 Bowman Football" in t for t in titles)
-    assert any("date moved: 2026 Topps Museum" in t for t in titles)
-    assert any("New on the Topps calendar: 2026 Topps Midnight Football" in t for t in titles)
+    (summary,) = [t for t in titles if "Topps calendar updated" in t]          # no board webhook: one message
+    alert_titles = [a["title"] for a in engine.state["alerts"]]
+    assert any("2026 Topps Museum" in a and "moved" in a for a in alert_titles)
+    assert any("added 2026 Topps Midnight Football" in a for a in alert_titles)
     assert paths.TOPPS_CSV.exists() and paths.ICS_FILE.exists()
 
 

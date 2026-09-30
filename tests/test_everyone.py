@@ -71,5 +71,14 @@ def test_topps_calendar_changes_ping_everyone(engine):
     soon.append(("topps-midnight-football", "Monday, Oct 12", "2026 Topps Midnight Football", "Pre-order"))
     engine.fetcher = FakeFetch(page([tuple(c) for c in soon], AVAIL))
     engine.check_topps_calendar(dict(TOPPS), st, False)
-    changes = [(t, p) for t, p in sent if "date moved" in t or "New on Topps" in t]
-    assert changes and all(p for _, p in changes)
+    # no single posts: one fresh calendar with @everyone listing the changes
+    sent.clear()
+    posted = []
+    engine.topps_board.hook = lambda: "https://tcal"
+    engine.topps_board.tick = lambda render, force=False, repost=False, content=None: posted.append((repost, content))
+    engine.fetcher = FakeFetch(page([tuple(c) for c in soon[:-1]] + [("topps-bowman-draft", "Monday, Oct 19",
+                                                                       "2026 Bowman Draft Baseball", "Notify me")], AVAIL))
+    engine.check_topps_calendar(dict(TOPPS), st, False)
+    (repost, content), = posted
+    assert repost and content.startswith("@everyone · Topps calendar updated") and "2026 Bowman Draft Baseball" in content
+    assert not [t for t, _ in sent if "calendar" in t.lower()]
