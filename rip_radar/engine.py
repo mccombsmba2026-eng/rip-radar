@@ -17,7 +17,7 @@ from bs4 import BeautifulSoup
 
 from . import __version__, paths, settings as settings_mod
 from .msrp import msrp_text, price_check
-from .notify import CHANNELS, ChatBot, Notifier, StatusBoard, store_in
+from .notify import CHANNELS, STORE_NAMES, ChatBot, LiveBoard, Notifier, StatusBoard, store_in
 from .parsing import (CT, LIVE_STATUSES, RETAIL_STORES, categorize, extract_when, fmt_when, gcal_link, is_card_product,
                       is_pokemon_product, is_sports_card_product, is_tcg_product, looks_blocked, parse_retail_tiles, parse_topps_calendar,
                       parse_topps_product_page, tile_status, drawing_window)
@@ -63,6 +63,9 @@ class Engine:
         self.fetcher = Fetcher(browser_fetch)
         self.notify = Notifier(settings_mod.load, on_alert=self._record_alert)
         self.board = StatusBoard(settings_mod.load, self.status_text, self.state)
+        self.cal_board = LiveBoard(settings_mod.load, "calendar", self.state, "calendar_board_msg", every_minutes=5)
+        self.topps_board = LiveBoard(settings_mod.load, "topps_calendar", self.state, "topps_board_msg",
+                                     every_minutes=5)
         self.bot = ChatBot(self.status_text)
         self.started = datetime.now(CT)
         self.last_scan = None
@@ -163,8 +166,9 @@ class Engine:
                                  desc="\n".join(lines)[:4000])
             try:
                 self.board.tick()
+                self.calendar_tick()
             except Exception as e:
-                log.warning("status board: %s", e)
+                log.warning("boards: %s", e)
             self._wake.wait(5)
             self._wake.clear()
 
@@ -305,11 +309,17 @@ class Engine:
                 continue
             link = e.get("link", "")
             fields = {"Source": t["name"], "Category": categorize(blob, t.get("category", ""))}
-            self._when_fields(title[:120], link, extract_when(f"{title}. {summary}"), fields)
+            when = extract_when(f"{title}. {summary}")
+            if t.get("calendar_only"):         # release-date feeds: onto the drop calendar, no ping
+                if when:
+                    self._when_fields(title[:120], link, when, fields, t.get("kind", "release"),
+                                      store_in(title + " " + summary))
+                continue
+            self._when_fields(title[:120], link, when, fields, "news", store_in(title + " " + summary))
             level = "urgent" if any(k in blob for k in t.get("urgent_if", [])) else t.get("level", "normal")
             store = store_in(title + " " + summary) if t.get("route_by_store") else None
             if store:
-                fields["Store"] = CHANNELS[store]
+                fields["Store"] = STORE_NAMES[store]
             is_drawing = any(w in blob for w in ("drawing", "raffle", "lottery", "invite"))
             ch = ("drawings", store) if is_drawing and t.get("route_by_store") else store
             self.notify.send(level, title[:240], link, fields, desc=summary[:300], channel=ch)
@@ -436,7 +446,7 @@ class Engine:
                       "Entries close (CT)": fmt_when(end) if end else "", "Store": "Walmart"}
             if start and start > now:
                 fields["Calendar"] = f"[Add to Google Calendar]({gcal_link('Walmart drawing: ' + x['name'], start, t['url'])})"
-                self._add_event(f"🎟️ Walmart drawing: {x['name']}", t["url"], start, True)
+                self._add_event(f"Walmart drawing: {x['name']}", t["url"], start, True, "drawing", "walmart")
             links = [("🎟️ Enter the drawing", x["url"]), ("All Walmart drawings", t["url"])]
 
             def ping(title):
@@ -511,7 +521,7 @@ class Engine:
             if d:
                 fields["Calendar"] = f"[Add to Google Calendar]({gcal_link(p['name'], d, p['url'], not p['has_time'])})"
                 if d > now - timedelta(days=1):
-                    self._add_event(f"Topps: {p['name']}", p["url"], d, p["has_time"])
+                    self._add_event(f"Topps: {p['name']}", p["url"], d, p["has_time"], "topps", "topps")
             old = known.get(p["slug"])
             if first:
                 continue
@@ -521,7 +531,8 @@ class Engine:
             if p["status"] != old.get("status"):
                 if p["status"] in LIVE_STATUSES:
                     self.notify.send("urgent", f"🚨 TOPPS LIVE: {p['name']} · {p['status']}", p["url"], fields,
-                                     channel=("drawings", "topps") if p["status"] == "Drawing open" else None)
+                                     channel=("drawings", "topps_calendar", "topps") if p["status"] == "Drawing open"
+                                     else None)
                 else:
                     self.notify.send("normal", f"Topps: {p['name']} ({old.get('status')} → {p['status']})",
                                      p["url"], fields)
@@ -633,21 +644,109 @@ class Engine:
         fmts = getattr(self, "topps_formats", {}).get(slug, [])
         return "\n".join(f"• [{f['name']}]({f['url']}) {f['price']} · {f['status']}" for f in fmts[:10])
 
+    # ------------------------------------------------------------ drop calendar
+    KIND_ICON = {"topps": "🃏", "drawing": "🎟️", "release": "⚡", "news": "📰"}
+
+    def upcoming_events(self, days=30, past_hours=2):
+        now = datetime.now(CT)
+        out = []
+        for uid, ev in self.state.get("events", {}).items():
+            d = datetime.fromisoformat(ev["start"])
+            if now - timedelta(hours=past_hours) <= d <= now + timedelta(days=days) or \
+                    (not ev["has_time"] and d.date() == now.date()):
+                out.append({**ev, "uid": uid, "icon": self.KIND_ICON.get(ev.get("kind"), "📰"),
+                            "store_name": STORE_NAMES.get(ev.get("store"), ""),
+                            "when_text": fmt_when(d, ev["has_time"]),
+                            "gcal": gcal_link(ev["title"], d, ev["url"], all_day=not ev["has_time"])})
+        out.sort(key=lambda e: (e["start"][:10], not e["has_time"], e["start"]))
+        return out
+
+    def _event_line(self, e):
+        d = datetime.fromisoformat(e["start"])
+        t = f"{d.hour % 12 or 12}:{d:%M} {'PM' if d.hour >= 12 else 'AM'}" if e["has_time"] else "All day"
+        return f"`{t:>8}` {e['icon']} [{e['title'][:90]}]({e['url']})"
+
+    def _render_calendar(self):
+        lines, day = [], None
+        for e in self.upcoming_events(days=14):
+            d = datetime.fromisoformat(e["start"])
+            if d.date() != day:
+                day = d.date()
+                lines.append(f"\n**{d:%A}, {d:%b} {d.day}**")
+            lines.append(self._event_line(e))
+        legend = "🃏 Topps · 🎟️ drawing · ⚡ release · 📰 news"
+        return "🗓️ Drop calendar · next 14 days (Central time)", ("\n".join(lines).strip() + f"\n\n-# {legend}")
+
+    def _render_topps_board(self):
+        rows = []
+        for p in self.topps:
+            fmts = self.topps_formats.get(p["slug"], [])
+            extra = f" · {len(fmts)} formats" if fmts else ""
+            rows.append(f"**[{p['name']}]({p['url']})**\n`{p['sport'][:4]:<4}` {self._when_text(p)} · {p['status']}{extra}")
+        return f"🃏 Topps release calendar · {len(self.topps)} products (Central time)", "\n".join(rows)
+
+    def calendar_tick(self):
+        """Every loop: post newly found dates to #drop-calendar, remind 15 min before news-announced drops,
+        send the 8 AM rundown, and keep the two self-updating boards current. Posts only to channels that
+        have their own webhook."""
+        if not self.first_pass_done:
+            return
+        events = self.state.get("events", {})
+        now = datetime.now(CT)
+        if self.state.get("cal_announced") is None:          # first run: everything already known is baseline
+            self.state["cal_announced"] = list(events)
+        ann = set(self.state["cal_announced"])
+        for uid, ev in sorted(events.items(), key=lambda kv: kv[1]["start"]):
+            d = datetime.fromisoformat(ev["start"])
+            icon = self.KIND_ICON.get(ev.get("kind"), "📰")
+            fields = {"When (CT)": fmt_when(d, ev["has_time"]), "Store": STORE_NAMES.get(ev.get("store"), ""),
+                      "Calendar": f"[Add to Google Calendar]({gcal_link(ev['title'], d, ev['url'], not ev['has_time'])})"}
+            if uid not in ann and d > now - timedelta(hours=1):
+                self.notify.send("normal", f"📅 {icon} Added to the calendar: {ev['title'][:200]}", ev["url"], fields,
+                                 channel="calendar", strict=True, record=False)
+                ann.add(uid)
+            # Topps and drawings send their own reminders; news-announced drops get one here
+            rkey = uid + "|remind"
+            if ev.get("kind") in ("news", "release") and ev["has_time"] and rkey not in ann \
+                    and now <= d <= now + timedelta(minutes=15):
+                mins = max(1, int((d - now).total_seconds() // 60))
+                self.notify.send("urgent", f"⏰ In {mins} min: {ev['title'][:200]}", ev["url"], fields,
+                                 channel="calendar", strict=True)
+                ann.add(rkey)
+        self.state["cal_announced"] = list(ann)[-3000:]
+        if now.hour >= 8 and self.state.get("cal_digest_day") != now.date().isoformat():
+            self.state["cal_digest_day"] = now.date().isoformat()
+            soon = [e for e in self.upcoming_events(days=2, past_hours=0)]
+            if soon:
+                lines, day = [], None
+                for e in soon:
+                    d = datetime.fromisoformat(e["start"])
+                    if d.date() != day:
+                        day = d.date()
+                        lines.append(f"\n**{'Today' if day == now.date() else 'Tomorrow' if day == now.date() + timedelta(days=1) else f'{d:%a %b} {d.day}'}**")
+                    lines.append(self._event_line(e))
+                self.notify.send("normal", f"🗓️ Drops today and tomorrow · {now:%a %b} {now.day}", "",
+                                 desc="\n".join(lines).strip(), channel="calendar", strict=True, record=False)
+        self.cal_board.tick(self._render_calendar)
+        self.topps_board.tick(self._render_topps_board)
+
     # ------------------------------------------------------------ calendar + csv
-    def _when_fields(self, title, url, when, fields):
+    def _when_fields(self, title, url, when, fields, kind="news", store=None):
         if not when:
             return
         start, has_time, tz_note = when
         fields["When (CT)"] = fmt_when(start, has_time) + tz_note
         fields["Calendar"] = f"[Add to Google Calendar]({gcal_link(title, start, url, all_day=not has_time)})"
-        self._add_event(title, url, start, has_time)
+        self._add_event(title, url, start, has_time, kind, store)
 
-    def _add_event(self, title, url, start, has_time):
+    def _add_event(self, title, url, start, has_time, kind="news", store=None):
+        """Everything with a date lands here: the drop calendar (app tab, drops.ics, #drop-calendar)."""
         events = self.state.setdefault("events", {})
         uid = hashlib.sha1(f"{url}|{start.date()}".encode()).hexdigest()[:16]
-        if uid in events and events[uid]["start"] == start.isoformat():
+        if uid in events and events[uid]["start"] == start.isoformat() and events[uid].get("kind") == kind:
             return
-        events[uid] = {"title": title, "url": url, "start": start.isoformat(), "has_time": has_time}
+        events[uid] = {"title": title, "url": url, "start": start.isoformat(), "has_time": has_time,
+                       "kind": kind, "store": store or ""}
         cutoff = datetime.now(CT) - timedelta(days=14)
         self.state["events"] = {k: v for k, v in events.items() if datetime.fromisoformat(v["start"]) > cutoff}
         self._write_ics()
@@ -722,6 +821,7 @@ class Engine:
                 "alerts_today": self.alerts_today(),
                 "topps": self.topps,
                 "topps_formats": self.topps_formats,
+                "calendar": self.upcoming_events(days=30),
                 "bot": self.bot.state,
             }
 

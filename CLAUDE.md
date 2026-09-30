@@ -44,7 +44,12 @@ captchas, and never automates purchases. Keep it that way.
   raffle / invite from any store) and `status` (system messages, status board, update notices) via
   `settings["webhooks"]`. `channel` may be a preference list, e.g. `[drawings, walmart]`: first with a webhook
   wins, else the main webhook. News feeds use `route_by_store: true`. Store scanners (not Pokémon Center) keep
-  Pokémon items only if the name says Pokémon (skips Magic, Lorcana...).
+  Pokémon items only if the name says Pokémon (skips Magic, Lorcana...). `topps_calendar` gets the Topps
+  calendar watcher's alerts (falls back to `topps`, then main). `calendar` is STRICT (posts only with its own
+  webhook): "added to calendar" posts, 15-min reminders for news/release dates, 8 AM digest. `LiveBoard` keeps a
+  self-editing pinned message in `calendar` (next 14 days) and `topps_calendar` (all Topps products).
+- Drop calendar = `state["events"]` (kind: topps / drawing / release / news, store). Fed by the Topps calendar,
+  Walmart drawings, dated news, and `calendar_only` feeds (release dates: calendar entries, no pings).
 - `rip_radar/ui/index.html` – the whole UI (vanilla JS; talks to `Api` in app.py via `pywebview.api`).
 - `rip_radar/updater.py` – GitHub Releases check + swap.
 - User data lives in `%APPDATA%\RipRadar` (settings.json holds the webhook and any tokens).

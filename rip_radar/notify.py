@@ -12,9 +12,15 @@ COLORS = {"urgent": 0xE0342B, "normal": 0x2350C8, "system": 0x8A8F9E}
 
 
 # One Discord channel per store. Key -> label shown in the app. Webhooks live in settings["webhooks"].
-CHANNELS = {"topps": "Topps", "pokemon": "Pokémon Center", "walmart": "Walmart", "target": "Target",
+CHANNELS = {"topps": "Topps products (formats, in stock)", "topps_calendar": "Topps calendar",
+            "pokemon": "Pokémon Center", "walmart": "Walmart", "target": "Target",
             "dicks": "Dick's", "amazon": "Amazon", "bestbuy": "Best Buy",
-            "drawings": "Drawings & raffles (all stores)", "status": "App status"}
+            "drawings": "Drawings & raffles (all stores)", "calendar": "Drop calendar (all announced dates)",
+            "status": "App status"}
+STORE_NAMES = {"topps": "Topps", "pokemon": "Pokémon Center", "walmart": "Walmart", "target": "Target",
+               "dicks": "Dick's", "amazon": "Amazon", "bestbuy": "Best Buy"}
+# channels that only ever post to their own webhook (never spill into the main channel)
+STRICT_CHANNELS = {"calendar"}
 # news posts go to the store they mention first (checked in this order)
 STORE_WORDS = [("pokemon", ("pokémon center", "pokemon center", "pokemoncenter")),
                ("walmart", ("walmart",)), ("target", ("target",)),
@@ -41,16 +47,20 @@ class Notifier:
     def set_channel(self, channel):
         self._local.channel = channel
 
-    def send(self, level, title, url="", fields=None, desc="", channel=None, image="", links=None):
-        """links: [(label, url)] shown as a row of clickable links (Add to cart, Buy now...). image: thumbnail."""
+    def send(self, level, title, url="", fields=None, desc="", channel=None, image="", links=None, strict=False,
+             record=True):
+        """links: [(label, url)] shown as a row of clickable links (Add to cart, Buy now...). image: thumbnail.
+        strict: only post if one of the wanted channels has its own webhook (never fall back to main).
+        record: also show it in the app's alert list."""
         fields = {k: v for k, v in (fields or {}).items() if v}
         links = [(lbl, u) for lbl, u in (links or []) if u]
         channel = channel or getattr(self._local, "channel", None)
         log.info("ALERT [%s] %s %s", level, title, url)
-        self.on_alert({"level": level, "title": title, "url": url, "fields": fields, "desc": desc,
-                       "image": image, "links": links,
-                       "channel": (channel[0] if isinstance(channel, (list, tuple)) else channel) or "",
-                       "at": datetime.now(timezone.utc).isoformat()})
+        if record:
+            self.on_alert({"level": level, "title": title, "url": url, "fields": fields, "desc": desc,
+                           "image": image, "links": links,
+                           "channel": (channel[0] if isinstance(channel, (list, tuple)) else channel) or "",
+                           "at": datetime.now(timezone.utc).isoformat()})
         s = self.get_settings()
         link_row = "  ·  ".join(f"**[{lbl}]({u})**" for lbl, u in links)
         body = "\n\n".join(x for x in (link_row, desc or "") if x)
@@ -74,6 +84,8 @@ class Notifier:
         own = next((hooks_by_channel.get(c, "") for c in wanted if hooks_by_channel.get(c, "").startswith("http")), "")
         if own:
             hooks = {own}                   # a channel with its own webhook gets only its own alerts
+        elif strict or (wanted and all(c in STRICT_CHANNELS for c in wanted if c)):
+            return False                    # that channel isn't set up: stay out of the main channel
         else:
             hooks = {s.get("discord_webhook", "")}
             if level == "urgent":
@@ -114,6 +126,46 @@ class Notifier:
             except requests.RequestException as e:
                 log.warning("Discord failed: %s", e)
                 time.sleep(2)
+        return False
+
+
+class LiveBoard:
+    """A single Discord message in one channel that rewrites itself (a pinned, always-current list).
+    Posts only when that channel has its own webhook."""
+
+    def __init__(self, get_settings, channel, state, key, every_minutes=10):
+        self.get_settings, self.channel, self.state, self.key = get_settings, channel, state, key
+        self.every = every_minutes * 60
+        self.next = 0
+        self.last_body = None
+
+    def hook(self):
+        return ((self.get_settings().get("webhooks") or {}).get(self.channel) or "")
+
+    def tick(self, render, force=False):
+        hook = self.hook()
+        if not hook.startswith("http") or (time.time() < self.next and not force):
+            return False
+        self.next = time.time() + self.every
+        title, desc = render()
+        body = {"embeds": [{"title": title[:250], "description": desc[:4000] or "Nothing scheduled yet.",
+                            "color": COLORS["normal"], "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "footer": {"text": "Rip Radar keeps this message up to date. Pin it."}}]}
+        if body["embeds"][0]["description"] == self.last_body and not force:
+            return False
+        saved = self.state.get(self.key) or {}
+        try:
+            if saved.get("hook") == hook and saved.get("id"):
+                if requests.patch(f"{hook}/messages/{saved['id']}", json=body, timeout=15).status_code < 400:
+                    self.last_body = body["embeds"][0]["description"]
+                    return True
+            r = requests.post(hook + "?wait=true", json={**body, "username": "Rip Radar"}, timeout=15)
+            if r.status_code < 400:
+                self.state[self.key] = {"hook": hook, "id": r.json()["id"]}
+                self.last_body = body["embeds"][0]["description"]
+                return True
+        except (requests.RequestException, ValueError, KeyError) as e:
+            log.warning("%s board failed: %s", self.channel, e)
         return False
 
 

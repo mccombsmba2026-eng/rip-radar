@@ -273,4 +273,4 @@ def test_watch_page_channel_and_settings_migration(engine):
         {"name": "Mine", "url": "https://www.dickssportinggoods.com/p/y", "preset": "custom", "keywords": ["enter"]}]})
     ch = {t["name"]: t.get("channel") for t in engine.targets()}
     assert ch["Target ETB"] == "target" and ch["Mine"] == "dicks"
-    assert ch["Topps release calendar"] == "topps" and ch["Pokémon Center queue"] == "pokemon"
+    assert ch["Topps release calendar"] == ["topps_calendar", "topps"] and ch["Pokémon Center queue"] == "pokemon"
