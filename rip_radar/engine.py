@@ -170,10 +170,22 @@ class Engine:
         if self.first_pass_done and bad and prev.split(" ")[:1] != health.split(" ")[:1]:
             self.notify.send("system", f"⚠️ {t['name']} stopped working: {health}", t.get("url", ""))
 
+    # ------------------------------------------------------------ fetching
+    def _fetch(self, t, st):
+        """Plain HTTP first. If a site turns that away, switch this source to the app's built-in
+        browser (real Edge engine) from then on - it gets through most bot walls from a home connection."""
+        use_browser = bool(t.get("browser") or st.get("auto_browser"))
+        status, final, html = self.fetcher.get(t["url"], use_browser)
+        if not use_browser and getattr(self.fetcher, "browser_fetch", None) and looks_blocked(status, html):
+            log.info("%s blocked plain HTTP (%s) - switching to the built-in browser", t["name"], status)
+            st["auto_browser"] = True
+            status, final, html = self.fetcher.get(t["url"], True)
+        return status, final, html
+
     # ------------------------------------------------------------ watchers
     def check_listing(self, t, st, first):
         """Alert on NEW product links appearing on a page (product loaded)."""
-        status, final, html = self.fetcher.get(t["url"], t.get("browser", False))
+        status, final, html = self._fetch(t, st)
         if looks_blocked(status, html):
             return "blocked", status
         if status >= 400:
@@ -205,7 +217,7 @@ class Engine:
 
     def check_keywords(self, t, st, first):
         """Alert when a page flips live: queue page, 'Enter drawing', 'Request invite', 'Add to cart'."""
-        status, final, html = self.fetcher.get(t["url"], t.get("browser", False))
+        status, final, html = self._fetch(t, st)
         url_hit = any(k.lower() in (final or "").lower() for k in t.get("url_contains", []))
         if looks_blocked(status, html) and not url_hit:
             return "blocked", status
@@ -262,7 +274,7 @@ class Engine:
         return f"ok ({len(feed.entries)} posts)", status
 
     def check_topps_calendar(self, t, st, first):
-        status, final, html = self.fetcher.get(t["url"], t.get("browser", False))
+        status, final, html = self._fetch(t, st)
         if looks_blocked(status, html):
             return "blocked", status
         if status >= 400:

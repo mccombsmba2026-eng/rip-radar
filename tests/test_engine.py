@@ -110,3 +110,27 @@ def test_user_watch_pages_become_targets(engine):
 def test_status_text(engine):
     txt = engine.status_text()
     assert "Yes, running" in txt and "Sources OK" in txt
+
+
+def test_blocked_source_switches_to_browser(engine):
+    calls = []
+
+    class Blocked:
+        browser_fetch = object()
+
+        def get(self, url, browser=False):
+            calls.append(browser)
+            return (200, url, page()) if browser else (403, url, "")
+
+    engine.fetcher = Blocked()
+    st = {}
+    health, _ = engine.check_topps_calendar(dict(TOPPS), st, True)
+    assert health.startswith("ok") and calls == [False, True] and st["auto_browser"]
+    engine.check_topps_calendar(dict(TOPPS), st, False)
+    assert calls == [False, True, True]                  # stays on the browser afterwards
+
+
+def test_challenge_detection():
+    from rip_radar.parsing import is_challenge
+    assert is_challenge("<html><title>Just a moment...</title></html>")
+    assert not is_challenge(page())

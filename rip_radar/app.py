@@ -38,8 +38,19 @@ class BrowserFetcher:
             w.load_url(url)
             if not w.events.loaded.wait(45):
                 raise TimeoutError("page took too long")
+            from .parsing import is_challenge
+            deadline = time.time() + 25
             time.sleep(4)  # let redirects / scripts settle
-            html = w.evaluate_js("document.documentElement.outerHTML") or ""
+            while True:
+                try:
+                    html = w.evaluate_js("document.documentElement.outerHTML") or ""
+                except Exception:
+                    html = ""  # mid-navigation (e.g. a "checking your browser" page redirecting)
+                if html and (not is_challenge(html) or time.time() > deadline):
+                    break
+                if time.time() > deadline:
+                    break
+                time.sleep(2)
             current = w.get_current_url() or url
             return 200, current, html
 

@@ -11,7 +11,16 @@ CT = ZoneInfo("America/Chicago")
 
 BLOCK_MARKERS = ["robot or human", "access denied", "incapsula", "px-captcha",
                  "verify you are human", "are you a robot", "request unsuccessful",
-                 "captcha", "pardon our interruption"]
+                 "captcha", "pardon our interruption", "just a moment", "attention required",
+                 "checking your browser", "cf-chl"]
+# pages a real browser gets past on its own if we wait a few seconds
+CHALLENGE_MARKERS = ["just a moment", "checking your browser", "cf-chl", "please wait while we verify",
+                     "pardon our interruption"]
+
+
+def is_challenge(html):
+    head = (html or "")[:8000].lower()
+    return len(html or "") < 60000 and any(m in head for m in CHALLENGE_MARKERS)
 
 MONTHS = {m: i for i, m in enumerate(
     ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
