@@ -70,7 +70,8 @@ def test_retail_watcher_pings_only_when_in_stock(engine):
                       "🟢 NEW & IN STOCK at Target: Pokémon TCG: Charizard Ultra-Premium Collection"]
     kw = sent[1][2]
     assert kw["image"] == "https://img.example.com/p.jpg"
-    assert ("Product page", "https://www.target.com/p/upc/-/A-94300300") in kw["links"]
+    assert kw["links"] == [("🛒 Open & add to cart", "https://www.target.com/p/upc/-/A-94300300")]  # Target: no direct cart link
+    assert kw["store"] == "target" and kw["product"] is True
     sent.clear()
     engine.check_retail_search(t, st, False)                       # nothing changed -> no repeat pings
     assert sent == []
@@ -97,3 +98,24 @@ def test_retail_watcher_checks_product_pages_when_tiles_hide_stock(engine):
     engine.fetcher = Fetch("<button>Add to Cart</button>" + PAD)
     engine.check_retail_search(t, st, False)
     assert sent == ["🟢 BACK IN STOCK at Dick's: Topps 2026 Series 2 Baseball Hanger Box"]
+
+
+
+def test_ping_layout_uses_webhook_name_and_buy_links(monkeypatch):
+    from rip_radar import notify as notify_mod, settings
+    payloads = []
+    monkeypatch.setattr(notify_mod.Notifier, "_post_discord", staticmethod(lambda h, p: payloads.append(p) or True))
+    monkeypatch.setattr(settings, "load", lambda: {"discord_webhook": "https://main", "webhooks": {}})
+    n = notify_mod.Notifier(settings.load)
+    n.send("urgent", "🟢 NEW & IN STOCK at Walmart: Pokémon TCG ETB", "https://walmart.com/ip/1",
+           {"Price": "$49.99", "Stock": "Only 3 left", "Limit": "Limit 2 per order"},
+           image="https://i5.walmartimages.com/1.jpg", store="walmart", product=True,
+           links=[("🛒 Add to cart", "https://affil.walmart.com/cart/addToCart?items=1"),
+                  ("⚡ Buy now", "https://affil.walmart.com/cart/buynow?items=1")])
+    p = payloads[0]
+    assert "username" not in p                                      # Discord shows the webhook's own name
+    e = p["embeds"][0]
+    assert e["description"].startswith("**[🛒 ADD TO CART](https://affil.walmart.com/cart/addToCart?items=1)**")
+    assert "⚡ BUY NOW" in e["description"] and e["image"]["url"].endswith("1.jpg")
+    assert e["color"] == 0x0071CE and e["footer"]["text"] == "Walmart"
+    assert [f["name"] for f in e["fields"]] == ["Price", "Stock", "Limit"]

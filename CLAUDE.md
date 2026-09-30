@@ -63,6 +63,11 @@ captchas, and never automates purchases. Keep it that way.
   Parser tests with fixtures live in `tests/test_retail.py`.
 
 ## Rules
+- Never set a webhook `username`: posts must show the name/avatar the user gave each webhook in Discord
+  (Palm Tree Edge Cards). "Rip Radar" is the program's name, not the poster's.
+- Product pings: `notify.send(..., store=<key>, product=True)` -> store color, big image, footer, and the
+  "🛒 ADD TO CART · ⚡ BUY NOW" row first (Walmart/Amazon/Best Buy/Topps direct links; others link the page).
+  Stock/limit come from `parsing.stock_hint` when the page shows "Only N left" / "Limit N per order".
 - Any launch of another copy of the app (install relaunch, update restart) must go through
   `winsys.launch_new_copy` (clean env + PYINSTALLER_RESET_ENVIRONMENT). Otherwise the one-file exe's child
   reuses the parent's deleted _MEI folder: "Failed to load Python DLL". CI's "Relaunch check" step guards this.

@@ -317,7 +317,7 @@ class Engine:
             if mid and st.get("session_hook") == hook:
                 if requests.patch(f"{hook}/messages/{mid}", json=body, timeout=15).status_code < 400:
                     return
-            r = requests.post(hook + "?wait=true", json={**body, "username": "Rip Radar"}, timeout=15)
+            r = requests.post(hook + "?wait=true", json=body, timeout=15)
             if r.status_code < 400:
                 st["session_msg"], st["session_hook"] = r.json()["id"], hook
         except (requests.RequestException, ValueError, KeyError) as e:
@@ -469,12 +469,14 @@ class Engine:
             if not first and x["live"] and (prev is None or not prev.get("live")):
                 if x["status"].startswith("Drawing"):
                     self._product_alert("urgent", f"🎟️ DRAWING / INVITE OPEN at {label}: {x['name']}{warn}", x, label,
-                                        extra, copy_to=["drawings"])
+                                        extra, copy_to=["drawings"], store=store)
                 else:
                     what = "NEW & IN STOCK" if prev is None else "BACK IN STOCK"
-                    self._product_alert("urgent", f"🟢 {what} at {label}: {x['name']}{warn}", x, label, extra)
+                    self._product_alert("urgent", f"🟢 {what} at {label}: {x['name']}{warn}", x, label, extra,
+                                        store=store)
             elif not first and prev is None and t.get("alert_new_listed"):
-                self._product_alert("normal", f"🆕 New at {label} (not in stock yet): {x['name']}", x, label, extra)
+                self._product_alert("normal", f"🆕 New at {label} (not in stock yet): {x['name']}", x, label, extra,
+                                    store=store)
             rec = known.setdefault(x["id"], {})
             if x["status"] != "Listed" or "live" not in rec:
                 rec["live"] = x["live"]
@@ -487,12 +489,19 @@ class Engine:
         return (f"ok ({len(cards)} card products · {live} in stock{over} · {len(tiles) - len(cards)} other items skipped)",
                 status)
 
-    def _product_alert(self, level, title, x, store_label, extra=None, channel=None, copy_to=None):
-        fields = {"Price": x.get("price"), "Store": store_label, "Status": x.get("status")}
+    def _product_alert(self, level, title, x, store_label, extra=None, channel=None, copy_to=None, store=None):
+        fields = {"Price": x.get("price"), "Stock": x.get("stock") or x.get("status"), "Limit": x.get("limit")}
         fields.update(extra or {})
+        links = self._buy_links(x)
         self.notify.send(level, title, x["url"], fields, image=x.get("image", ""), channel=channel, copy_to=copy_to,
-                         links=[("🛒 Add to cart", x.get("add_to_cart")), ("⚡ Buy now", x.get("buy_now")),
-                                ("Product page", x["url"])])
+                         links=links, store=store, product=True)
+
+    @staticmethod
+    def _buy_links(x):
+        """🛒 ADD TO CART / ⚡ BUY NOW where the store has direct links; otherwise the product page is the cart button."""
+        if x.get("add_to_cart") or x.get("buy_now"):
+            return [("🛒 Add to cart", x.get("add_to_cart")), ("⚡ Buy now", x.get("buy_now")), ("🔗 Product page", x["url"])]
+        return [("🛒 Open & add to cart", x["url"])]
 
     def check_walmart_drawings(self, t, st, first):
         """walmart.com/shop/collectibles/draw - Walmart's limited-time drawings (lotteries).
@@ -526,17 +535,17 @@ class Engine:
             rec = known.get(key)
             kind = "pokemon" if is_tcg_product(x["name"]) else "sports"
             _, info = price_check(x["name"], x["price"], kind)
-            fields = {"Price": x["price"], "Typical retail": msrp_text(info),
-                      "Entries open (CT)": fmt_when(start) if start else "",
-                      "Entries close (CT)": fmt_when(end) if end else "", "Store": "Walmart"}
+            fields = {"Price": x["price"], "Entries open (CT)": fmt_when(start) if start else "",
+                      "Entries close (CT)": fmt_when(end) if end else "", "Limit": x.get("limit"),
+                      "Typical retail": msrp_text(info)}
             if start and start > now:
                 fields["Calendar"] = f"[Add to Google Calendar]({gcal_link('Walmart drawing: ' + x['name'], start, t['url'])})"
                 self._add_event(f"Walmart drawing: {x['name']}", t["url"], start, True, "drawing", "walmart")
-            links = [("🎟️ Enter the drawing", x["url"]), ("All Walmart drawings", t["url"])]
+            links = [("🎟️ ENTER THE DRAWING", x["url"]), ("All Walmart drawings", t["url"])]
 
             def ping(title):
                 self.notify.send("urgent", title, x["url"], fields, image=x.get("image", ""), links=links,
-                                 copy_to=["drawings"])
+                                 copy_to=["drawings"], store="walmart", product=True)
 
             if rec is None and phase != "closed":
                 if phase == "upcoming":
@@ -695,17 +704,17 @@ class Engine:
                           "Drops (CT)": self._when_text(p), "Buy / enter": f"[Open this format]({f['url']})"}
                 if baseline:
                     continue
-                links = [("🛒 Add to cart", f.get("add_to_cart")), ("⚡ Buy now", f.get("buy_now")),
-                         ("Product page", f["url"])]
+                links = self._buy_links(f)
                 fields.pop("Buy / enter", None)
+                fields["Stock"], fields["Limit"] = f.get("stock") or f["status"], f.get("limit")
                 if prev is None:
                     level = "urgent" if f["status"] in LIVE_STATUSES or is_hot(p) else "normal"
                     self.notify.send(level, f"🆕 Topps {f['name']} listed · {f['status']}", f["url"], fields,
-                                     image=f.get("image", ""), links=links)
+                                     image=f.get("image", ""), links=links, store="topps", product=True)
                 elif f["status"] != prev.get("status"):
                     if f["status"] in LIVE_STATUSES:
                         self.notify.send("urgent", f"🚨 LIVE: {f['name']} · {f['status']}", f["url"], fields,
-                                         image=f.get("image", ""), links=links,
+                                         image=f.get("image", ""), links=links, store="topps", product=True,
                                          copy_to=["drawings"] if f["status"] == "Drawing open" else None)
                     elif f["status"] == "Sold out":
                         self.notify.send("normal", f"Sold out: {f['name']}", f["url"], fields,

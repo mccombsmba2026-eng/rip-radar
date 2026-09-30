@@ -132,6 +132,7 @@ def test_product_page_formats():
     assert f["2026-bowman-football-hobby-box"] == {"handle": "2026-bowman-football-hobby-box",
         "name": "2026 Bowman Football Hobby Box", "url": "https://www.topps.com/products/2026-bowman-football-hobby-box",
         "price": "$129.99", "status": "On sale", "image": "https://www.topps.com/cdn/shop/files/hobby.jpg",
+        "stock": "", "limit": "",
         "add_to_cart": "https://www.topps.com/cart/add?id=4455667788&quantity=1",
         "buy_now": "https://www.topps.com/cart/4455667788:1"}
     assert f["2026-bowman-football-mega-box"]["status"] == "Sold out"
@@ -154,3 +155,12 @@ def test_tcg_filter():
           "Gengar Figure", "Pokémon TCG: Eevee Binder"]
     assert [x for x in yes if not is_tcg_product(x)] == []
     assert [x for x in no if is_tcg_product(x)] == []
+
+
+
+def test_stock_hints():
+    from rip_radar.parsing import stock_hint
+    assert stock_hint("Add to cart Only 3 left Limit 2 per order") == ("Only 3 left", "Limit 2 per order")
+    assert stock_hint("Only 5 left in stock - order soon.") == ("Only 5 left", "")
+    assert stock_hint("Low stock · Limited to 4 per customer") == ("Low stock", "Limit 4 per customer")
+    assert stock_hint("Add to cart") == ("", "")

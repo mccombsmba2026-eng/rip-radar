@@ -93,8 +93,8 @@ class Api:
         from .notify import CHANNELS
         where = f"{CHANNELS[channel]} channel" if channel in CHANNELS else "main channel"
         ok = self._app.engine.notify.send(
-            "normal", f"✅ Rip Radar test · {where}", "",
-            {"Note": "This channel is connected."}, channel=channel)
+            "normal", f"✅ Channel connected · {where}", "",
+            {"Note": "Alerts for this channel will post here."}, channel=channel)
         return {"ok": bool(ok)}
 
     def test_all_channels(self):

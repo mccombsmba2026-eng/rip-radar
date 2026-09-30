@@ -39,7 +39,7 @@ def test_drawings_ping_on_first_look_and_when_they_open(engine):
     assert f["Price"] == "$79.94" and f["Entries open (CT)"] and "Calendar" in f
     assert f["Typical retail"].startswith("~$79.98")
     assert got[0][2].get("copy_to") == ["drawings"]                 # #walmart AND #drawings
-    enter = dict(got[0][2]["links"])["🎟️ Enter the drawing"]
+    enter = dict(got[0][2]["links"])["🎟️ ENTER THE DRAWING"]
     assert enter.startswith("https://www.walmart.com/ip/") and enter.endswith("/20640569221")
     got.clear()
     engine.check_walmart_drawings(dict(T), st, False)

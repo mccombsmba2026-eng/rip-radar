@@ -351,6 +351,7 @@ def parse_topps_product_page(html, base_url):
         formats.append({"handle": handle, "name": name, "url": urljoin(base_url, f"/products/{handle}"),
                         "price": f"${price.group(1)}" if price else "", "status": status_from_text(text),
                         "image": image_in(node, base_url),
+                        "stock": stock_hint(text)[0], "limit": stock_hint(text)[1],
                         "add_to_cart": f"{host}/cart/add?id={variant}&quantity=1" if variant else "",
                         "buy_now": f"{host}/cart/{variant}:1" if variant else ""})
     page_text = soup.get_text(" ")
@@ -436,6 +437,29 @@ NOT_LIVE_WORDS = ("out of stock", "sold out", "currently unavailable", "unavaila
                   "get notified", "not available", "temporarily out", "check stores", "see similar")
 
 
+RE_STOCK = [re.compile(r"\bonly\s+(\d{1,3})\s+left\b", re.I), re.compile(r"\b(\d{1,3})\s+left in stock\b", re.I),
+            re.compile(r"\b(\d{1,3})\s+(?:items?\s+)?(?:remaining|available)\b", re.I)]
+RE_LIMIT = re.compile(r"\blimit(?:ed to)?\s+(\d{1,2})\s*(?:per|/)\s*(order|customer|household|person|guest)", re.I)
+LOW_WORDS = ("low stock", "limited stock", "almost gone", "selling fast", "few left", "limited quantity")
+
+
+def stock_hint(text):
+    """What the page says about how many are left, if anything: ("Only 3 left" | "Low stock" | "", "Limit 2 per order" | "")."""
+    t = text or ""
+    stock = ""
+    for rx in RE_STOCK:
+        m = rx.search(t)
+        if m:
+            stock = f"Only {m.group(1)} left"
+            break
+    if not stock:
+        low = t.lower()
+        stock = next((w.capitalize() for w in LOW_WORDS if w in low), "")
+    m = RE_LIMIT.search(t)
+    limit = f"Limit {m.group(1)} per {m.group(2).lower()}" if m else ""
+    return stock, limit
+
+
 def cart_links(store, pid):
     """(add_to_cart, buy_now) direct links where the store supports them."""
     if store == "walmart":
@@ -512,9 +536,11 @@ def parse_retail_tiles(html, base_url, store, live_if_price=False):
         status, live = tile_status(text, live_if_price)
         price = RE_PRICE.search(text)
         add, buy = cart_links(store, pid)
+        stock, limit = stock_hint(text)
         tiles.append({"id": pid, "name": name[:200], "url": urljoin(base_url, f["href"].split("?")[0].split("#")[0]),
                       "image": image_in(node, base_url), "price": f"${price.group(1)}" if price else "",
-                      "status": status, "live": live, "add_to_cart": add, "buy_now": buy, "text": text[:800]})
+                      "status": status, "live": live, "add_to_cart": add, "buy_now": buy, "text": text[:800],
+                      "stock": stock, "limit": limit})
     return tiles
 
 

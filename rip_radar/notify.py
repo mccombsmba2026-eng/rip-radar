@@ -9,6 +9,8 @@ import requests
 
 log = logging.getLogger("rip_radar")
 COLORS = {"urgent": 0xE0342B, "normal": 0x2350C8, "system": 0x8A8F9E}
+STORE_COLORS = {"target": 0xCC0000, "walmart": 0x0071CE, "bestbuy": 0x0046BE, "amazon": 0xFF9900,
+                "dicks": 0x006B54, "pokemon": 0xFFCB05, "topps": 0xE31837}
 
 
 # One Discord channel per store. Key -> label shown in the app. Webhooks live in settings["webhooks"].
@@ -48,7 +50,7 @@ class Notifier:
         self._local.channel = channel
 
     def send(self, level, title, url="", fields=None, desc="", channel=None, image="", links=None, strict=False,
-             record=True, copy_to=None):
+             record=True, copy_to=None, store=None, product=False):
         """links: [(label, url)] shown as a row of clickable links (Add to cart, Buy now...). image: thumbnail.
         strict: only post if one of the wanted channels has its own webhook (never fall back to main).
         record: also show it in the app's alert list.
@@ -63,18 +65,23 @@ class Notifier:
                            "channel": (channel[0] if isinstance(channel, (list, tuple)) else channel) or "",
                            "at": datetime.now(timezone.utc).isoformat()})
         s = self.get_settings()
-        link_row = "  ·  ".join(f"**[{lbl}]({u})**" for lbl, u in links)
+        # buy links first and big, right under the product name
+        link_row = "   ".join(f"**[{lbl.upper() if 'cart' in lbl.lower() or 'buy' in lbl.lower() else lbl}]({u})**"
+                               for lbl, u in links)
         body = "\n\n".join(x for x in (link_row, desc or "") if x)
-        embed = {"title": title[:250], "color": COLORS.get(level, COLORS["normal"]),
+        color = STORE_COLORS.get(store) if (store and level != "system") else None
+        embed = {"title": title[:250], "color": color or COLORS.get(level, COLORS["normal"]),
                  "description": body[:4000],
-                 "fields": [{"name": k, "value": str(v)[:1000], "inline": k != "Calendar"}
+                 "fields": [{"name": k, "value": str(v)[:1000], "inline": k not in ("Calendar", "Typical retail")}
                             for k, v in fields.items()],
                  "timestamp": datetime.now(timezone.utc).isoformat()}
+        if store and store in STORE_NAMES:
+            embed["footer"] = {"text": STORE_NAMES[store]}
         if url.startswith("http"):
             embed["url"] = url
         if image.startswith("http"):
-            embed["thumbnail"] = {"url": image}
-        payload = {"username": "Rip Radar", "embeds": [embed]}
+            embed["image" if product else "thumbnail"] = {"url": image}
+        payload = {"embeds": [embed]}   # the webhook's own name + avatar
         if level == "urgent":
             payload["content"] = "@everyone"
         hooks_by_channel = s.get("webhooks") or {}
@@ -164,7 +171,7 @@ class LiveBoard:
                 if requests.patch(f"{hook}/messages/{saved['id']}", json=body, timeout=15).status_code < 400:
                     self.last_body = body["embeds"][0]["description"]
                     return True
-            r = requests.post(hook + "?wait=true", json={**body, "username": "Rip Radar"}, timeout=15)
+            r = requests.post(hook + "?wait=true", json=body, timeout=15)
             if r.status_code < 400:
                 self.state[self.key] = {"hook": hook, "id": r.json()["id"]}
                 self.last_body = body["embeds"][0]["description"]
@@ -194,7 +201,7 @@ class StatusBoard:
             if saved.get("hook") == hook and saved.get("id"):
                 if requests.patch(f"{hook}/messages/{saved['id']}", json=body, timeout=15).status_code < 400:
                     return
-            r = requests.post(hook + "?wait=true", json={**body, "username": "Rip Radar"}, timeout=15)
+            r = requests.post(hook + "?wait=true", json=body, timeout=15)
             if r.status_code < 400:
                 self.state["status_msg"] = {"hook": hook, "id": r.json()["id"]}
         except (requests.RequestException, ValueError, KeyError) as e:
