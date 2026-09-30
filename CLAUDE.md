@@ -92,6 +92,11 @@ captchas, and never automates purchases. Keep it that way.
   `settings["zip"]` (77007) via fiats_v1. `_store_restocks`: a store going 0 -> N (or +5) = restock -> post to
   `instore` channel (else #target), @everyone for ETB/UPC; logged in `state["restock_log"]`; #in-store board
   (`_render_restocks`) shows each store's usual restock days/time learned from the log. First look = baseline.
+- Channel names in the app: `instore` = "Mat local" (the restock tracker above), `lookup` = "In store look up".
+  Look-up (1.0.26): the Discord BOT watches the channel its `lookup` webhook posts to (`ChatBot.lookup_channel_id`
+  GETs the webhook for channel_id). A message that is a ZIP ("33175" or "33175 15" for miles) -> `engine.zip_lookup`:
+  every Target card product known (≤60, ETB/UPC first) x fiats_v1 for that ZIP -> stores nearest first with counts,
+  split into <2000-char messages. Target only (the one store with public per-store counts). Needs the bot token.
 - Best Buy search URLs carry `intl=nosplash` (otherwise a "choose a country" splash page = empty).
 - Every launch (incl. after an update) syncs by itself (`Engine.start` sets `sync_at`): after the first full pass all
   boards are re-posted and #app-status gets "🟢 Rip Radar X is running · all channels synced" with any failing sources.

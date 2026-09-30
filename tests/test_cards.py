@@ -1,5 +1,6 @@
 """1.0.13: one message per product, exact Target stock, Walmart drawing page, names, queue status line."""
 import json
+import time
 from datetime import datetime, timedelta
 
 from rip_radar import settings
@@ -414,3 +415,33 @@ def test_gamestop_links_and_restock_tracker(engine):
     got.clear()
     engine._store_restocks("target", item, rec, [("Houston Heights", 5), ("Meyerland", 0)])     # selling down: quiet
     assert got == []
+
+
+def test_zip_lookup_lists_nearest_stores_with_card_stock(engine, monkeypatch):
+    import rip_radar.engine as eng_mod
+    engine.state.setdefault("targets", {})["Target · Pokémon cards"] = {"items": {
+        "1": {"name": "Pokémon TCG: Delta Reign Elite Trainer Box", "url": "https://t/1", "seen": time.time()},
+        "2": {"name": "Pokémon TCG: 30th Celebration Booster Bundle", "url": "https://t/2", "seen": time.time()}}}
+
+    def fake(session, tcin, zip_code, key="", miles=30, stores_only=False, **kw):
+        assert zip_code == "33175" and miles == 15 and stores_only
+        stock = {"1": [("Kendall", 4), ("Westchester", 0)], "2": [("Kendall", 2), ("Westchester", 3)]}[tcin]
+        return {"online": None, "online_status": "", "sold_out": False, "stores": stock,
+                "distance": {"Kendall": 2.1, "Westchester": 5.4}}
+    monkeypatch.setattr(eng_mod, "target_stock", fake)
+    monkeypatch.setattr(eng_mod.time, "sleep", lambda s: None)
+    (msg,) = engine.zip_lookup("33175", 15)
+    assert "within 15 mi of 33175" in msg and "2 have card product" in msg
+    assert msg.index("**Kendall** · 2.1 mi") < msg.index("**Westchester** · 5.4 mi")
+    assert "Delta Reign Elite Trainer Box **4**" in msg and "30th Celebration Booster Bundle **3**" in msg
+
+
+def test_bot_finds_lookup_channel_from_its_webhook(monkeypatch):
+    from rip_radar import notify
+    bot = notify.ChatBot(lambda: "", lambda: {"webhooks": {"lookup": "https://discord.com/api/webhooks/1/x"}})
+
+    class R:
+        def json(self):
+            return {"channel_id": "998877"}
+    monkeypatch.setattr(notify.requests, "get", lambda url, timeout=None: R())
+    assert bot.lookup_channel_id() == "998877"

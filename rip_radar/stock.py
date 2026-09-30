@@ -50,7 +50,7 @@ def _store_name(d):
 def parse_target_fulfillment(*payloads):
     """Target stock JSON (product_fulfillment_v1 / fiats_v1) ->
     {"online": int|None, "online_status": str, "stores": [(name, qty)], "sold_out": bool}"""
-    out = {"online": None, "online_status": "", "stores": [], "sold_out": False}
+    out = {"online": None, "online_status": "", "stores": [], "sold_out": False, "distance": {}}
     seen = set()
     for data in payloads:
         for d in _walk(data):
@@ -67,16 +67,23 @@ def parse_target_fulfillment(*payloads):
                 if name and q is not None and name not in seen:
                     seen.add(name)
                     out["stores"].append((name, q))
+                    dist = d.get("distance")
+                    if dist is None and isinstance(d.get("store"), dict):
+                        dist = d["store"].get("distance")
+                    try:
+                        out["distance"][name] = float(dist)
+                    except (TypeError, ValueError):
+                        pass
     out["stores"].sort(key=lambda x: -x[1])
     return out
 
 
-def target_stock(session, tcin, zip_code="", key="", timeout=15, miles=30):
+def target_stock(session, tcin, zip_code="", key="", timeout=15, miles=30, stores_only=False):
     """Exact counts for one Target item: shipping + nearby stores. None if Target didn't answer."""
     key = key or TARGET_KEY
     got = []
-    tries = [(f"{REDSKY}/product_fulfillment_v1",
-              {"key": key, "tcin": tcin, "zip": zip_code, "channel": "WEB", "is_bot": "false"})]
+    tries = [] if stores_only else [(f"{REDSKY}/product_fulfillment_v1",
+                                     {"key": key, "tcin": tcin, "zip": zip_code, "channel": "WEB", "is_bot": "false"})]
     if zip_code:
         tries.append((f"{REDSKY}/fiats_v1", {"key": key, "tcin": tcin, "nearby": zip_code, "radius": miles, "limit": 30,
                                              "include_only_available_stores": "false", "requested_quantity": 1}))

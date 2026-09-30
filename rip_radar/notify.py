@@ -22,7 +22,8 @@ CHANNELS = {"topps": "Topps products (formats, in stock)", "topps_calendar": "To
             "walmart": "Walmart", "target": "Target", "dicks": "Dick's", "amazon": "Amazon", "bestbuy": "Best Buy",
             "costco": "Costco", "samsclub": "Sam's Club", "pharmacy": "CVS & Walgreens", "ace": "Ace Hardware",
             "barnes": "Barnes & Noble", "gamestop": "GameStop",
-            "instore": "In-store restocks (stores near you)",
+            "instore": "Mat local (in-store restocks near your ZIP)",
+            "lookup": "In store look up (type a ZIP)",
             "drawings": "Drawings & raffles (all stores)", "calendar": "Drop calendar (all announced dates)",
             "status": "App status"}
 STORE_NAMES = {"topps": "Topps", "pokemon": "Pokémon Center", "walmart": "Walmart", "target": "Target",
@@ -275,13 +276,27 @@ class ChatBot:
     Needs a bot token. Wording changes apply right away - it reads settings on every message."""
     TRIGGERS = {"still running", "running", "status", "you up", "alive"}
 
-    def __init__(self, status_text, get_settings=None, reply_text=None):
+    def __init__(self, status_text, get_settings=None, reply_text=None, zip_lookup=None):
         self.status_text = status_text
         self.get_settings = get_settings or (lambda: {})
         self.reply_text = reply_text or (lambda: status_text())
+        self.zip_lookup = zip_lookup          # (zip, miles) -> [message chunks]
+        self._lookup_channel = {}             # webhook url -> channel id
         self.token = None
         self.state = "off"   # off | connecting | online | error: ...
         self._thread = None
+
+    def lookup_channel_id(self):
+        """The 'In store look up' channel = the channel its webhook posts to (the webhook knows its channel)."""
+        hook = (self.get_settings().get("webhooks") or {}).get("lookup") or ""
+        if not hook.startswith("http"):
+            return None
+        if hook not in self._lookup_channel:
+            try:
+                self._lookup_channel[hook] = str(requests.get(hook, timeout=15).json().get("channel_id") or "")
+            except (requests.RequestException, ValueError):
+                return None
+        return self._lookup_channel[hook] or None
 
     def start(self, token):
         if not token or token == self.token and self._thread and self._thread.is_alive():
@@ -314,6 +329,28 @@ class ChatBot:
                 return
             s = bot.get_settings()
             where = "#" + str(getattr(msg.channel, "name", "") or "DM")
+            # In store look up: someone types a ZIP (optionally "33175 15" for 15 miles)
+            if bot.zip_lookup and msg.content:
+                import asyncio as _aio
+                import re as _re
+                loop = _aio.get_running_loop()
+                lookup_id = await loop.run_in_executor(None, bot.lookup_channel_id)
+                if lookup_id and str(getattr(msg.channel, "id", "")) == lookup_id:
+                    m = _re.fullmatch(r"\s*(\d{5})(?:\s+(\d{1,3})\s*(?:mi|miles)?)?\s*", msg.content)
+                    if not m:
+                        await msg.channel.send("Type a 5-digit ZIP code (e.g. `33175`), or ZIP + miles (`33175 15`).")
+                        return
+                    zip_code, miles = m.group(1), int(m.group(2) or s.get("restock_miles") or 30)
+                    await msg.channel.send(f"🔎 Checking every Target within {miles} mi of **{zip_code}** for Pokémon & "
+                                           f"sports cards… about a minute.")
+                    try:
+                        chunks = await loop.run_in_executor(None, bot.zip_lookup, zip_code, miles)
+                    except Exception as e:
+                        chunks = [f"Couldn't finish that look-up ({type(e).__name__}). Try again in a minute."]
+                    for c in chunks:
+                        await msg.channel.send(c[:1990])
+                    bot.state = f"online · last look-up: {zip_code}"
+                    return
             if not msg.content:
                 # Discord sent the message without its text: Message Content Intent is off for this bot
                 bot.state = (f"online · heard a message in {where} but can't read it: turn on Message Content Intent "

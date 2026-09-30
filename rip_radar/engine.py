@@ -97,7 +97,7 @@ class Engine:
                                        color=STORE_COLORS.get("topps"))
         self.sync_at = 0
         self.startup_sync = False
-        self.bot = ChatBot(self.status_text, settings_mod.load, self.bot_reply)
+        self.bot = ChatBot(self.status_text, settings_mod.load, self.bot_reply, zip_lookup=self.zip_lookup)
         self.started = datetime.now(CT)
         self.last_scan = None
         self.health = {}           # name -> {"health","code","at","type","url"}
@@ -761,6 +761,56 @@ class Engine:
         self.notify.send("urgent", title[:250], x["url"], fields, image=x.get("image", ""), links=self._buy_links(x),
                          channel=["instore", store], store=store, product=True, ping=is_etb_or_upc(x["name"]))
         self._restock_board_dirty = True
+
+    def zip_lookup(self, zip_code, miles=30, max_products=60):
+        """In store look up: every Target card product we know of, at every Target within `miles` of any ZIP.
+        -> Discord messages (each under 2000 characters), stores nearest first, only products they have."""
+        items = {}
+        for t in self.targets():
+            if t.get("type") == "retail_search" and t.get("store") == "target":
+                for pid, rec in (self.state.get("targets", {}).get(t["name"], {}).get("items") or {}).items():
+                    if rec.get("name") and time.time() - rec.get("seen", 0) < 3 * 86400 and rec.get("over") != "way_over":
+                        items[pid] = rec
+        if not items:
+            return ["I don't have a Target product list yet - the Target scanner fills it in a few minutes after launch."]
+        # ETBs / UPCs / Pokémon first, so the most wanted items are always checked
+        order = sorted(items, key=lambda p: (not is_etb_or_upc(items[p]["name"]), not is_pokemon_product(items[p]["name"]),
+                                            items[p]["name"]))[:max_products]
+        session = getattr(self.fetcher, "s", None) or requests.Session()
+        stores, dist, answered = {}, {}, 0
+        for pid in order:
+            info = target_stock(session, pid, zip_code, self.state.get("target_key", ""), miles=miles, stores_only=True)
+            time.sleep(0.25)
+            if not info:
+                continue
+            answered += 1
+            dist.update(info.get("distance") or {})
+            for name, q in info["stores"]:
+                stores.setdefault(name, [])
+                if q > 0:
+                    stores[name].append((items[pid]["name"], q, items[pid]["url"]))
+        if not answered:
+            return [f"Target didn't answer the stock look-up for {zip_code} right now. Try again in a few minutes."]
+        with_stock = {n: v for n, v in stores.items() if v}
+        head = (f"🏬 **Target stores within {miles} mi of {zip_code}** · {len(stores)} stores · "
+                f"{len(with_stock)} have card product · {answered} products checked")
+        if not with_stock:
+            return [head + "\nNone of them show Pokémon or sports card stock right now."]
+        chunks, cur = [], head
+        for name in sorted(with_stock, key=lambda n: (dist.get(n, 999), n)):
+            prods = sorted(with_stock[name], key=lambda p: -p[1])
+            d = f" · {dist[name]:.1f} mi" if name in dist else ""
+            block = f"\n\n**{name}**{d} · {sum(q for _, q, _ in prods)} items\n" + "\n".join(
+                f"• {self._short(n)[:60]} **{q}**" for n, q, _ in prods[:12])
+            if len(prods) > 12:
+                block += f"\n• …and {len(prods) - 12} more"
+            if len(cur) + len(block) > 1900:
+                chunks.append(cur)
+                cur = block.strip()
+            else:
+                cur += block
+        chunks.append(cur)
+        return chunks
 
     def _render_restocks(self):
         """#in-store board: when each nearby store usually restocks (learned from what the tracker has seen)."""
