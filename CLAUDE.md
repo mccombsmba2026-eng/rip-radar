@@ -40,5 +40,8 @@ captchas, and never automates purchases. Keep it that way.
 - Keep scan intervals ≥ 60 s per source.
 - pywebview 6.x: `closing` handlers returning False cancel the close (used for hide-to-tray);
   `load_url`/`evaluate_js` block until the window is shown/ready (hidden windows still fire `shown`).
+- topps.com returns 403 to plain HTTP from data-center IPs (the build machine's selftest always shows
+  Topps as blocked). The engine's `_fetch` auto-switches any blocked non-feed source to the hidden
+  browser window (sticky per source via `auto_browser` in state), so the installed app still reads it.
 - The Topps calendar page is server-rendered HTML: cards are links to `/pages/<slug>` with text like
   "Wednesday, Sep 30 at 4:00 PM UTC 2026 Bowman Football" and a button (Notify me / Pre-order).
