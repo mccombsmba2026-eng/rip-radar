@@ -84,6 +84,8 @@ captchas, and never automates purchases. Keep it that way.
 - Source failure posts: only after 30 min of failing in a row ("hasn't worked for 30+ min"), once, then "working again".
 - Barnes & Noble: /s/ search URLs 404 - use the Pokémon CCG /b/ category and the collectible-card-games collection.
   Costco: CatalogSearch?dept=All&keyword=... (the /s? search returned unrelated items).
+  Ace: /pokemon-cards and /trading-card-games category pages (search is robots-blocked); names end in "Mfr# ..."
+  (stripped); "Pokemon X Trading Cards" (a pack) counts as sealed.
 - Best Buy search URLs carry `intl=nosplash` (otherwise a "choose a country" splash page = empty).
 - Every launch (incl. after an update) syncs by itself (`Engine.start` sets `sync_at`): after the first full pass all
   boards are re-posted and #app-status gets "🟢 Rip Radar X is running · all channels synced" with any failing sources.

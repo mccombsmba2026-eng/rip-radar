@@ -260,11 +260,21 @@ targets:
     verify_pages: 1
     interval_seconds: 360
 
-  - name: Ace Hardware · trading cards
+  - name: Ace Hardware · Pokémon cards
+    type: retail_search
+    store: ace
+    products: pokemon
+    url: https://www.acehardware.com/pokemon-cards
+    browser: true
+    channel: ace
+    verify_pages: 1
+    interval_seconds: 300
+
+  - name: Ace Hardware · trading card games
     type: retail_search
     store: ace
     products: cards
-    url: https://www.acehardware.com/search?query=pokemon%20cards
+    url: https://www.acehardware.com/trading-card-games
     browser: true
     channel: ace
     verify_pages: 1

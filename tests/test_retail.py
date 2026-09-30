@@ -119,3 +119,18 @@ def test_ping_layout_uses_webhook_name_and_buy_links(monkeypatch):
     assert "⚡ BUY NOW" in e["description"] and e["image"]["url"].endswith("1.jpg")
     assert e["color"] == 0x0071CE and e["footer"]["text"] == "Walmart"
     assert [f["name"] for f in e["fields"]] == ["Price", "Stock", "Limit"]
+
+
+def test_ace_hardware_pokemon_page():
+    from rip_radar.parsing import is_pokemon_product, parse_retail_tiles
+    names = ["Pokemon Chaos Rising Trading Cards",
+             "Pokemon Prismatic Evolutions Elite Trainer Box Trading Cards Mfr# 100-10013",
+             "Pokemon Pitch Black 3-Booster Blister Trading Cards"]
+    html = "".join(f'<div><a href="/departments/home-and-decor/novelty-items/toys-and-games/91{i:05d}"><img alt="{n}" '
+                   f'src="https://i/{i}.jpg"></a><span>$49.99</span><button>Add to Cart</button></div>'
+                   for i, n in enumerate(names)) + "x" * 21000
+    tiles = parse_retail_tiles(html, "https://www.acehardware.com/pokemon-cards", "ace")
+    assert [x["name"] for x in tiles] == ["Pokemon Chaos Rising Trading Cards",
+                                          "Pokemon Prismatic Evolutions Elite Trainer Box Trading Cards",
+                                          "Pokemon Pitch Black 3-Booster Blister Trading Cards"]
+    assert all(x["live"] and is_pokemon_product(x["name"]) for x in tiles)

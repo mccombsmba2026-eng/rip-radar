@@ -384,7 +384,8 @@ MERCH = ("hat", "cap", "beanie", "lanyard", "plush", "pin", "shirt", "tee", "hoo
          "mug", "cup", "tumbler", "bottle", "sticker", "keychain", "key chain", "backpack", "bag", "pouch",
          "figure", "figurine", "poster", "blanket", "pillow", "socks", "wallet", "towel", "ornament", "puzzle",
          "lamp", "watch", "costume", "slippers", "necklace", "earrings", "bracelet", "lego", "pajama")
-TCG_SEALED = ("elite trainer box", "booster", "collection", "tin", "bundle", "deck", "pack", "box", "display")
+TCG_SEALED = ("elite trainer box", "booster", "collection", "tin", "bundle", "deck", "pack", "box", "display",
+              "trading card")      # Ace: "Pokemon Chaos Rising Trading Cards" (a pack)
 
 
 def is_tcg_product(text):
@@ -595,7 +596,7 @@ NAME_NOISE = [re.compile(x, re.I) for x in (
     r"\bnew at [^™®]{1,40}[™®]",
     r"^(?:sponsored|new|new arrival|best ?seller|only at target|only at walmart|deal|clearance|popular pick|"
     r"top rated|highly rated|rollback|reduced price|limited time|exclusive|pre-?order)\b[\s:·-]*",
-    r"\bcurrent price\b.*$", r"\bwas \$.*$", r"\boptions? available\b.*$", r"\b\d+ options?\b.*$")]
+    r"\bcurrent price\b.*$", r"\bwas \$.*$", r"\s*\bmfr\s*#?\s*[\w.-]+.*$", r"\boptions? available\b.*$", r"\b\d+ options?\b.*$")]
 
 
 def clean_name(text):
