@@ -86,8 +86,10 @@ class Engine:
         self.old_store_boards = [f"board_{k}" for k in ("target", "walmart", "dicks", "amazon", "bestbuy", "pokemon",
                                                          "topps")]
         # drop calendar = Topps calendar, drawings and products with an announced date (no news / Reddit posts)
+        # (and no Topps format pages - Hobby / Mega / cases are shown under their product, not as extra entries)
         self.state["events"] = {k: v for k, v in (self.state.get("events") or {}).items()
-                                if v.get("kind") in ("topps", "drawing") or v.get("product")}
+                                if (v.get("kind") in ("topps", "drawing") or v.get("product"))
+                                and not (v.get("kind") == "topps" and "/products/" in v.get("url", ""))}
         self.drawings_board = LiveBoard(settings_mod.load, "drawings", self.state, "board_drawings", every_minutes=5)
         self.formats_board = LiveBoard(settings_mod.load, "topps", self.state, "board_topps", every_minutes=5,
                                        color=STORE_COLORS.get("topps"))
@@ -254,8 +256,16 @@ class Engine:
         elif health.startswith("ok"):
             self.host_backoff.pop(host, None)
         bad = health.split(" ")[0].rstrip(":") in ("blocked", "error", "empty")
-        if self.first_pass_done and bad and prev.split(" ")[:1] != health.split(" ")[:1]:
-            self.notify.send("system", f"⚠️ {t['name']} stopped working: {health}", t.get("url", ""))
+        # one bad check is normal (sites hiccup): only say something once it has failed for 30+ minutes straight
+        if bad:
+            st.setdefault("bad_since", time.time())
+            if self.first_pass_done and not st.get("bad_alerted") and time.time() - st["bad_since"] >= 1800:
+                st["bad_alerted"] = True
+                self.notify.send("system", f"⚠️ {t['name']} hasn't worked for 30+ min: {health}", t.get("url", ""))
+        else:
+            if st.pop("bad_alerted", None):
+                self.notify.send("system", f"✅ {t['name']} is working again", t.get("url", ""))
+            st.pop("bad_since", None)
 
     # ------------------------------------------------------------ fetching
     def _fetch(self, t, st):
@@ -1146,9 +1156,6 @@ class Engine:
             prev_status, was_live, new = rec.get("status"), rec.get("live"), not rec.get("status")
             rec.update({k: v for k, v in item.items() if v not in ("", None) or k in ("live",)})
             rec["retail"], rec["ratio"] = "Topps' own price", None
-            if rec.get("when") and rec.get("live") is False and datetime.fromisoformat(rec["when"]) > datetime.now(CT):
-                self._add_event(f"Topps: {rec['name']}", rec["url"], datetime.fromisoformat(rec["when"]),
-                                rec.get("has_time", False), "topps", "topps")
             event = ""
             if new and not rec.get("baseline"):
                 rec["loaded_before_stock"] = not rec["live"]
@@ -1245,46 +1252,77 @@ class Engine:
         out.sort(key=lambda e: (e["start"][:10], not e["has_time"], e["start"]))
         return out
 
+    SPORT_ICON = {"Baseball": "⚾", "Basketball": "🏀", "Football": "🏈"}
+
+    @staticmethod
+    def _short(title):
+        """'Topps: 2026 Topps Midnight Football' -> 'Midnight Football' (the icon already says Topps / sport)."""
+        t = re.sub(r"[®™]", "", title or "")
+        t = re.sub(r"^(?:topps|walmart drawing|target|walmart|best buy|amazon|pokémon center)\s*:\s*", "", t, flags=re.I)
+        t = re.sub(r"^20\d\d(?:-\d\d)?\s+", "", t)
+        t = re.sub(r"^topps\s+(?=\S)", "", t, flags=re.I)
+        return " ".join(t.split())
+
+    def _icon(self, e):
+        if e.get("kind") == "drawing":
+            return "🎟️"
+        if e.get("kind") == "topps" or "topps" in (e.get("url") or ""):
+            return self.SPORT_ICON.get(sport_of(e.get("title", "")), "🃏")
+        return "⚡"
+
     def _event_line(self, e, extra=""):
         d = datetime.fromisoformat(e["start"])
-        t = f"{d.hour % 12 or 12}:{d:%M} {'PM' if d.hour >= 12 else 'AM'}" if e["has_time"] else "All day"
-        return f"`{t:>8}` {e['icon']} [{e['title'][:90]}]({e['url']}){extra}"
+        t = f"**{d.hour % 12 or 12}:{d:%M} {'PM' if d.hour >= 12 else 'AM'}**" if e["has_time"] else "*time TBA*"
+        return f"{t} · {self._icon(e)} [{self._short(e['title'])[:70]}]({e['url']}){extra}"
 
     def _day_lines(self, events, extra=lambda e: ""):
-        """Calendar layout shared by #drop-calendar and #topps-calendar: bold day headers, then `time` icon link."""
-        lines, day = [], None
+        """Calendar layout shared by #drop-calendar and #topps-calendar: a bold day header, then one short line per
+        drop - time first, sport icon, short name linked to the product. Doubles (same name, same day) shown once."""
+        lines, day, seen = [], None, set()
         for e in events:
             d = datetime.fromisoformat(e["start"])
+            key = (d.date(), self._short(e["title"]).lower())
+            if key in seen:
+                continue
+            seen.add(key)
             if d.date() != day:
                 day = d.date()
-                lines.append(f"\n**{d:%A}, {d:%b} {d.day}**")
+                today = datetime.now(CT).date()
+                label = "Today" if day == today else "Tomorrow" if day == today + timedelta(days=1) else f"{d:%a} {d:%b} {d.day}"
+                lines.append(f"\n__**{label}**__")
             lines.append(self._event_line(e, extra(e)))
         return lines
 
     def _render_calendar(self):
         lines = self._day_lines(self.upcoming_events(days=14))
-        legend = "🃏 Topps calendar · 🎟️ drawing · ⚡ product with an announced date"
-        return "🗓️ Drop calendar · next 14 days (Central time)", ("\n".join(lines).strip() + f"\n\n-# {legend}")
+        legend = "⚾🏀🏈🃏 Topps · 🎟️ drawing · ⚡ store product · times Central · *time TBA* = day announced, time not yet"
+        return "🗓️ Drop calendar · next 14 days", ("\n".join(lines).strip() + f"\n\n-# {legend}")
 
     def _render_topps_board(self):
         """Same layout as the drop calendar: every Topps product by day, linked to its Topps page."""
         dated, undated = [], []
         for p in self.topps:
-            ev = {"title": p["name"], "url": p["url"], "icon": "🃏", "start": p["when"], "has_time": p["has_time"],
+            ev = {"title": p["name"], "url": p["url"], "kind": "topps", "start": p["when"], "has_time": p["has_time"],
                   "sport": p["sport"], "status": p["status"], "slug": p["slug"], "what": p.get("time_from_page")}
             (dated if p["when"] else undated).append(ev)
         dated.sort(key=lambda e: (e["start"][:10], not e["has_time"], e["start"]))
 
-        def extra(e):
+        def extra(e):       # only what's worth knowing: live status, a drawing, how many formats are listed
             n = len(self.topps_formats.get(e["slug"], []))
-            what = " · 🎟️ drawing opens" if e.get("what") == "Drawing opens" else ""
-            return f" · {e['sport'] or 'Other'} · {e['status']}{what}" + (f" · {n} formats" if n else "")
+            tags = []
+            if e.get("what") == "Drawing opens":
+                tags.append("🎟️ drawing")
+            if e["status"] in ("Pre-order", "On sale", "Drawing open"):
+                tags.append(f"🟢 {e['status']}")
+            if n:
+                tags.append(f"{n} formats")
+            return (" · " + " · ".join(tags)) if tags else ""
         lines = self._day_lines(dated, extra)
         if undated:
-            lines.append("\n**Date not shown right now**")
-            lines += [f"`     now` 🃏 [{e['title'][:90]}]({e['url']}){extra(e)}" for e in undated]
-        return (f"🃏 Topps release calendar · {len(self.topps)} products (Central time)",
-                "\n".join(lines).strip() + "\n\n-# 🃏 Topps · click a product to open it on Topps")
+            lines.append("\n__**Date not shown right now**__")
+            lines += [f"*now* · {self._icon(e)} [{self._short(e['title'])[:70]}]({e['url']}){extra(e)}" for e in undated]
+        return (f"🃏 Topps release calendar · {len(self.topps)} products",
+                "\n".join(lines).strip() + "\n\n-# ⚾🏀🏈🃏 sport · times Central · *time TBA* = Topps gave the day, not the time yet")
 
     def calendar_tick(self):
         """Every loop: post newly found dates to #drop-calendar, remind 15 min before news-announced drops,

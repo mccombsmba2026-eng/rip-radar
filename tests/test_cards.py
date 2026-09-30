@@ -214,8 +214,8 @@ def test_topps_calendar_board_uses_calendar_layout(engine):
                      "url": "https://www.topps.com/pages/bowman-football", "when": "2026-09-30T11:00:00-05:00",
                      "has_time": True, "status": "Upcoming"}]
     title, text = engine._render_topps_board()
-    assert "**Wednesday, Sep 30**" in text
-    assert "`11:00 AM` 🃏 [2026 Bowman Football](https://www.topps.com/pages/bowman-football) · Football · Upcoming" in text
+    assert "__**Wed Sep 30**__" in text or "__**Today**__" in text
+    assert "**11:00 AM** · 🏈 [Bowman Football](https://www.topps.com/pages/bowman-football)" in text
 
 
 # ---------------------------------------------------------------- 1.0.14
@@ -274,7 +274,7 @@ def test_topps_calendar_gets_announced_time_from_product_page(engine):
     (bf,) = engine.topps
     assert bf["has_time"] and datetime.fromisoformat(bf["when"]).hour == 11          # 12pm ET = 11 AM CT
     title, text = engine._render_topps_board()
-    assert "`11:00 AM` 🃏 [2026 Bowman Football]" in text
+    assert "**11:00 AM** · 🏈 [Bowman Football]" in text
 
 
 def test_walmart_page_data_drawing_times():
@@ -369,3 +369,22 @@ def test_bot_wording_triggers_and_channel(engine):
     settings.update({"bot_reply": "🌴 Palm Tree Edge scanner is ON · v{version} · last scan {last_scan}\\n{problems}"})
     r = engine.bot_reply()
     assert r.startswith("🌴 Palm Tree Edge scanner is ON · v") and "{" not in r
+
+
+def test_calendar_shows_each_drop_once_and_no_format_rows(engine):
+    now = datetime.now(CT) + timedelta(days=3)
+    engine._add_event("Topps: 2026 Topps Update Series Baseball", "https://www.topps.com/pages/update-series", now, False,
+                      "topps", "topps")
+    engine._add_event("Topps: 2026 Topps Update Series Baseball", "https://www.topps.com/pages/update-series-2", now, False,
+                      "topps", "topps")
+    _, desc = engine._render_calendar()
+    assert desc.count("Update Series Baseball") == 1
+    engine.state["events"]["fmt"] = {"title": "Topps: 2026 Topps Update Series Baseball - Hobby Box",
+                                     "url": "https://www.topps.com/products/update-hobby-box", "start": now.isoformat(),
+                                     "has_time": False, "kind": "topps", "store": "topps"}
+    import rip_radar.engine as eng_mod
+    fresh = eng_mod.Engine.__new__(eng_mod.Engine)
+    events = {k: v for k, v in engine.state["events"].items()
+              if (v.get("kind") in ("topps", "drawing") or v.get("product"))
+              and not (v.get("kind") == "topps" and "/products/" in v.get("url", ""))}
+    assert "fmt" not in events                                  # format pages are cleared from the calendar on start

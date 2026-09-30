@@ -1,4 +1,4 @@
 """Rip Radar - drop, raffle and queue alerts for Topps and Pokémon."""
-__version__ = "1.0.20"
+__version__ = "1.0.21"
 GITHUB_REPO = "mccombsmba2026-eng/rip-radar"
 APP_NAME = "Rip Radar"

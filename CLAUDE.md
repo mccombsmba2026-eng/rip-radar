@@ -76,6 +76,12 @@ captchas, and never automates purchases. Keep it that way.
   Topps calendar with "@everyone · Topps calendar updated" + a bullet list of changes; drop calendar with
   "🗓️ Calendar updated" + what was added (no @everyone). No "added to calendar" posts, no 15-min reminders, no 8 AM
   digest there. Topps drop alerts (LIVE / 15 min / OPEN NOW) go to #topps.
+- Calendar line format (`_day_lines` / `_event_line`): `__**Today**__` / `__**Wed Oct 7**__` headers, then
+  "**11:00 AM** · 🏈 [Short Name](url)" (`_short` drops "Topps:", year, leading "Topps"; `_icon` = sport icon for Topps,
+  🎟️ drawings, ⚡ store products); no time = "*time TBA*". Same day + same short name shows once. Topps FORMAT pages
+  (/products/) never go on the calendar (purged on start) - only the calendar product (/pages/).
+- Source failure posts: only after 30 min of failing in a row ("hasn't worked for 30+ min"), once, then "working again".
+- Best Buy search URLs carry `intl=nosplash` (otherwise a "choose a country" splash page = empty).
 - Every launch (incl. after an update) syncs by itself (`Engine.start` sets `sync_at`): after the first full pass all
   boards are re-posted and #app-status gets "🟢 Rip Radar X is running · all channels synced" with any failing sources.
 - Drop calendar = `state["events"]` (kind: topps / drawing / release, store). ONLY the Topps calendar, Walmart

@@ -57,7 +57,8 @@ def test_calendar_tick_baseline_added_reminder_digest(engine):
     engine.calendar_tick()                                           # nothing new: no fresh post
     assert not [b for b in boards if b[0]]
     title, desc = engine._render_calendar()
-    assert "Drop calendar" in title and "🎟️" in desc and "Walmart drawing" in desc
+    assert "Drop calendar" in title and "🎟️ [30th Booster Bundle](https://walmart/draw)" in desc
+    assert "*time TBA* · 🏈 [Bowman Football](https://topps/b)" in desc          # short names, sport icon, no "All day"
 
 
 def test_news_and_reddit_never_add_to_the_calendar(engine):
@@ -83,4 +84,4 @@ def test_topps_board_lists_products(engine):
                      "has_time": True, "status": "On sale", "section": "Dropping soon"}]
     engine.topps_formats = {"bowman-football": [{"name": "Mega"}, {"name": "Blaster"}]}
     title, desc = engine._render_topps_board()
-    assert "1 products" in title and "2026 Bowman Football" in desc and "2 formats" in desc and "On sale" in desc
+    assert "1 products" in title and "[Bowman Football]" in desc and "2 formats" in desc and "On sale" in desc

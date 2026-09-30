@@ -166,7 +166,7 @@ targets:
     type: retail_search
     store: bestbuy
     products: pokemon
-    url: https://www.bestbuy.com/site/searchpage.jsp?st=pokemon+trading+cards
+    url: https://www.bestbuy.com/site/searchpage.jsp?st=pokemon+trading+cards&intl=nosplash
     browser: true
     channel: bestbuy
     interval_seconds: 300
@@ -175,7 +175,7 @@ targets:
     type: retail_search
     store: bestbuy
     products: sports
-    url: https://www.bestbuy.com/site/searchpage.jsp?st=sports+trading+cards
+    url: https://www.bestbuy.com/site/searchpage.jsp?st=sports+trading+cards&intl=nosplash
     browser: true
     channel: bestbuy
     interval_seconds: 300
