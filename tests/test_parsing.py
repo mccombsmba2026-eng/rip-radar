@@ -118,8 +118,10 @@ def test_calendar_reads_machine_timestamp():
 
 def test_product_page_formats():
     html = ('<div class="grid">'
-            '<div class="card"><a href="/products/2026-bowman-football-hobby-box"><img alt="2026 Bowman Football Hobby Box"></a>'
-            '<span>$129.99</span><button>Add to cart</button></div>'
+            '<div class="card"><a href="/products/2026-bowman-football-hobby-box"><img alt="2026 Bowman Football Hobby Box" '
+            'src="//www.topps.com/cdn/shop/files/hobby.jpg"></a>'
+            '<span>$129.99</span><form action="/cart/add"><input type="hidden" name="id" value="4455667788">'
+            '<button>Add to cart</button></form></div>'
             '<div class="card"><a href="/products/2026-bowman-football-mega-box">2026 Bowman Football Mega Box</a>'
             '<span>$59.99</span><button>Sold out</button></div>'
             '<div class="card"><a href="/products/2026-bowman-football-blaster-box?variant=1"></a>'
@@ -129,7 +131,9 @@ def test_product_page_formats():
     f = {x["handle"]: x for x in formats}
     assert f["2026-bowman-football-hobby-box"] == {"handle": "2026-bowman-football-hobby-box",
         "name": "2026 Bowman Football Hobby Box", "url": "https://www.topps.com/products/2026-bowman-football-hobby-box",
-        "price": "$129.99", "status": "On sale"}
+        "price": "$129.99", "status": "On sale", "image": "https://www.topps.com/cdn/shop/files/hobby.jpg",
+        "add_to_cart": "https://www.topps.com/cart/add?id=4455667788&quantity=1",
+        "buy_now": "https://www.topps.com/cart/4455667788:1"}
     assert f["2026-bowman-football-mega-box"]["status"] == "Sold out"
     assert f["2026-bowman-football-blaster-box"]["name"] == "2026 Bowman Football Blaster Box"   # from the link
     assert when and fmt_when(when[0]) == "Wed Sep 30, 11:00 AM"

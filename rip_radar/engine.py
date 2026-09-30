@@ -17,8 +17,9 @@ from bs4 import BeautifulSoup
 
 from . import __version__, paths, settings as settings_mod
 from .notify import CHANNELS, ChatBot, Notifier, StatusBoard, store_in
-from .parsing import (CT, LIVE_STATUSES, categorize, extract_when, fmt_when, gcal_link, is_tcg_product, looks_blocked,
-                      parse_topps_calendar, parse_topps_product_page)
+from .parsing import (CT, LIVE_STATUSES, RETAIL_STORES, categorize, extract_when, fmt_when, gcal_link, is_card_product,
+                      is_sports_card_product, is_tcg_product, looks_blocked, parse_retail_tiles, parse_topps_calendar,
+                      parse_topps_product_page, tile_status)
 
 log = logging.getLogger("rip_radar")
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -132,17 +133,26 @@ class Engine:
                 self._wake.clear()
                 continue
             report = {}
-            for t in self.targets():
-                if self._stop.is_set():
-                    return
-                if time.time() < self.next_due.get(t["name"], 0):
-                    continue
+            targets = self.targets()
+            pending = {t["name"] for t in targets}
+            while pending and not self._stop.is_set():
+                # one source at a time, most overdue first (relative to its interval), so fast sources like the
+                # Pokémon Center queue stay on time even when slow store pages pile up
+                now = time.time()
+                due = [t for t in targets if t["name"] in pending and now >= self.next_due.get(t["name"], 0)]
+                if not due:
+                    break
+                t = max(due, key=lambda t: (now - self.next_due.get(t["name"], 0))
+                        / t.get("interval_seconds", default_iv))
+                pending.discard(t["name"])
                 self._run_target(t, report)
                 iv = t.get("interval_seconds", default_iv)
                 self.next_due[t["name"]] = time.time() + iv * random.uniform(0.85, 1.15)
                 self._save_state()
                 time.sleep(random.uniform(1, 2.5))
-            if report and not self.first_pass_done:
+            if self._stop.is_set():
+                return
+            if report and not self.first_pass_done and len(report) >= len(targets):
                 self.first_pass_done = True
                 lines = [f"{'✅' if v.startswith('ok') else '❌'} **{k}**: {v}" for k, v in report.items()]
                 self.notify.send("system", f"Rip Radar {__version__} started · source check",
@@ -291,6 +301,81 @@ class Engine:
         st["seen"] = list(seen)[-2000:]
         return f"ok ({len(feed.entries)} posts)", status
 
+    def check_retail_search(self, t, st, first):
+        """A store's search/category page: every Pokémon / sports-card product on it.
+        Pings when a card product is IN STOCK (new and already in stock, or back in stock), with picture,
+        price, product link and Add to cart / Buy now links where the store allows them.
+        First run only records what's there, so you aren't flooded with everything already in stock."""
+        status, final, html = self._fetch(t, st)
+        self._save_debug(t["name"], html)
+        if looks_blocked(status, html):
+            return "blocked", status
+        if status >= 400:
+            return "error", status
+        store = t["store"]
+        label = RETAIL_STORES[store]["label"]
+        tiles = parse_retail_tiles(html, final, store, t.get("live_if_price", False))
+        if not tiles:
+            return "empty", status
+        keep = {"pokemon": is_tcg_product, "sports": is_sports_card_product}.get(t.get("products", "cards"),
+                                                                                 is_card_product)
+        cap = float(t.get("max_price", 0) or 0)
+        cards = [x for x in tiles if keep(f"{x['name']} {x['url']}")
+                 and not (cap and x["price"] and float(x["price"].strip("$").replace(",", "")) > cap)]
+        known = st.setdefault("items", {})
+
+        # stores whose search tiles don't show stock: open a few product pages each run to find out
+        if t.get("verify_pages"):
+            unknown = [x for x in cards if x["status"] == "Listed"]
+            unknown.sort(key=lambda x: known.get(x["id"], {}).get("checked", 0))
+            for x in unknown[: t.get("verify_pages", 2)]:
+                try:
+                    ps, pf, ph = self._fetch({"name": t["name"], "url": x["url"], "browser": t.get("browser")}, st)
+                    if not looks_blocked(ps, ph) and ps < 400:
+                        text = BeautifulSoup(ph, "html.parser").get_text(" ")
+                        x["status"], x["live"] = tile_status(text, t.get("live_if_price", False))
+                except Exception as e:
+                    log.info("verify %s: %s", x["url"], e)
+                known.setdefault(x["id"], {})["checked"] = time.time()
+
+        now = time.time()
+        for x in cards:
+            prev = known.get(x["id"])
+            if not first and x["live"] and (prev is None or not prev.get("live")):
+                if x["status"].startswith("Drawing"):
+                    self._product_alert("urgent", f"🎟️ DRAWING / INVITE OPEN at {label}: {x['name']}", x, label)
+                else:
+                    what = "NEW & IN STOCK" if prev is None else "BACK IN STOCK"
+                    self._product_alert("urgent", f"🟢 {what} at {label}: {x['name']}", x, label)
+            elif not first and prev is None and t.get("alert_new_listed"):
+                self._product_alert("normal", f"🆕 New at {label} (not in stock yet): {x['name']}", x, label)
+            rec = known.setdefault(x["id"], {})
+            if x["status"] != "Listed" or "live" not in rec:
+                rec["live"] = x["live"]
+            rec.update({"name": x["name"], "seen": now})
+        if len(known) > 3000:
+            for k in sorted(known, key=lambda k: known[k].get("seen", 0))[: len(known) - 3000]:
+                known.pop(k)
+        live = sum(1 for x in cards if x["live"])
+        return f"ok ({len(cards)} card products · {live} in stock · {len(tiles) - len(cards)} other items skipped)", status
+
+    def _product_alert(self, level, title, x, store_label, extra=None):
+        fields = {"Price": x.get("price"), "Store": store_label, "Status": x.get("status")}
+        fields.update(extra or {})
+        self.notify.send(level, title, x["url"], fields, image=x.get("image", ""),
+                         links=[("🛒 Add to cart", x.get("add_to_cart")), ("⚡ Buy now", x.get("buy_now")),
+                                ("Product page", x["url"])])
+
+    def _save_debug(self, name, html):
+        """Last page each source saw - bundled by Settings > Save diagnostics so parsers can be tuned."""
+        try:
+            d = paths.DATA_DIR / "debug"
+            d.mkdir(parents=True, exist_ok=True)
+            safe = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:60]
+            (d / f"{safe}.html").write_text((html or "")[:3_000_000], encoding="utf-8", errors="ignore")
+        except OSError:
+            pass
+
     def check_topps_calendar(self, t, st, first):
         status, final, html = self._fetch(t, st)
         if looks_blocked(status, html):
@@ -314,8 +399,7 @@ class Engine:
             self.topps = products
         self.state["topps_products"] = products
         self._write_topps_csv(products)
-        paths.DATA_DIR.joinpath("topps_last_page.html").write_text(html[:3_000_000], encoding="utf-8",
-                                                                    errors="ignore")
+        self._save_debug(t["name"], html)
 
         if first:
             lines = [f"`{p['sport'][:4]}` **{p['name']}** · {self._when_text(p)} · {p['status']}" for p in products]
@@ -359,10 +443,11 @@ class Engine:
             if soon_key not in reminded and now <= d <= now + timedelta(minutes=lead):
                 mins = max(1, int((d - now).total_seconds() // 60))
                 self.notify.send("urgent", f"⏰ Topps drop in {mins} min: {p['name']}", p["url"], fields,
-                                 desc=formats)
+                                 desc=formats, links=[("Open on Topps", p["url"])])
                 reminded.add(soon_key)
             if open_key not in reminded and d <= now <= d + timedelta(minutes=10):
-                self.notify.send("urgent", f"🟢 OPEN NOW on Topps: {p['name']}", p["url"], fields, desc=formats)
+                self.notify.send("urgent", f"🟢 OPEN NOW on Topps: {p['name']}", p["url"], fields, desc=formats,
+                                 links=[("Open on Topps", p["url"])])
                 reminded.add(open_key)
         st["reminded"] = list(reminded)[-300:]
         st["products"] = {p["slug"]: {"status": p["status"], "when": p["when"], "has_time": p["has_time"],
@@ -403,6 +488,7 @@ class Engine:
                 blocked += 1
                 continue
             checked += 1
+            self._save_debug(f"topps-page-{p['slug']}", html)
             formats, page_when = parse_topps_product_page(html, final)
             old = pages.get(p["slug"], {})
             new_map = {f["handle"]: f for f in formats}
@@ -413,14 +499,20 @@ class Engine:
                           "Drops (CT)": self._when_text(p), "Buy / enter": f"[Open this format]({f['url']})"}
                 if baseline:
                     continue
+                links = [("🛒 Add to cart", f.get("add_to_cart")), ("⚡ Buy now", f.get("buy_now")),
+                         ("Product page", f["url"])]
+                fields.pop("Buy / enter", None)
                 if prev is None:
                     level = "urgent" if f["status"] in LIVE_STATUSES or is_hot(p) else "normal"
-                    self.notify.send(level, f"🆕 Topps {f['name']} listed · {f['status']}", f["url"], fields)
+                    self.notify.send(level, f"🆕 Topps {f['name']} listed · {f['status']}", f["url"], fields,
+                                     image=f.get("image", ""), links=links)
                 elif f["status"] != prev.get("status"):
                     if f["status"] in LIVE_STATUSES:
-                        self.notify.send("urgent", f"🚨 LIVE: {f['name']} · {f['status']}", f["url"], fields)
+                        self.notify.send("urgent", f"🚨 LIVE: {f['name']} · {f['status']}", f["url"], fields,
+                                         image=f.get("image", ""), links=links)
                     elif f["status"] == "Sold out":
-                        self.notify.send("normal", f"Sold out: {f['name']}", f["url"], fields)
+                        self.notify.send("normal", f"Sold out: {f['name']}", f["url"], fields,
+                                         image=f.get("image", ""))
             pages[p["slug"]] = new_map
             if p["slug"] not in seen_slugs:
                 seen_slugs.append(p["slug"])

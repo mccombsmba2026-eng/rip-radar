@@ -40,20 +40,27 @@ class Notifier:
     def set_channel(self, channel):
         self._local.channel = channel
 
-    def send(self, level, title, url="", fields=None, desc="", channel=None):
+    def send(self, level, title, url="", fields=None, desc="", channel=None, image="", links=None):
+        """links: [(label, url)] shown as a row of clickable links (Add to cart, Buy now...). image: thumbnail."""
         fields = {k: v for k, v in (fields or {}).items() if v}
+        links = [(lbl, u) for lbl, u in (links or []) if u]
         channel = channel or getattr(self._local, "channel", None)
         log.info("ALERT [%s] %s %s", level, title, url)
         self.on_alert({"level": level, "title": title, "url": url, "fields": fields, "desc": desc,
+                       "image": image, "links": links,
                        "channel": channel or "", "at": datetime.now(timezone.utc).isoformat()})
         s = self.get_settings()
+        link_row = "  ·  ".join(f"**[{lbl}]({u})**" for lbl, u in links)
+        body = "\n\n".join(x for x in (link_row, desc or "") if x)
         embed = {"title": title[:250], "color": COLORS.get(level, COLORS["normal"]),
-                 "description": (desc or "")[:4000],
+                 "description": body[:4000],
                  "fields": [{"name": k, "value": str(v)[:1000], "inline": k != "Calendar"}
                             for k, v in fields.items()],
                  "timestamp": datetime.now(timezone.utc).isoformat()}
         if url.startswith("http"):
             embed["url"] = url
+        if image.startswith("http"):
+            embed["thumbnail"] = {"url": image}
         payload = {"username": "Rip Radar", "embeds": [embed]}
         if level == "urgent":
             payload["content"] = "@everyone"

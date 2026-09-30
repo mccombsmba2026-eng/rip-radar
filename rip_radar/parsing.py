@@ -2,7 +2,7 @@
 No network, no files - everything here is unit-tested in tests/test_parsing.py."""
 import re
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote, urljoin
+from urllib.parse import quote, urljoin, urlparse
 from zoneinfo import ZoneInfo
 
 from bs4 import BeautifulSoup
@@ -288,6 +288,23 @@ def parse_topps_calendar(html, base_url="https://www.topps.com/release-calendar"
     return out
 
 
+def _variant_in(node, anchors):
+    """Shopify variant id for a format card: <input name="id">, data-variant-id, or ?variant= on its link."""
+    inp = node.find("input", attrs={"name": "id"})
+    if inp and str(inp.get("value", "")).isdigit():
+        return inp["value"]
+    for el in [node] + list(node.find_all(True)):
+        for attr in ("data-variant-id", "data-variant", "data-product-variant-id"):
+            v = str(el.get(attr, ""))
+            if v.isdigit():
+                return v
+    for a in anchors:
+        m = re.search(r"[?&]variant=(\d+)", a.get("href", ""))
+        if m:
+            return m.group(1)
+    return ""
+
+
 def humanize_handle(handle):
     words = handle.replace("-", " ").split()
     keep = {"nfl", "nba", "mlb", "ufc", "wwe"}
@@ -329,8 +346,13 @@ def parse_topps_product_page(html, base_url):
         if len(name) < 4:
             name = humanize_handle(handle)
         price = RE_PRICE.search(text)
+        variant = _variant_in(node, f["anchors"])
+        host = "{0.scheme}://{0.netloc}".format(urlparse(base_url))
         formats.append({"handle": handle, "name": name, "url": urljoin(base_url, f"/products/{handle}"),
-                        "price": f"${price.group(1)}" if price else "", "status": status_from_text(text)})
+                        "price": f"${price.group(1)}" if price else "", "status": status_from_text(text),
+                        "image": image_in(node, base_url),
+                        "add_to_cart": f"{host}/cart/add?id={variant}&quantity=1" if variant else "",
+                        "buy_now": f"{host}/cart/{variant}:1" if variant else ""})
     page_text = soup.get_text(" ")
     return formats, extract_when(page_text[:20000])
 
@@ -363,3 +385,129 @@ def is_tcg_product(text):
     if has(MERCH):
         return False
     return has(TCG_SEALED) and ("pokémon" in t or "pokemon" in t)
+
+
+# ---------------------------------------------------------------- sports cards (sealed)
+CARD_BRANDS = ("topps", "bowman", "panini", "donruss", "prizm", "select", "mosaic", "optic", "upper deck", "leaf",
+               "onyx", "hoops", "chronicles", "contenders", "score", "stadium club", "heritage", "allen & ginter",
+               "allen and ginter", "finest", "chrome", "absolute", "phoenix", "certified", "prestige", "origins")
+CARD_SEALED = ("hobby box", "hobby", "blaster", "mega box", "mega", "hanger", "value box", "value pack", "fat pack",
+               "cello", "jumbo", "tin", "retail box", "booster", "pack", "box", "collector", "trading card",
+               "trading cards", "sapphire", "breaker", "case")
+CARD_ACCESSORY = ("sleeve", "top loader", "toploader", "card saver", "one-touch", "one touch", "magnetic",
+                  "display case", "binder", "storage box", "card holder", "graded card", "psa ", "bgs ", "sgc ",
+                  "screwdown", "penny", "album", "frame", "stand", "protector")
+
+
+def is_sports_card_product(text):
+    t = " " + re.sub(r"[-_/]+", " ", (text or "").lower()) + " "
+    if any(w in t for w in CARD_ACCESSORY):
+        return False
+    brand = any(re.search(r"(?<![a-z])" + re.escape(b) + r"(?![a-z])", t) for b in CARD_BRANDS)
+    sport = bool(re.search(r"\b(baseball|basketball|football|nfl|nba|mlb|wnba|soccer|hockey|nhl|ufc|wwe|f1|"
+                           r"formula 1|racing)\b", t))
+    sealed = any(re.search(r"(?<![a-z])" + re.escape(w) + r"(?![a-z])", t) for w in CARD_SEALED)
+    return brand and sealed and (sport or "trading card" in t or "topps" in t or "bowman" in t or "panini" in t)
+
+
+def is_card_product(text):
+    """Pokémon TCG sealed product or a sealed sports-card product."""
+    return is_tcg_product(text) or is_sports_card_product(text)
+
+
+# ---------------------------------------------------------------- store search pages
+# product-id patterns per store, and the direct cart links each store supports
+RETAIL_STORES = {
+    "target": {"label": "Target", "id": r"/A-(\d{6,10})"},
+    "walmart": {"label": "Walmart", "id": r"/ip/(?:[^/?#]+/)?(\d{5,})"},
+    "bestbuy": {"label": "Best Buy", "id": r"/sku/(\d{6,8})|/(\d{7})\.p|[?&]skuId=(\d{6,8})"},
+    "amazon": {"label": "Amazon", "id": r"/(?:dp|gp/product)/([A-Z0-9]{10})"},
+    "dicks": {"label": "Dick's", "id": r"/p/([a-z0-9-]*[a-z0-9]+)(?:/|$)"},
+    "pokemon": {"label": "Pokémon Center", "id": r"/product/([0-9a-z-]+(?:/[0-9a-z-]+)?)"},
+}
+LIVE_WORDS = ("add to cart", "add to bag", "add for shipping", "add for pickup", "add for delivery", "buy now",
+              "ship it", "pick it up", "deliver it", "add to basket")
+NOT_LIVE_WORDS = ("out of stock", "sold out", "currently unavailable", "unavailable", "coming soon", "notify me",
+                  "get notified", "not available", "temporarily out", "check stores", "see similar")
+
+
+def cart_links(store, pid):
+    """(add_to_cart, buy_now) direct links where the store supports them."""
+    if store == "walmart":
+        return (f"https://affil.walmart.com/cart/addToCart?items={pid}",
+                f"https://affil.walmart.com/cart/buynow?items={pid}")
+    if store == "amazon":
+        return f"https://www.amazon.com/gp/aws/cart/add.html?ASIN.1={pid}&Quantity.1=1", ""
+    if store == "bestbuy":
+        return f"https://api.bestbuy.com/click/-/{pid}/cart", ""
+    return "", ""
+
+
+def image_in(node, base_url):
+    for img in node.find_all("img"):
+        for attr in ("src", "data-src", "data-lazy-src", "srcset", "data-srcset"):
+            v = (img.get(attr) or "").strip()
+            if not v:
+                continue
+            v = v.split(",")[0].strip().split(" ")[0]
+            if v.startswith("data:") or v.endswith(".svg") or "sprite" in v or "placeholder" in v:
+                continue
+            return urljoin(base_url, v)
+    return ""
+
+
+DRAWING_WORDS = ("enter drawing", "enter the drawing", "join drawing", "join the drawing", "request invite",
+                 "request an invite", "get invite", "enter for a chance")
+
+
+def tile_status(text, live_if_price=False):
+    low = (text or "").lower()
+    if any(w in low for w in DRAWING_WORDS):
+        return "Drawing / invite open", True
+    if any(w in low for w in NOT_LIVE_WORDS) and not any(w in low for w in LIVE_WORDS[:3]):
+        return "Out of stock", False
+    if any(w in low for w in LIVE_WORDS):
+        return "In stock", True
+    if live_if_price and RE_PRICE.search(text or ""):
+        return "In stock", True
+    return "Listed", False
+
+
+def parse_retail_tiles(html, base_url, store, live_if_price=False):
+    """Product tiles on a store search/category page ->
+    [{"id","name","url","image","price","status","live","add_to_cart","buy_now"}]."""
+    rx = re.compile(RETAIL_STORES[store]["id"])
+    soup = BeautifulSoup(html or "", "html.parser")
+
+    def key_of(href):
+        m = rx.search(href.split("#")[0])
+        return next((g for g in m.groups() if g), None) if m else None
+
+    found = {}
+    for a in soup.find_all("a", href=True):
+        pid = key_of(a["href"])
+        if not pid:
+            continue
+        f = found.setdefault(pid, {"anchors": [], "texts": [], "href": a["href"]})
+        f["anchors"].append(a)
+        t = " ".join(a.get_text(" ").split()) or a.get("aria-label", "") or a.get("title", "")
+        if t:
+            f["texts"].append(t)
+        for img in a.find_all("img"):
+            if img.get("alt"):
+                f["texts"].append(img["alt"].strip())
+    tiles = []
+    for pid, f in found.items():
+        node = _card_node(f["anchors"][0], key_of)
+        text = " ".join(node.get_text(" ").split())
+        name = max((x for x in f["texts"] if not RE_PRICE.fullmatch(x.strip())), key=len, default="")
+        name = BUTTON_NOISE.sub("", RE_PRICE.sub("", name)).strip(" -|·")
+        if not name:
+            continue
+        status, live = tile_status(text, live_if_price)
+        price = RE_PRICE.search(text)
+        add, buy = cart_links(store, pid)
+        tiles.append({"id": pid, "name": name[:200], "url": urljoin(base_url, f["href"].split("?")[0].split("#")[0]),
+                      "image": image_in(node, base_url), "price": f"${price.group(1)}" if price else "",
+                      "status": status, "live": live, "add_to_cart": add, "buy_now": buy})
+    return tiles

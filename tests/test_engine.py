@@ -16,7 +16,7 @@ def engine(tmp_path, monkeypatch):
     from rip_radar.engine import Engine
     e = Engine()
     e.sent = []
-    e.notify.send = lambda level, title, url="", fields=None, desc="", channel=None: e.sent.append((level, title))
+    e.notify.send = lambda level, title, url="", fields=None, desc="", **kw: e.sent.append((level, title))
     return e
 
 
@@ -36,7 +36,8 @@ def test_topps_first_run_then_changes(engine):
     engine.fetcher = FakeFetch(page())
     health, _ = engine.check_topps_calendar(dict(TOPPS), st, True)
     assert health.startswith("ok (5 products)")                      # tennis filtered out
-    assert [lvl for lvl, _ in engine.sent] == ["normal"]              # one summary, no spam
+    # one summary, no spam (a real drop-time reminder may also fire, depending on today's clock)
+    assert [lvl for lvl, t in engine.sent if "drop in" not in t and "OPEN NOW" not in t] == ["normal"]
     engine.sent.clear()
     soon = [list(c) for c in SOON]
     soon[3][3] = "Pre-order"                                          # unchanged
@@ -157,7 +158,7 @@ def test_open_now_alert_links_to_page(engine):
             f'<a href="/pages/bowman-football">{txt} 2026 Bowman Football</a><button>Notify me</button>' + "x" * 21000)
     engine.fetcher = FakeFetch(html)
     got = []
-    engine.notify.send = lambda level, title, url="", fields=None, desc="", channel=None: got.append((title, url, fields))
+    engine.notify.send = lambda level, title, url="", fields=None, desc="", **kw: got.append((title, url, fields))
     engine.check_topps_calendar(dict(TOPPS), {}, True)
     opened = [g for g in got if "OPEN NOW" in g[0]]
     assert len(opened) == 1 and opened[0][1] == "https://www.topps.com/pages/bowman-football"
@@ -244,7 +245,7 @@ def test_store_detection():
 
 def test_news_goes_to_store_channel(engine):
     got = []
-    engine.notify.send = lambda level, title, url="", fields=None, desc="", channel=None: got.append((title, channel))
+    engine.notify.send = lambda level, title, url="", fields=None, desc="", channel=None, **kw: got.append((title, channel))
     items = [("Target Pokémon drawing now open", "https://a/1"), ("Walmart drawing Oct 7", "https://a/2"),
              ("New Pokémon drawing rules explained", "https://a/3")]
     body = "".join(f"<item><title>{t}</title><link>{l}</link><guid>{l}</guid>"
