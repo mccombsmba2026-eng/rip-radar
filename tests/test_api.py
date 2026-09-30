@@ -71,3 +71,13 @@ def test_keep_running_setting_defaults_off_and_saves(engine):
     assert settings.load()["keep_running_when_closed"] is False      # X quits by default
     make_api(engine).save_settings({"keep_running_when_closed": True})
     assert settings.load()["keep_running_when_closed"] is True
+
+
+def test_relaunch_env_drops_pyinstaller_temp_settings(monkeypatch):
+    from rip_radar import winsys
+    monkeypatch.setenv("_PYI_APPLICATION_HOME_DIR", r"C:\Users\x\AppData\Local\Temp\_MEI00000bd82")
+    monkeypatch.setenv("_MEIPASS2", r"C:\Temp\_MEI1")
+    monkeypatch.setenv("_PYI_PARENT_PROCESS_LEVEL", "1")
+    env = winsys.fresh_env()
+    assert not any(k.startswith(("_PYI_", "_MEI")) for k in env)
+    assert env["PYINSTALLER_RESET_ENVIRONMENT"] == "1" and "PATH" in env

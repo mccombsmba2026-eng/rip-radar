@@ -60,13 +60,14 @@ def download_and_restart(info, quit_app):
         "@echo off\r\n"
         "set n=0\r\n"
         ":wait\r\n"
-        "timeout /t 1 /nobreak >nul\r\n"
+        "ping -n 2 127.0.0.1 >nul\r\n"
         f'move /y "{new}" "{exe}" >nul 2>&1 && goto done\r\n'
         "set /a n+=1\r\n"
         "if %n% lss 90 goto wait\r\n"
         ":done\r\n"
         f'start "" "{exe}" --updated\r\n'
         'del "%~f0"\r\n', encoding="ascii")
-    subprocess.Popen(["cmd", "/c", str(script)], creationflags=CREATE_NO_WINDOW, close_fds=True)
+    from .winsys import launch_new_copy
+    launch_new_copy(["cmd", "/c", str(script)])   # the script's `start` inherits the clean environment
     log.info("update %s downloaded; restarting", info["version"])
     quit_app()

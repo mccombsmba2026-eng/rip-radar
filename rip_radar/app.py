@@ -409,7 +409,13 @@ def main(argv=None):
     ap.add_argument("--updated", action="store_true")
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--selftest-out", default="")
+    ap.add_argument("--selftest-relaunch", default="", help="build check: start a fresh copy, then exit at once")
     args, _ = ap.parse_known_args(argv)
+
+    if args.selftest_relaunch:
+        # the same way updates and installs relaunch the app: the child must survive this process exiting
+        winsys.launch_new_copy([sys.executable, "--selftest", "--selftest-out", args.selftest_relaunch])
+        sys.exit(0)
 
     if args.selftest:
         from .selftest import run

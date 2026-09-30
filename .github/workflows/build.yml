@@ -58,6 +58,22 @@ jobs:
           if (Test-Path $out) { Get-Content $out -Encoding utf8 } else { throw "selftest wrote no report" }
           if ($p.ExitCode -ne 0) { throw "selftest failed with exit code $($p.ExitCode)" }
 
+      - name: Relaunch check (how installs and updates restart the app)
+        if: steps.ver.outputs.new == 'true'
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "relaunch.txt"
+          # parent starts a fresh copy and exits at once; the copy must still load and finish its selftest
+          $p = Start-Process -FilePath "dist\RipRadar.exe" -ArgumentList "--selftest-relaunch","`"$out`"" -PassThru
+          $p.WaitForExit(30000) | Out-Null
+          $deadline = (Get-Date).AddSeconds(240)
+          while (-not (Test-Path $out) -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 3 }
+          if (-not (Test-Path $out)) { throw "relaunched copy never started (Python DLL / temp-folder problem)" }
+          Start-Sleep -Seconds 2
+          $text = Get-Content $out -Encoding utf8 -Raw
+          if ($text -notmatch "bundled UI") { throw "relaunched copy started but failed: $text" }
+          "Relaunched copy OK"
+
       - name: Publish release
         if: steps.ver.outputs.new == 'true'
         shell: bash

@@ -15,6 +15,24 @@ CREATE_NO_WINDOW = 0x08000000
 IS_WINDOWS = os.name == "nt"
 
 
+def fresh_env():
+    """Environment for launching another copy of the app. A PyInstaller one-file exe otherwise passes its
+    private temp-folder settings to the child, which then tries to load Python from the parent's folder -
+    deleted as soon as the parent exits ("Failed to load Python DLL ... _MEIxxxx\\python312.dll")."""
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("_PYI_", "_MEI")) and k not in ("_MEIPASS2", "PYTHONHOME", "PYTHONPATH")}
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
+
+
+def launch_new_copy(args):
+    """Start the app (or a helper script that starts it) as a brand-new, independent process."""
+    flags = 0
+    if IS_WINDOWS:
+        flags = 0x00000200 | CREATE_NO_WINDOW   # NEW_PROCESS_GROUP, hidden console (cmd needs one)
+    return subprocess.Popen(args, env=fresh_env(), close_fds=True, creationflags=flags)
+
+
 def claim_single_instance(on_show, wait_seconds=0):
     """True if we're the only copy. Otherwise tell the running copy to show itself and return False.
     wait_seconds: after an update/install the old copy may still be exiting, so keep trying briefly."""
@@ -75,7 +93,7 @@ def install_and_relaunch():
         log.warning("install copy failed (%s) - running from current location", e)
         return False
     make_shortcuts(paths.INSTALLED_EXE)
-    subprocess.Popen([str(paths.INSTALLED_EXE), "--installed"], close_fds=True)
+    launch_new_copy([str(paths.INSTALLED_EXE), "--installed"])
     return True
 
 

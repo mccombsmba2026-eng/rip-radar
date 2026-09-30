@@ -47,6 +47,9 @@ captchas, and never automates purchases. Keep it that way.
   Parser tests with fixtures live in `tests/test_retail.py`.
 
 ## Rules
+- Any launch of another copy of the app (install relaunch, update restart) must go through
+  `winsys.launch_new_copy` (clean env + PYINSTALLER_RESET_ENVIRONMENT). Otherwise the one-file exe's child
+  reuses the parent's deleted _MEI folder: "Failed to load Python DLL". CI's "Relaunch check" step guards this.
 - Never commit secrets (webhooks, bot tokens, Twilio keys). The repo is public. They belong in the
   app's Settings screen only.
 - Keep scan intervals ≥ 60 s per source.
