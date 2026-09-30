@@ -31,14 +31,20 @@ captchas, and never automates purchases. Keep it that way.
   Mega, Blaster... from each product's /pages/ page, with Shopify cart links), `retail_search` (store search
   pages: Target, Walmart, Dick's, Best Buy, Amazon, Pokémon Center; pings only when a Pokémon/sports-card
   product is in stock or a drawing/invite opens; first run is silent; `verify_pages` opens product pages when
-  tiles hide stock), `listing`, `keywords`, `feed`. One source runs at a time, most overdue first.
+  tiles hide stock; `msrp.py` ignores listings >60% over typical retail and flags >20%), `walmart_drawings`
+  (walmart.com/shop/collectibles/draw: pings on first sight, 15 min before open, at open, 30 min before close),
+  `listing`, `keywords`, `feed`. One source runs at a time, most overdue first; a site that blocks us is paused
+  5→10→20→30 min (`host_backoff`), except drawings.
   Sources marked `browser: true` load in a hidden pywebview window (real Edge/WebView2) so bot-walled
   sites (Pokémon Center, Walmart) see a normal browser; falls back to plain HTTP.
 - `rip_radar/parsing.py` – pure parsing (dates → Central time, Topps cards, sports). Unit-tested.
 - `rip_radar/targets.yaml` – built-in sources + "Watch a page" presets. Edit here to add sources.
 - `rip_radar/notify.py` – Discord/Twilio/ntfy, self-editing status message, chat bot. One Discord channel per
-  store (`CHANNELS`: topps, pokemon, walmart, target, dicks, amazon, bestbuy) via `settings["webhooks"]`;
-  sources set `channel:`, news feeds `route_by_store: true` (store named in the headline); empty = main webhook.
+  store (`CHANNELS`: topps, pokemon, walmart, target, dicks, amazon, bestbuy) plus `drawings` (every drawing /
+  raffle / invite from any store) and `status` (system messages, status board, update notices) via
+  `settings["webhooks"]`. `channel` may be a preference list, e.g. `[drawings, walmart]`: first with a webhook
+  wins, else the main webhook. News feeds use `route_by_store: true`. Store scanners (not Pokémon Center) keep
+  Pokémon items only if the name says Pokémon (skips Magic, Lorcana...).
 - `rip_radar/ui/index.html` – the whole UI (vanilla JS; talks to `Api` in app.py via `pywebview.api`).
 - `rip_radar/updater.py` – GitHub Releases check + swap.
 - User data lives in `%APPDATA%\RipRadar` (settings.json holds the webhook and any tokens).

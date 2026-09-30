@@ -410,9 +410,14 @@ def is_sports_card_product(text):
     return brand and sealed and (sport or "trading card" in t or "topps" in t or "bowman" in t or "panini" in t)
 
 
+def is_pokemon_product(text):
+    """Sealed Pokémon card product that actually says Pokémon (other stores also sell Magic, Lorcana...)."""
+    return bool(re.search(r"pok[eé]mon", text or "", re.I)) and is_tcg_product(text)
+
+
 def is_card_product(text):
-    """Pokémon TCG sealed product or a sealed sports-card product."""
-    return is_tcg_product(text) or is_sports_card_product(text)
+    """Pokémon card product or sealed sports-card product - what the store scanners keep."""
+    return is_pokemon_product(text) or is_sports_card_product(text)
 
 
 # ---------------------------------------------------------------- store search pages
@@ -509,5 +514,23 @@ def parse_retail_tiles(html, base_url, store, live_if_price=False):
         add, buy = cart_links(store, pid)
         tiles.append({"id": pid, "name": name[:200], "url": urljoin(base_url, f["href"].split("?")[0].split("#")[0]),
                       "image": image_in(node, base_url), "price": f"${price.group(1)}" if price else "",
-                      "status": status, "live": live, "add_to_cart": add, "buy_now": buy})
+                      "status": status, "live": live, "add_to_cart": add, "buy_now": buy, "text": text[:800]})
     return tiles
+
+
+RE_DRAW_START = re.compile(r"(?:drawing\s+)?(?:starts|opens|begins|opening)\s*:?\s*", re.I)
+RE_DRAW_END = re.compile(r"(?:drawing\s+)?(?:ends|closes|closing|entries close|enter by)\s*:?\s*", re.I)
+DRAW_CLOSED = ("drawing closed", "drawing ended", "drawing has ended", "entries closed", "entry closed",
+               "drawing is closed", "winners selected")
+
+
+def drawing_window(text, now=None):
+    """'Drawing starts Sep 30, 2:00pm PDT' / 'Ends Oct 1, 11:59pm PT' -> (start, end, closed) in CT (or None)."""
+    def after(rx):
+        m = rx.search(text or "")
+        if not m:
+            return None
+        w = extract_when(text[m.end(): m.end() + 60], now)
+        return w[0] if w else None
+    low = (text or "").lower()
+    return after(RE_DRAW_START), after(RE_DRAW_END), any(w in low for w in DRAW_CLOSED)

@@ -162,6 +162,7 @@ details summary{cursor:pointer;font-weight:600}
     <div class="filters" id="alertFilters">
       <button class="fchip" data-lvl="all" aria-pressed="true">All</button>
       <button class="fchip" data-lvl="urgent" aria-pressed="false">Urgent</button>
+      <button class="fchip" data-lvl="drawings" aria-pressed="false">🎟️ Drawings</button>
       <button class="fchip" data-lvl="normal" aria-pressed="false">Info</button>
       <button class="fchip" data-lvl="system" aria-pressed="false">App</button>
     </div>
@@ -228,12 +229,12 @@ details summary{cursor:pointer;font-weight:600}
       <label>Urgent-only webhook <small>Optional second channel, e.g. #go-now</small>
         <input type="url" id="sHookUrgent" placeholder="optional"></label>
       <div class="row"><button class="btn" id="sTest">Send test alert</button><span class="msg" id="sTestMsg" role="status"></span></div>
-      <h2>Store channels</h2>
-      <p class="hint" style="margin:0">Each store's alerts go to its own channel. Leave one empty and that store's alerts go to the main channel above. Saved on this PC for good, including through updates.</p>
+      <h2>Channels</h2>
+      <p class="hint" style="margin:0">Each store's alerts go to its own channel. <b>Drawings &amp; raffles</b> collects every drawing, lottery and invite from all stores (Walmart, Topps, Target, Dick's, Best Buy, Amazon). <b>App status</b> gets start-up checks, problems and update notices, so the main channel stays clean. Leave any empty and those alerts go to the main channel. Saved on this PC for good, including through updates.</p>
       <div class="two" id="sStores"></div>
       <details>
         <summary>Paste them all at once</summary>
-        <p class="hint">One per line, store name then the link, e.g. <code>Walmart: https://discord.com/api/webhooks/…</code></p>
+        <p class="hint">One per line, channel name then the link, e.g. <code>Walmart: https://discord.com/api/webhooks/…</code> or <code>Drawings: https://…</code> or <code>Status: https://…</code></p>
         <textarea id="sBulk" rows="8" style="width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px;color:inherit;font:12px var(--f-mono)" aria-label="Paste webhooks"></textarea>
         <div class="row"><button class="btn" id="sBulkFill">Fill in the boxes</button><span class="msg" id="sBulkMsg" role="status"></span></div>
       </details>
@@ -355,7 +356,8 @@ function render(){
 }
 
 function renderAlerts(){
-  const list = S.alerts.filter(a => alertLvl==="all" || a.level===alertLvl);
+  const isDrawing = a => a.title.includes("🎟️") || /drawing|raffle|lottery|invite/i.test(a.title) || a.channel==="drawings";
+  const list = S.alerts.filter(a => alertLvl==="all" || (alertLvl==="drawings" ? isDrawing(a) : a.level===alertLvl));
   if(!list.length){ $("#alerts").innerHTML = `<div class="empty">${S.alerts.length ? "Nothing in this filter." : "No alerts yet. New drops, raffles, queues and Topps changes will show up here and in Discord."}</div>`; return; }
   $("#alerts").innerHTML = list.map(a => {
     const f = a.fields||{}, cal = mdLink(f.Calendar);
@@ -473,7 +475,8 @@ async function saveSettings(quiet){
 $("#sSave").onclick = () => saveSettings(false);
 $("#sKeep").addEventListener("change", () => saveSettings(true));
 const HOOK_RE = /https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\S+/;
-const NAME_HINTS = {topps:["topps","bowman"],pokemon:["pokemon center","pokémon center","pokemon","pokémon","pc"],walmart:["walmart"],
+const NAME_HINTS = {drawings:["drawing","drawings","draw","raffle","raffles","lottery","lotteries"],status:["status","app status","app"],
+  topps:["topps","bowman"],pokemon:["pokemon center","pokémon center","pokemon","pokémon","pc"],walmart:["walmart"],
   target:["target"],dicks:["dick","dicks","dsg"],amazon:["amazon"],bestbuy:["best buy","bestbuy","bby"],main:["main","general","alerts","all","ping"]};
 $("#sBulkFill").onclick = () => {
   let filled = [], missed = 0;

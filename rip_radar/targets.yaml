@@ -44,7 +44,7 @@ targets:
     url: https://www.pokemoncenter.com/
     browser: true
     channel: pokemon
-    interval_seconds: 60
+    interval_seconds: 90
     category: Pokémon
     alert_title: "🚨 POKÉMON CENTER QUEUE IS LIVE"
     url_contains: [queue-it, queue, waitingroom, waiting-room]
@@ -60,7 +60,7 @@ targets:
     channel: pokemon
     alert_new_listed: true
     verify_pages: 1
-    interval_seconds: 180
+    interval_seconds: 300
 
   - name: Pokémon Center · new releases
     type: retail_search
@@ -71,11 +71,12 @@ targets:
     channel: pokemon
     alert_new_listed: true
     verify_pages: 1
-    interval_seconds: 300
+    interval_seconds: 600
 
   # ===== STORES: every Pokémon / sports-card product on their search pages.
   # Pings only when a card product is in stock (new, or back in stock), with picture, price and cart links.
-  # Walmart and Amazon searches are limited to items sold by the store itself (no resellers).
+  # Listings priced well above typical retail (resellers) are ignored; moderately above gets a ⚠️.
+  # Amazon searches are limited to items sold by Amazon itself.
   - name: Target · Pokémon cards
     type: retail_search
     store: target
@@ -94,11 +95,20 @@ targets:
     channel: target
     interval_seconds: 300
 
+  # Walmart's limited-time drawings (lotteries). Pings when a card item is listed, 15 min before entries
+  # open, when they open, and 30 min before they close. Goes to the Drawings channel if set, else Walmart.
+  - name: Walmart · drawings
+    type: walmart_drawings
+    url: https://www.walmart.com/shop/collectibles/draw
+    browser: true
+    channel: [drawings, walmart]
+    interval_seconds: 120
+
   - name: Walmart · Pokémon cards
     type: retail_search
     store: walmart
     products: pokemon
-    url: https://www.walmart.com/search?q=pokemon+trading+cards&sort=new&facet=retailer_type%3AWalmart
+    url: https://www.walmart.com/search?q=pokemon+trading+cards&sort=new
     browser: true
     channel: walmart
     interval_seconds: 240
@@ -107,7 +117,7 @@ targets:
     type: retail_search
     store: walmart
     products: sports
-    url: https://www.walmart.com/search?q=sports+trading+cards&sort=new&facet=retailer_type%3AWalmart
+    url: https://www.walmart.com/search?q=sports+trading+cards&sort=new
     browser: true
     channel: walmart
     interval_seconds: 300

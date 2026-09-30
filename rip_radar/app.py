@@ -339,7 +339,7 @@ class App:
                     how = ("It installs itself the next time you open Rip Radar, or right away if it's in the tray. "
                            "To get it now, click **Restart to update** in the app." if auto
                            else "Open Rip Radar and click **Restart to update**.")
-                    self.engine.notify.send("normal", f"⬆️ Rip Radar {info['version']} is ready",
+                    self.engine.notify.send("normal", f"⬆️ Rip Radar {info['version']} is ready", channel="status",
                                             desc=f"{(info.get('notes') or '').splitlines()[0] if info.get('notes') else ''}"
                                                  f"\n\n{how}")
                     if self.tray is not None:
@@ -365,7 +365,7 @@ class App:
             return
         if info.get("to") == __version__:
             notes = (info.get("notes") or "").strip()
-            self.engine.notify.send("normal", f"✅ Rip Radar updated to {__version__}",
+            self.engine.notify.send("normal", f"✅ Rip Radar updated to {__version__}", channel="status",
                                     desc=(f"What's new: {notes.splitlines()[0]}" if notes else ""))
         else:
             self.engine.notify.send("system", f"⚠️ Update to {info.get('to')} didn't finish - still on {__version__}. "

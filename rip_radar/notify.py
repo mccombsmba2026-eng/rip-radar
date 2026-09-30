@@ -13,7 +13,8 @@ COLORS = {"urgent": 0xE0342B, "normal": 0x2350C8, "system": 0x8A8F9E}
 
 # One Discord channel per store. Key -> label shown in the app. Webhooks live in settings["webhooks"].
 CHANNELS = {"topps": "Topps", "pokemon": "Pokémon Center", "walmart": "Walmart", "target": "Target",
-            "dicks": "Dick's", "amazon": "Amazon", "bestbuy": "Best Buy"}
+            "dicks": "Dick's", "amazon": "Amazon", "bestbuy": "Best Buy",
+            "drawings": "Drawings & raffles (all stores)", "status": "App status"}
 # news posts go to the store they mention first (checked in this order)
 STORE_WORDS = [("pokemon", ("pokémon center", "pokemon center", "pokemoncenter")),
                ("walmart", ("walmart",)), ("target", ("target",)),
@@ -48,7 +49,8 @@ class Notifier:
         log.info("ALERT [%s] %s %s", level, title, url)
         self.on_alert({"level": level, "title": title, "url": url, "fields": fields, "desc": desc,
                        "image": image, "links": links,
-                       "channel": channel or "", "at": datetime.now(timezone.utc).isoformat()})
+                       "channel": (channel[0] if isinstance(channel, (list, tuple)) else channel) or "",
+                       "at": datetime.now(timezone.utc).isoformat()})
         s = self.get_settings()
         link_row = "  ·  ".join(f"**[{lbl}]({u})**" for lbl, u in links)
         body = "\n\n".join(x for x in (link_row, desc or "") if x)
@@ -64,8 +66,13 @@ class Notifier:
         payload = {"username": "Rip Radar", "embeds": [embed]}
         if level == "urgent":
             payload["content"] = "@everyone"
-        own = (s.get("webhooks") or {}).get(channel, "") if channel else ""
-        if own.startswith("http"):
+        hooks_by_channel = s.get("webhooks") or {}
+        # channel can be a preference list, e.g. ("drawings", "walmart"): the first one with a webhook wins
+        wanted = list(channel) if isinstance(channel, (list, tuple)) else ([channel] if channel else [])
+        if level == "system" and not wanted:
+            wanted = ["status"]             # app messages (source checks, problems, updates) -> status channel
+        own = next((hooks_by_channel.get(c, "") for c in wanted if hooks_by_channel.get(c, "").startswith("http")), "")
+        if own:
             hooks = {own}                   # a channel with its own webhook gets only its own alerts
         else:
             hooks = {s.get("discord_webhook", "")}
@@ -119,7 +126,7 @@ class StatusBoard:
 
     def tick(self):
         s = self.get_settings()
-        hook = s.get("discord_webhook", "")
+        hook = (s.get("webhooks") or {}).get("status", "") or s.get("discord_webhook", "")
         if not hook.startswith("http") or time.time() < self.next:
             return
         self.next = time.time() + int(s.get("status_every_minutes", 5)) * 60

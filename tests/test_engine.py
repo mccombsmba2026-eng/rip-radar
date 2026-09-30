@@ -257,8 +257,10 @@ def test_news_goes_to_store_channel(engine):
     engine.check_feed(f, st, True)
     engine.fetcher = FakeFetch(rss)
     engine.check_feed(f, st, False)
-    assert got == [("Target Pokémon drawing now open", "target"), ("Walmart drawing Oct 7", "walmart"),
-                   ("New Pokémon drawing rules explained", None)]
+    # drawing stories prefer the Drawings channel, then the store's own channel
+    assert got == [("Target Pokémon drawing now open", ("drawings", "target")),
+                   ("Walmart drawing Oct 7", ("drawings", "walmart")),
+                   ("New Pokémon drawing rules explained", ("drawings", None))]
 
 
 def test_watch_page_channel_and_settings_migration(engine):

@@ -16,10 +16,11 @@ import yaml
 from bs4 import BeautifulSoup
 
 from . import __version__, paths, settings as settings_mod
+from .msrp import msrp_text, price_check
 from .notify import CHANNELS, ChatBot, Notifier, StatusBoard, store_in
 from .parsing import (CT, LIVE_STATUSES, RETAIL_STORES, categorize, extract_when, fmt_when, gcal_link, is_card_product,
-                      is_sports_card_product, is_tcg_product, looks_blocked, parse_retail_tiles, parse_topps_calendar,
-                      parse_topps_product_page, tile_status)
+                      is_pokemon_product, is_sports_card_product, is_tcg_product, looks_blocked, parse_retail_tiles, parse_topps_calendar,
+                      parse_topps_product_page, tile_status, drawing_window)
 
 log = logging.getLogger("rip_radar")
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -70,6 +71,7 @@ class Engine:
         self.topps_formats = {k: list(v.values()) for k, v in
                               self.state.get("targets", {}).get("Topps product pages", {}).get("formats", {}).items()}
         self.next_due = {}
+        self.host_backoff = {}      # site -> (resume_at, times_blocked): give a site that blocked us a rest
         self.first_pass_done = False
         self._lock = threading.RLock()
         self._wake = threading.Event()
@@ -139,7 +141,9 @@ class Engine:
                 # one source at a time, most overdue first (relative to its interval), so fast sources like the
                 # Pokémon Center queue stay on time even when slow store pages pile up
                 now = time.time()
-                due = [t for t in targets if t["name"] in pending and now >= self.next_due.get(t["name"], 0)]
+                due = [t for t in targets if t["name"] in pending and now >= self.next_due.get(t["name"], 0)
+                       and (t["type"] == "walmart_drawings"          # drawings never wait on a paused search
+                            or now >= self.host_backoff.get(self._host(t), (0, 0))[0])]
                 if not due:
                     break
                 t = max(due, key=lambda t: (now - self.next_due.get(t["name"], 0))
@@ -164,6 +168,11 @@ class Engine:
             self._wake.wait(5)
             self._wake.clear()
 
+    @staticmethod
+    def _host(t):
+        from urllib.parse import urlparse
+        return urlparse(t.get("url", "")).netloc.lower().removeprefix("www.")
+
     def _run_target(self, t, report):
         st = self.state.setdefault("targets", {}).setdefault(t["name"], {})
         first = not st.get("initialized")
@@ -185,6 +194,13 @@ class Engine:
                                       "type": t["type"], "url": t.get("url", ""), "user": t.get("user", False)}
             self.last_scan = now
         report[t["name"]] = f"{health} [HTTP {code}]"
+        host = self._host(t)
+        if health.startswith("blocked") and t["type"] != "feed":
+            n = self.host_backoff.get(host, (0, 0))[1] + 1        # 5, 10, 20, then 30 min max
+            self.host_backoff[host] = (time.time() + min(1800, 300 * 2 ** (n - 1)), n)
+            log.info("%s blocked us - pausing it for %d min", host, min(30, 5 * 2 ** (n - 1)))
+        elif health.startswith("ok"):
+            self.host_backoff.pop(host, None)
         bad = health.split(" ")[0].rstrip(":") in ("blocked", "error", "empty")
         if self.first_pass_done and bad and prev.split(" ")[:1] != health.split(" ")[:1]:
             self.notify.send("system", f"⚠️ {t['name']} stopped working: {health}", t.get("url", ""))
@@ -294,7 +310,9 @@ class Engine:
             store = store_in(title + " " + summary) if t.get("route_by_store") else None
             if store:
                 fields["Store"] = CHANNELS[store]
-            self.notify.send(level, title[:240], link, fields, desc=summary[:300], channel=store)
+            is_drawing = any(w in blob for w in ("drawing", "raffle", "lottery", "invite"))
+            ch = ("drawings", store) if is_drawing and t.get("route_by_store") else store
+            self.notify.send(level, title[:240], link, fields, desc=summary[:300], channel=ch)
             sent += 1
             if sent >= t.get("max_per_run", 8):
                 break
@@ -317,8 +335,10 @@ class Engine:
         tiles = parse_retail_tiles(html, final, store, t.get("live_if_price", False))
         if not tiles:
             return "empty", status
-        keep = {"pokemon": is_tcg_product, "sports": is_sports_card_product}.get(t.get("products", "cards"),
-                                                                                 is_card_product)
+        keep = {"pokemon": is_pokemon_product, "sports": is_sports_card_product}.get(t.get("products", "cards"),
+                                                                                     is_card_product)
+        if store == "pokemon":
+            keep = is_tcg_product       # everything at Pokémon Center is Pokémon, names don't always say so
         cap = float(t.get("max_price", 0) or 0)
         cards = [x for x in tiles if keep(f"{x['name']} {x['url']}")
                  and not (cap and x["price"] and float(x["price"].strip("$").replace(",", "")) > cap)]
@@ -339,16 +359,27 @@ class Engine:
                 known.setdefault(x["id"], {})["checked"] = time.time()
 
         now = time.time()
+        overpriced = 0
         for x in cards:
             prev = known.get(x["id"])
+            kind = "pokemon" if is_tcg_product(x["name"] + " " + x["url"]) else "sports"
+            verdict, info = price_check(x["name"], x["price"], kind)
+            extra = {"Typical retail": msrp_text(info)}
+            if x["live"] and verdict == "way_over":
+                overpriced += 1          # reseller pricing: no ping
+                rec = known.setdefault(x["id"], {})
+                rec.update({"live": x["live"], "name": x["name"], "seen": now})
+                continue
+            warn = f" · ⚠️ {int((info['ratio'] - 1) * 100)}% above retail" if verdict == "over" else ""
             if not first and x["live"] and (prev is None or not prev.get("live")):
                 if x["status"].startswith("Drawing"):
-                    self._product_alert("urgent", f"🎟️ DRAWING / INVITE OPEN at {label}: {x['name']}", x, label)
+                    self._product_alert("urgent", f"🎟️ DRAWING / INVITE OPEN at {label}: {x['name']}{warn}", x, label,
+                                        extra, channel=("drawings", t.get("channel")))
                 else:
                     what = "NEW & IN STOCK" if prev is None else "BACK IN STOCK"
-                    self._product_alert("urgent", f"🟢 {what} at {label}: {x['name']}", x, label)
+                    self._product_alert("urgent", f"🟢 {what} at {label}: {x['name']}{warn}", x, label, extra)
             elif not first and prev is None and t.get("alert_new_listed"):
-                self._product_alert("normal", f"🆕 New at {label} (not in stock yet): {x['name']}", x, label)
+                self._product_alert("normal", f"🆕 New at {label} (not in stock yet): {x['name']}", x, label, extra)
             rec = known.setdefault(x["id"], {})
             if x["status"] != "Listed" or "live" not in rec:
                 rec["live"] = x["live"]
@@ -357,14 +388,82 @@ class Engine:
             for k in sorted(known, key=lambda k: known[k].get("seen", 0))[: len(known) - 3000]:
                 known.pop(k)
         live = sum(1 for x in cards if x["live"])
-        return f"ok ({len(cards)} card products · {live} in stock · {len(tiles) - len(cards)} other items skipped)", status
+        over = f" · {overpriced} over retail ignored" if overpriced else ""
+        return (f"ok ({len(cards)} card products · {live} in stock{over} · {len(tiles) - len(cards)} other items skipped)",
+                status)
 
-    def _product_alert(self, level, title, x, store_label, extra=None):
+    def _product_alert(self, level, title, x, store_label, extra=None, channel=None):
         fields = {"Price": x.get("price"), "Store": store_label, "Status": x.get("status")}
         fields.update(extra or {})
-        self.notify.send(level, title, x["url"], fields, image=x.get("image", ""),
+        self.notify.send(level, title, x["url"], fields, image=x.get("image", ""), channel=channel,
                          links=[("🛒 Add to cart", x.get("add_to_cart")), ("⚡ Buy now", x.get("buy_now")),
                                 ("Product page", x["url"])])
+
+    def check_walmart_drawings(self, t, st, first):
+        """walmart.com/shop/collectibles/draw - Walmart's limited-time drawings (lotteries).
+        Pokémon / sports-card items only. Pings (even on the first check - drawings don't wait):
+        when an item is listed (with open/close times), 15 min before entries open, when they open,
+        and 30 min before they close. Goes to the Drawings channel if set, else Walmart."""
+        status, final, html = self._fetch(t, st)
+        self._save_debug(t["name"], html)
+        if looks_blocked(status, html):
+            return "blocked", status
+        if status >= 400:
+            return "error", status
+        tiles = parse_retail_tiles(html, final, "walmart")
+        if not tiles:
+            return "empty", status
+        cards = [x for x in tiles if is_card_product(x["name"] + " " + x["url"])]
+        known = st.setdefault("drawings", {})
+        now = datetime.now(CT)
+        n_open = 0
+        for x in cards:
+            start, end, closed = drawing_window(x.get("text", ""), now)
+            low = x.get("text", "").lower()
+            if closed:
+                phase = "closed"
+            elif start and now < start:
+                phase = "upcoming"
+            else:
+                phase = "open" if ("enter" in low or start or not end or now < end) else "closed"
+            n_open += phase == "open"
+            key = f"{x['id']}|{start.isoformat()[:16] if start else ''}"
+            rec = known.get(key)
+            kind = "pokemon" if is_tcg_product(x["name"]) else "sports"
+            _, info = price_check(x["name"], x["price"], kind)
+            fields = {"Price": x["price"], "Typical retail": msrp_text(info),
+                      "Entries open (CT)": fmt_when(start) if start else "",
+                      "Entries close (CT)": fmt_when(end) if end else "", "Store": "Walmart"}
+            if start and start > now:
+                fields["Calendar"] = f"[Add to Google Calendar]({gcal_link('Walmart drawing: ' + x['name'], start, t['url'])})"
+                self._add_event(f"🎟️ Walmart drawing: {x['name']}", t["url"], start, True)
+            links = [("🎟️ Enter the drawing", x["url"]), ("All Walmart drawings", t["url"])]
+
+            def ping(title):
+                self.notify.send("urgent", title, x["url"], fields, image=x.get("image", ""), links=links)
+
+            if rec is None and phase != "closed":
+                if phase == "upcoming":
+                    ping(f"🎟️ WALMART DRAWING · opens {fmt_when(start)} CT: {x['name']}")
+                else:
+                    ping(f"🎟️ WALMART DRAWING OPEN NOW: {x['name']}")
+                rec = {"phase": phase, "announced_open": phase == "open"}
+            elif rec is not None:
+                if start and not rec.get("soon") and phase == "upcoming" and start - timedelta(minutes=15) <= now:
+                    ping(f"⏰ Walmart drawing opens in {max(1, int((start - now).total_seconds() // 60))} min: {x['name']}")
+                    rec["soon"] = True
+                if phase == "open" and not rec.get("announced_open"):
+                    ping(f"🎟️ OPEN NOW · enter the Walmart drawing: {x['name']}")
+                    rec["announced_open"] = True
+                if end and phase == "open" and not rec.get("closing") and end - timedelta(minutes=30) <= now < end:
+                    ping(f"⏳ Walmart drawing closes in {max(1, int((end - now).total_seconds() // 60))} min: {x['name']}")
+                    rec["closing"] = True
+            if rec is not None:
+                rec.update({"phase": phase, "name": x["name"], "seen": time.time()})
+                known[key] = rec
+        for k in [k for k, v in known.items() if time.time() - v.get("seen", 0) > 14 * 86400]:
+            known.pop(k)
+        return f"ok ({len(cards)} card drawings · {n_open} open · {len(tiles) - len(cards)} other items skipped)", status
 
     def _save_debug(self, name, html):
         """Last page each source saw - bundled by Settings > Save diagnostics so parsers can be tuned."""
@@ -421,7 +520,8 @@ class Engine:
                 continue
             if p["status"] != old.get("status"):
                 if p["status"] in LIVE_STATUSES:
-                    self.notify.send("urgent", f"🚨 TOPPS LIVE: {p['name']} · {p['status']}", p["url"], fields)
+                    self.notify.send("urgent", f"🚨 TOPPS LIVE: {p['name']} · {p['status']}", p["url"], fields,
+                                     channel=("drawings", "topps") if p["status"] == "Drawing open" else None)
                 else:
                     self.notify.send("normal", f"Topps: {p['name']} ({old.get('status')} → {p['status']})",
                                      p["url"], fields)
@@ -509,7 +609,8 @@ class Engine:
                 elif f["status"] != prev.get("status"):
                     if f["status"] in LIVE_STATUSES:
                         self.notify.send("urgent", f"🚨 LIVE: {f['name']} · {f['status']}", f["url"], fields,
-                                         image=f.get("image", ""), links=links)
+                                         image=f.get("image", ""), links=links,
+                                         channel=("drawings", "topps") if f["status"] == "Drawing open" else None)
                     elif f["status"] == "Sold out":
                         self.notify.send("normal", f"Sold out: {f['name']}", f["url"], fields,
                                          image=f.get("image", ""))
