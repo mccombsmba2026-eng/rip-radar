@@ -527,12 +527,27 @@ class Engine:
                 continue
             if story in shared_set:                             # another search already posted this story
                 continue
-            # only raffle / drawing / invite announcements, and only when the HEADLINE is about cards
-            # (a "Smart bulbs drop to $13.99 on Amazon" story matched the search words but isn't ours)
-            head = title.lower()
-            about_cards = bool(re.search(r"pok[eé]mon|topps|bowman|trading card|\btcg\b|elite trainer|booster", head))
+            # only card raffles and card PRODUCT ANNOUNCEMENTS, judged on the HEADLINE (a "Smart bulbs drop to $13.99
+            # on Amazon" story matched the search words but isn't ours); deals, reviews, guides are left out
+            head = title.lower().rsplit(" - ", 1)[0]
+            about_cards = bool(re.search(r"pok[eé]mon (?:tcg|cards?|center|trading)|pok[eé]mon\b.*\b(?:etb|elite trainer|"
+                                         r"booster|collection|set|expansion|tin|bundle)|topps|bowman|trading card|\btcg\b|"
+                                         r"elite trainer|booster (?:box|bundle|pack)", head))
             is_raffle = any(w in head for w in ("drawing", "raffle", "lottery", "invite", "sweepstakes"))
-            if not (about_cards and is_raffle):
+            is_announcement = bool(re.search(
+                r"pre-?orders?|release date|releases?\b|releasing|launch(?:es|ing)?|revealed?|announce[sd]?|first look|"
+                r"coming (?:soon|to|in|this|next)|arriv(?:es|ing)|restock(?:ed|s|ing)?|back in stock|goes on sale|on sale "
+                r"(?:now|today|this|next|on)|available (?:now|today|on|this|next)|drops? (?:on|this|next|today|tomorrow)|"
+                r"queue|new set|next set|expansion", head))
+            is_noise = bool(re.search(r"\$\d|% off|\bdeal|\bsave\b|discount|coupon|price (?:drop|cut|guide)|cheapest|"
+                                      r"\breview\b|how to|best .* to buy|worth it|\branked\b|\bvs\.?\b|\bgame\b.*\bswitch\b|"
+                                      r"\banime\b|\bmovie\b|pokémon go|pokemon go|\bplush\b", head))
+            if is_announcement and re.search(r"pok[eé]mon", head) and re.search(
+                    r"pre-?order|release|set\b|expansion|restock|queue|etb|booster|collection", head):
+                about_cards = True   # "Pokémon Delta Reign preorders open" (the set name is the card product)
+            if is_raffle:        # store raffles are for card product: "Pokémon" / "Topps" in the headline is enough
+                about_cards = about_cards or bool(re.search(r"pok[eé]mon|topps|bowman|\bcards?\b|\btcg\b", head))
+            if not about_cards or is_noise or not (is_raffle or is_announcement):
                 shared.append(story)
                 shared_set.add(story)
                 continue
@@ -543,14 +558,13 @@ class Engine:
             level = "urgent" if any(k in blob for k in t.get("urgent_if", [])) else t.get("level", "normal")
             if store:
                 fields["Store"] = STORE_NAMES[store]
-            is_drawing = any(w in blob for w in ("drawing", "raffle", "lottery", "invite"))
-            if is_drawing:
+            if is_raffle:
                 # a store's raffle: that store's channel AND #drawings (any store: Walmart, Dick's, Target...)
                 self.notify.send(level, "🎟️ " + title[:240], link, fields, desc=summary[:300],
                                  channel=store or "drawings", copy_to=["drawings"], ping=is_etb_or_upc(title))
             else:
-                # other news: main alerts channel, keeping store channels products-only
-                self.notify.send(level, "📰 " + title[:240], link, fields, desc=summary[:300], channel="main",
+                # a product announcement: main alerts channel, keeping store channels products-only
+                self.notify.send(level, "📣 " + title[:240], link, fields, desc=summary[:300], channel="main",
                                  ping=is_etb_or_upc(title) and any(w in blob for w in ("restock", "drop", "live", "in stock",
                                                                                          "pre-order", "preorder")))
             sent += 1

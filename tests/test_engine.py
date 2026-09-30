@@ -245,7 +245,7 @@ def test_store_detection():
     assert store_in("Topps Chrome Football preorder") == "topps"
 
 
-def test_card_raffle_news_posts_once_and_other_news_never(engine):
+def test_card_raffle_and_announcement_news_only(engine):
     got = []
     engine.notify.send = lambda level, title, url="", fields=None, desc="", channel=None, **kw: got.append((title, channel))
 
@@ -265,7 +265,8 @@ def test_card_raffle_news_posts_once_and_other_news_never(engine):
         engine.fetcher = FakeFetch(rss([(story, f"https://news.google.com/{i}"), (noise, f"https://n/{i}"),
                                         ("The Pokémon Center Opens Pre-Orders For Delta Reign", f"https://p/{i}")]))
         engine.check_feed(f, st, False)
-    assert got == [("🎟️ " + story, "walmart")]      # once (3 searches), the store's channel; no general news at all
+    # raffle: once across 3 searches, store channel; announcement: #alerts; the light-bulb deal: nowhere
+    assert got == [("🎟️ " + story, "walmart"), ("📣 The Pokémon Center Opens Pre-Orders For Delta Reign", "main")]
 
 def test_watch_page_channel_and_settings_migration(engine):
     import json
@@ -298,7 +299,8 @@ def test_raffles_post_to_store_and_drawings_everywhere(engine):
     engine.fetcher = FakeFetch(rss)
     engine.check_feed(f, st, False)
     assert got == [("🎟️ Dick's Sporting Goods opens Pokémon raffle entries", "dicks", ["drawings"]),
-                   ("🎟️ Target Pokémon drawing this weekend", "target", ["drawings"])]      # preorder news: not posted
+                   ("🎟️ Target Pokémon drawing this weekend", "target", ["drawings"]),
+                   ("📣 Pokémon Delta Reign preorders open", "main", None)]
     got.clear()
     page = {"name": "Dick's ETB", "url": "https://www.dickssportinggoods.com/p/x", "keywords": ["enter drawing"],
             "alert_title": "🚨 DICK'S ENTRY OPEN: Dick's ETB"}
