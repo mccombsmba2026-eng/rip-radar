@@ -117,6 +117,10 @@ class Api:
         self._app.engine.scan_now()
         return {"ok": True}
 
+    def sync_channels(self):
+        self._app.engine.request_sync()
+        return {"ok": True}
+
     def set_source_enabled(self, name, enabled):
         s = settings.load()
         dis = set(s.get("disabled_sources", []))

@@ -1,5 +1,6 @@
 """Sends alerts: Discord webhook (+ @everyone for urgent), optional Twilio SMS and ntfy push.
 Also keeps a self-updating status message and an optional 'still running?' chat bot."""
+import json
 import logging
 import threading
 import time
@@ -143,38 +144,56 @@ class Notifier:
 
 class LiveBoard:
     """A single Discord message in one channel that rewrites itself (a pinned, always-current list).
-    Posts only when that channel has its own webhook."""
+    Posts only when that channel has its own webhook. render() returns (title, text) or a list of them
+    (one Discord embed each; a message holds up to ~6000 characters in total)."""
 
-    def __init__(self, get_settings, channel, state, key, every_minutes=10):
+    def __init__(self, get_settings, channel, state, key, every_minutes=10, color=None):
         self.get_settings, self.channel, self.state, self.key = get_settings, channel, state, key
         self.every = every_minutes * 60
+        self.color = color
         self.next = 0
         self.last_body = None
 
     def hook(self):
         return ((self.get_settings().get("webhooks") or {}).get(self.channel) or "")
 
-    def tick(self, render, force=False):
+    def _body(self, render):
+        parts = render()
+        if isinstance(parts, tuple):
+            parts = [parts]
+        embeds, budget = [], 5800
+        for title, desc in parts[:9]:
+            desc = (desc or "Nothing right now.")[:min(4000, max(200, budget - len(title)))]
+            budget -= len(title) + len(desc)
+            embeds.append({"title": title[:250], "description": desc, "color": self.color or COLORS["normal"]})
+            if budget <= 200:
+                break
+        embeds[-1]["timestamp"] = datetime.now(timezone.utc).isoformat()
+        embeds[-1]["footer"] = {"text": "Updates itself every few minutes · pin this message"}
+        return {"embeds": embeds}
+
+    def tick(self, render, force=False, repost=False):
+        """force: update now. repost: delete the old message and post a fresh one at the bottom of the channel."""
         hook = self.hook()
-        if not hook.startswith("http") or (time.time() < self.next and not force):
+        if not hook.startswith("http") or (time.time() < self.next and not force and not repost):
             return False
         self.next = time.time() + self.every
-        title, desc = render()
-        body = {"embeds": [{"title": title[:250], "description": desc[:4000] or "Nothing scheduled yet.",
-                            "color": COLORS["normal"], "timestamp": datetime.now(timezone.utc).isoformat(),
-                            "footer": {"text": "Rip Radar keeps this message up to date. Pin it."}}]}
-        if body["embeds"][0]["description"] == self.last_body and not force:
+        body = self._body(render)
+        sig = json.dumps([(e["title"], e["description"]) for e in body["embeds"]])
+        if sig == self.last_body and not force and not repost:
             return False
         saved = self.state.get(self.key) or {}
         try:
             if saved.get("hook") == hook and saved.get("id"):
-                if requests.patch(f"{hook}/messages/{saved['id']}", json=body, timeout=15).status_code < 400:
-                    self.last_body = body["embeds"][0]["description"]
+                if repost:
+                    requests.delete(f"{hook}/messages/{saved['id']}", timeout=15)
+                elif requests.patch(f"{hook}/messages/{saved['id']}", json=body, timeout=15).status_code < 400:
+                    self.last_body = sig
                     return True
             r = requests.post(hook + "?wait=true", json=body, timeout=15)
             if r.status_code < 400:
                 self.state[self.key] = {"hook": hook, "id": r.json()["id"]}
-                self.last_body = body["embeds"][0]["description"]
+                self.last_body = sig
                 return True
         except (requests.RequestException, ValueError, KeyError) as e:
             log.warning("%s board failed: %s", self.channel, e)

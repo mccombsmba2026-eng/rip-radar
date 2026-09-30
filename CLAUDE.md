@@ -53,6 +53,11 @@ captchas, and never automates purchases. Keep it that way.
   `pokemon_queue` channel: `track_duration` on the queue watcher -> @everyone when up, one self-editing
   "up for X min" message, "closed · was up X" with start/end + recent history (`state["queue_history"]`). `LiveBoard` keeps a
   self-editing pinned message in `calendar` (next 14 days) and `topps_calendar` (all Topps products).
+- Channel boards (`LiveBoard`, one self-editing message per channel, only where that channel has a webhook):
+  store channels = in stock (with ATC/Buy) + out of stock from each store's `retail_search` items (seen < 3 h);
+  #walmart + #drawings = current drawings; #topps = formats; #topps-calendar / #drop-calendar = schedules.
+  "Sync all channels" (app top bar) -> `engine.request_sync()`: full scan, then every board is deleted and
+  re-posted at the bottom of its channel, plus "🔄 All channels synced" in #app-status.
 - Drop calendar = `state["events"]` (kind: topps / drawing / release / news, store). Fed by the Topps calendar,
   Walmart drawings, dated news, and `calendar_only` feeds (release dates: calendar entries, no pings).
 - `rip_radar/ui/index.html` – the whole UI (vanilla JS; talks to `Api` in app.py via `pywebview.api`).

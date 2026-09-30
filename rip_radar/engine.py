@@ -66,6 +66,14 @@ class Engine:
         self.cal_board = LiveBoard(settings_mod.load, "calendar", self.state, "calendar_board_msg", every_minutes=5)
         self.topps_board = LiveBoard(settings_mod.load, "topps_calendar", self.state, "topps_board_msg",
                                      every_minutes=5)
+        from .notify import STORE_COLORS
+        self.store_boards = {k: LiveBoard(settings_mod.load, k, self.state, f"board_{k}", every_minutes=5,
+                                          color=STORE_COLORS.get(k))
+                             for k in ("target", "walmart", "dicks", "amazon", "bestbuy", "pokemon")}
+        self.drawings_board = LiveBoard(settings_mod.load, "drawings", self.state, "board_drawings", every_minutes=5)
+        self.formats_board = LiveBoard(settings_mod.load, "topps", self.state, "board_topps", every_minutes=5,
+                                       color=STORE_COLORS.get("topps"))
+        self.sync_at = 0
         self.bot = ChatBot(self.status_text)
         self.started = datetime.now(CT)
         self.last_scan = None
@@ -138,6 +146,7 @@ class Engine:
                 self._wake.clear()
                 continue
             report = {}
+            pass_started = time.time()
             targets = self.targets()
             pending = {t["name"] for t in targets}
             while pending and not self._stop.is_set():
@@ -159,6 +168,12 @@ class Engine:
                 time.sleep(random.uniform(1, 2.5))
             if self._stop.is_set():
                 return
+            if self.sync_at and report and pass_started >= self.sync_at:
+                self.sync_at = 0
+                self.first_pass_done = True
+                self._boards_tick(repost=True)       # fresh board at the bottom of every channel
+                self.notify.send("normal", "🔄 All channels synced", desc="Each channel has a fresh board with "
+                                 "its current state. Pin them; they keep themselves up to date.", channel="status")
             if report and not self.first_pass_done and len(report) >= len(targets):
                 self.first_pass_done = True
                 lines = [f"{'✅' if v.startswith('ok') else '❌'} **{k}**: {v}" for k, v in report.items()]
@@ -460,10 +475,13 @@ class Engine:
             kind = "pokemon" if is_tcg_product(x["name"] + " " + x["url"]) else "sports"
             verdict, info = price_check(x["name"], x["price"], kind)
             extra = {"Typical retail": msrp_text(info)}
+            details = {"name": x["name"], "url": x["url"], "price": x["price"], "status": x["status"],
+                       "add_to_cart": x.get("add_to_cart", ""), "buy_now": x.get("buy_now", ""),
+                       "stock": x.get("stock", ""), "image": x.get("image", ""), "over": verdict, "seen": now}
             if x["live"] and verdict == "way_over":
                 overpriced += 1          # reseller pricing: no ping
                 rec = known.setdefault(x["id"], {})
-                rec.update({"live": x["live"], "name": x["name"], "seen": now})
+                rec.update({"live": x["live"], **details})
                 continue
             warn = f" · ⚠️ {int((info['ratio'] - 1) * 100)}% above retail" if verdict == "over" else ""
             if not first and x["live"] and (prev is None or not prev.get("live")):
@@ -480,7 +498,7 @@ class Engine:
             rec = known.setdefault(x["id"], {})
             if x["status"] != "Listed" or "live" not in rec:
                 rec["live"] = x["live"]
-            rec.update({"name": x["name"], "seen": now})
+            rec.update(details)
         if len(known) > 3000:
             for k in sorted(known, key=lambda k: known[k].get("seen", 0))[: len(known) - 3000]:
                 known.pop(k)
@@ -564,7 +582,9 @@ class Engine:
                     ping(f"⏳ Walmart drawing closes in {max(1, int((end - now).total_seconds() // 60))} min: {x['name']}")
                     rec["closing"] = True
             if rec is not None:
-                rec.update({"phase": phase, "name": x["name"], "seen": time.time()})
+                rec.update({"phase": phase, "name": x["name"], "seen": time.time(), "url": x["url"],
+                            "price": x["price"], "start": start.isoformat() if start else "",
+                            "end": end.isoformat() if end else ""})
                 known[key] = rec
         for k in [k for k, v in known.items() if time.time() - v.get("seen", 0) > 14 * 86400]:
             known.pop(k)
@@ -821,8 +841,119 @@ class Engine:
                     lines.append(self._event_line(e))
                 self.notify.send("normal", f"🗓️ Drops today and tomorrow · {now:%a %b} {now.day}", "",
                                  desc="\n".join(lines).strip(), channel="calendar", strict=True, record=False)
-        self.cal_board.tick(self._render_calendar)
-        self.topps_board.tick(self._render_topps_board)
+        self._boards_tick()
+
+    # ------------------------------------------------------------ channel boards (current state of each channel)
+    def _all_boards(self):
+        out = [(self.cal_board, self._render_calendar), (self.topps_board, self._render_topps_board),
+               (self.drawings_board, self._render_drawings), (self.formats_board, self._render_formats)]
+        out += [(b, (lambda k=k: self._render_store(k))) for k, b in self.store_boards.items()]
+        return out
+
+    def _boards_tick(self, repost=False):
+        for board, render in self._all_boards():
+            try:
+                board.tick(render, force=repost, repost=repost)
+            except Exception as e:
+                log.warning("board %s: %s", board.channel, e)
+
+    def request_sync(self):
+        """Sync all channels: full scan now, then every channel's board is posted fresh at the bottom."""
+        self.sync_at = time.time()
+        self.scan_now()
+
+    @staticmethod
+    def _section(title, lines, limit=3600):
+        text, shown = "", 0
+        for ln in lines:
+            if len(text) + len(ln) + 1 > limit:
+                break
+            text += ln + "\n"
+            shown += 1
+        if shown < len(lines):
+            text += f"-# …and {len(lines) - shown} more (see the app)"
+        return title, text.strip()
+
+    def _store_items(self, store, max_age_hours=3):
+        seen, now = {}, time.time()
+        for t in self.targets():
+            if t.get("type") != "retail_search" or t.get("store") != store:
+                continue
+            for pid, rec in (self.state.get("targets", {}).get(t["name"], {}).get("items") or {}).items():
+                if rec.get("url") and now - rec.get("seen", 0) < max_age_hours * 3600 and rec.get("over") != "way_over":
+                    seen[pid] = rec
+        return sorted(seen.values(), key=lambda r: r["name"].lower())
+
+    def _item_line(self, r):
+        bits = [f"[{r['name'][:70]}]({r['url']})"]
+        if r.get("price"):
+            bits.append(r["price"])
+        if r.get("stock"):
+            bits.append(r["stock"])
+        if r.get("over") == "over":
+            bits.append("⚠️ above retail")
+        if r.get("add_to_cart"):
+            bits.append(f"[🛒 ATC]({r['add_to_cart']})")
+        if r.get("buy_now"):
+            bits.append(f"[⚡ Buy]({r['buy_now']})")
+        return "• " + " · ".join(bits)
+
+    def _render_store(self, store):
+        name = STORE_NAMES.get(store, store)
+        items = self._store_items(store)
+        live = [r for r in items if r.get("live")]
+        out = [r for r in items if not r.get("live")]
+        parts = []
+        if store == "walmart":
+            parts.append(self._drawings_section(only_store="walmart"))
+        parts.append(self._section(f"🟢 In stock at {name} · {len(live)}", [self._item_line(r) for r in live]))
+        parts.append(self._section(f"⚪ Out of stock / not buyable yet · {len(out)}",
+                                   [self._item_line(r) for r in out], limit=1600))
+        return parts
+
+    def _drawings_section(self, only_store=None):
+        lines, now = [], time.time()
+        for t in self.targets():
+            st = self.state.get("targets", {}).get(t["name"], {})
+            if t.get("type") == "walmart_drawings" and only_store in (None, "walmart"):
+                for rec in (st.get("drawings") or {}).values():
+                    if rec.get("phase") == "closed" or now - rec.get("seen", 0) > 86400 or not rec.get("url"):
+                        continue
+                    when = ""
+                    if rec.get("phase") == "upcoming" and rec.get("start"):
+                        when = f"opens {fmt_when(datetime.fromisoformat(rec['start']))} CT"
+                    elif rec.get("phase") == "open":
+                        when = "🟢 OPEN NOW" + (f" · closes {fmt_when(datetime.fromisoformat(rec['end']))} CT"
+                                               if rec.get("end") else "")
+                    lines.append(f"• 🎟️ Walmart · [{rec['name'][:70]}]({rec['url']}) · {rec.get('price', '')} · {when}")
+            if t.get("type") == "retail_search" and (only_store is None or t.get("store") == only_store):
+                for rec in (st.get("items") or {}).values():
+                    if str(rec.get("status", "")).startswith("Drawing") and now - rec.get("seen", 0) < 3 * 3600:
+                        lines.append(f"• 🎟️ {STORE_NAMES.get(t['store'], t['store'])} · "
+                                     f"[{rec['name'][:70]}]({rec['url']}) · {rec.get('price', '')} · open")
+        return self._section(f"🎟️ Drawings & raffles right now · {len(lines)}", lines)
+
+    def _render_drawings(self):
+        return [self._drawings_section()]
+
+    def _render_formats(self):
+        lines = []
+        for p in self.topps:
+            fmts = self.topps_formats.get(p["slug"], [])
+            if not fmts:
+                continue
+            lines.append(f"**[{p['name']}]({p['url']})** · {self._when_text(p)}")
+            for f in fmts:
+                bits = [f"[{f['name'][:60]}]({f['url']})", f.get("price", ""), f.get("status", "")]
+                if f.get("add_to_cart"):
+                    bits.append(f"[🛒 ATC]({f['add_to_cart']})")
+                if f.get("buy_now"):
+                    bits.append(f"[⚡ Buy]({f['buy_now']})")
+                lines.append("  • " + " · ".join(b for b in bits if b))
+        if not lines:
+            lines = ["No formats listed on Topps product pages right now. They appear here when Topps lists "
+                     "Hobby / Mega / Blaster boxes for a product."]
+        return [self._section("🃏 Topps formats listed now", lines, limit=3900)]
 
     # ------------------------------------------------------------ calendar + csv
     def _when_fields(self, title, url, when, fields, kind="news", store=None):
@@ -917,6 +1048,7 @@ class Engine:
                 "topps_formats": self.topps_formats,
                 "calendar": self.upcoming_events(days=30),
                 "queue_history": self.state.get("queue_history", [])[:10],
+                "sync_pending": bool(self.sync_at),
                 "bot": self.bot.state,
             }
 

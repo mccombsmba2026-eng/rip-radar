@@ -134,6 +134,7 @@ details summary{cursor:pointer;font-weight:600}
     <span class="pill" id="pill"><span class="dot"></span><span id="pillText">Starting</span></span>
     <span class="meta" id="lastScan">Waiting for first scan</span>
     <span class="spacer"></span>
+    <button class="btn primary" id="syncBtn" title="Full scan, then a fresh current-state board in every channel">Sync all channels</button>
     <button class="btn" id="scanBtn">Scan now</button>
     <button class="btn" id="pauseBtn">Pause</button>
   </div>
@@ -343,6 +344,8 @@ function render(){
   $("#pill").classList.toggle("paused", paused);
   $("#pillText").textContent = paused ? "Paused" : "Scanning";
   $("#pauseBtn").textContent = paused ? "Resume" : "Pause";
+  $("#syncBtn").disabled = !!S.sync_pending;
+  $("#syncBtn").textContent = S.sync_pending ? "Syncing… (a few minutes)" : "Sync all channels";
   $("#lastScan").textContent = S.last_scan ? "Last scan " + ago(S.last_scan) : "Waiting for first scan";
   $("#navVersion").textContent = "v" + S.version;
   const ok = S.health.filter(h=>h.health.startsWith("ok")).length;
@@ -482,6 +485,7 @@ document.addEventListener("change", async e => {
 });
 $("#wPreset").addEventListener("change", e => $("#wWordsLabel").hidden = e.target.value!=="custom");
 $("#scanBtn").onclick = async () => { $("#scanBtn").disabled = true; await api.scan_now(); setTimeout(()=>$("#scanBtn").disabled=false, 3000); };
+$("#syncBtn").onclick = async () => { $("#syncBtn").disabled = true; await api.sync_channels(); refresh(); };
 $("#pauseBtn").onclick = async () => { await api.set_paused(!S.paused); refresh(); };
 $("#updateBtn").onclick = async () => { const r = await api.install_update(); if(!r.ok) $("#updateNotes").textContent = r.error; refresh(); };
 $("#setupSave").onclick = async () => {
