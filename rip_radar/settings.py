@@ -17,7 +17,8 @@ DEFAULTS = {
     "bot_token": "",
     "status_every_minutes": 5,
     "sports": ["Baseball", "Basketball", "Football"],
-    "zip": "77002",                  # Target stock counts for stores near this ZIP
+    "zip": "77002",
+    "topps_all_products": True,      # Topps: every product line (Disney, F1, soccer...) - not just your sports                  # Target stock counts for stores near this ZIP
     "start_with_windows": True,
     "keep_running_when_closed": False,   # False: the X quits. True: closing hides to the tray and keeps scanning
     "auto_update": True,             # install updates by itself while the app is in the tray

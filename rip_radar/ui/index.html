@@ -193,6 +193,7 @@ details summary{cursor:pointer;font-weight:600}
         <button class="fchip" data-sport="Baseball" aria-pressed="false">Baseball</button>
         <button class="fchip" data-sport="Basketball" aria-pressed="false">Basketball</button>
         <button class="fchip" data-sport="Football" aria-pressed="false">Football</button>
+        <button class="fchip" data-sport="other" aria-pressed="false">Other</button>
       </div>
       <span class="spacer"></span>
       <button class="btn" data-open="csv">Open in Excel</button>
@@ -208,6 +209,8 @@ details summary{cursor:pointer;font-weight:600}
   <section class="view" id="view-sources" hidden>
     <h1>Sources</h1>
     <p class="lede">What Rip Radar checks. Store searches ping only when a Pokémon or sports-card product is in stock or a drawing opens. Switch off anything you don't want. "Blocked" means the site turned the scanner away; it usually recovers on its own. If a store shows 0 products for a while, use Settings → Save diagnostics.</p>
+    <div class="row"><button class="btn" id="qTest">🧪 Test queue alert</button><span class="msg" id="qTestMsg" role="status"></span></div>
+    <p class="hint">The Pokémon Center queue is checked every minute. This sends a sample of the alert to your queue channel (marked TEST, no @everyone) so you know exactly what you'll get.</p>
     <h2>What it checks</h2>
     <div class="tablewrap"><table>
       <thead><tr><th>On</th><th>Source</th><th>Last result</th></tr></thead>
@@ -260,6 +263,7 @@ details summary{cursor:pointer;font-weight:600}
         <label class="switch"><input type="checkbox" value="Basketball"> Basketball</label>
         <label class="switch"><input type="checkbox" value="Football"> Football</label>
       </div>
+      <label class="switch"><input type="checkbox" id="sToppsAll"> Topps: every product line (Disney, Star Wars, F1, soccer…), not just these sports</label>
 
       <h2>This computer</h2>
       <label class="switch"><input type="checkbox" id="sKeep"> Keep scanning in the tray when I close the window</label>
@@ -420,10 +424,10 @@ function renderCalendar(){
 }
 
 function renderTopps(){
-  const rows = S.topps.filter(p => toppsSport==="all" || p.sport===toppsSport);
+  const rows = S.topps.filter(p => toppsSport==="all" || (toppsSport==="other" ? !p.sport : p.sport===toppsSport));
   const F = S.topps_formats || {};
   $("#toppsBody").innerHTML = rows.length ? rows.map(p => `<tr>
-    <td><span class="sport" style="--c:${SPORT_C[p.sport]||"var(--line)"}">${esc(p.sport)}</span></td>
+    <td><span class="sport" style="--c:${SPORT_C[p.sport]||"var(--line)"}">${esc(p.sport||"Other")}</span></td>
     <td><button class="linkbtn" style="font-size:14px;text-align:left" data-url="${esc(p.url)}">${esc(p.name)}</button>
       ${(F[p.slug]||[]).map(f=>`<div class="fmt"><button class="linkbtn" data-url="${esc(f.url)}">${esc(f.name)}</button>
         <span class="meta">${esc(f.price)}</span> <span class="status ${LIVE.has(f.status)?"live":""}">${esc(f.status)}</span>
@@ -469,6 +473,7 @@ function renderSettings(){
   $("#sKeep").checked = !!s.keep_running_when_closed; $("#sBot").value = s.bot_token||""; $("#sNtfy").value = s.ntfy_topic||""; $("#sZip").value = s.zip||"";
   $("#sTwSid").value = tw.account_sid||""; $("#sTwTok").value = tw.auth_token||""; $("#sTwFrom").value = tw.from||""; $("#sTwTo").value = tw.to||"";
   document.querySelectorAll("#sSports input").forEach(i => i.checked = (s.sports||[]).includes(i.value));
+  $("#sToppsAll").checked = s.topps_all_products !== false;
 }
 
 // ---------- actions
@@ -511,7 +516,7 @@ async function saveSettings(quiet){
     discord_webhook: $("#sHook").value.trim(), discord_webhook_urgent: $("#sHookUrgent").value.trim(),
     webhooks: Object.fromEntries([...document.querySelectorAll("[data-hook]")].map(i => [i.dataset.hook, i.value.trim()])),
     start_with_windows: $("#sAuto").checked, auto_update: $("#sAutoUpd").checked, keep_running_when_closed: $("#sKeep").checked, bot_token: $("#sBot").value.trim(), ntfy_topic: $("#sNtfy").value.trim(), zip: $("#sZip").value.trim(),
-    sports: sports.length ? sports : ["Baseball","Basketball","Football"],
+    sports: sports.length ? sports : ["Baseball","Basketball","Football"], topps_all_products: $("#sToppsAll").checked,
     twilio: {account_sid:$("#sTwSid").value.trim(), auth_token:$("#sTwTok").value.trim(), from:$("#sTwFrom").value.trim(), to:$("#sTwTo").value.trim()}
   });
   if(!quiet) msg($("#sSaveMsg"),"Saved.","good");
@@ -535,6 +540,11 @@ $("#sBulkFill").onclick = () => {
     if(input){ input.value = m[0]; filled.push(key==="main" ? "Main" : S.channels[key]); }
   }
   msg($("#sBulkMsg"), filled.length ? `Filled: ${filled.join(", ")}${missed?` · ${missed} line(s) had no store name I recognised`:""}. Now click "Save and test every channel".` : "I couldn't match any lines. Put the store name before each link.", filled.length?"good":"bad");
+};
+$("#qTest").onclick = async () => {
+  msg($("#qTestMsg"),"Sending…");
+  const r = await api.test_queue_alert();
+  msg($("#qTestMsg"), r.ok ? "Sent. Check your Pokémon Center queue channel." : "Couldn't post. Check the queue channel's webhook in Settings.", r.ok?"good":"bad");
 };
 $("#sTestAll").onclick = async () => {
   await saveSettings(true);

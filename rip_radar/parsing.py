@@ -70,6 +70,18 @@ def gcal_link(title, start, details, all_day=False):
 def extract_when(text, now=None):
     """First plausible upcoming date (+time if stated) in free text.
     Returns (datetime in CT, has_time, tz_note) or None."""
+    return next(iter_when(text, now), None)
+
+
+def best_time_for(text, day=None, now=None):
+    """The announced time on a page: first date that states a time (on `day` if given), else None."""
+    for w in iter_when(text, now):
+        if w[1] and (day is None or w[0].date() == day):
+            return w
+    return None
+
+
+def iter_when(text, now=None):
     now = now or datetime.now(CT)
     clean = NOISE.sub(" ", text or "")
     for rx in (RE_MONTH_DAY, RE_SLASH):
@@ -101,8 +113,7 @@ def extract_when(text, now=None):
             else:
                 local = d.replace(hour=9, tzinfo=CT)
             if now - timedelta(hours=12) <= local <= now + timedelta(days=60):
-                return local, has_time, tz_note
-    return None
+                yield local, has_time, tz_note
 
 
 def categorize(text, default=""):
@@ -452,7 +463,8 @@ NOT_LIVE_WORDS = ("out of stock", "sold out", "currently unavailable", "unavaila
 
 RE_STOCK = [re.compile(r"\bonly\s+(\d{1,3})\s+left\b", re.I), re.compile(r"\b(\d{1,3})\s+left in stock\b", re.I),
             re.compile(r"\b(\d{1,3})\s+(?:items?\s+)?(?:remaining|available)\b", re.I)]
-RE_LIMIT = re.compile(r"\blimit(?:ed to)?\s+(\d{1,2})\s*(?:per|/)\s*(order|customer|household|person|guest)", re.I)
+RE_LIMIT = re.compile(r"\blimit(?:ed to)?\s+(\d{1,2})\s*(?:per|/)\s*(order|customer|household|person|guest|cart)"
+                      r"|\blimit per (order|customer|household|person|guest|cart)\s*:?\s*(\d{1,2})", re.I)
 LOW_WORDS = ("low stock", "limited stock", "almost gone", "selling fast", "few left", "limited quantity")
 
 
@@ -469,7 +481,10 @@ def stock_hint(text):
         low = t.lower()
         stock = next((w.capitalize() for w in LOW_WORDS if w in low), "")
     m = RE_LIMIT.search(t)
-    limit = f"Limit {m.group(1)} per {m.group(2).lower()}" if m else ""
+    limit = ""
+    if m:
+        n, per = (m.group(1), m.group(2)) if m.group(1) else (m.group(4), m.group(3))
+        limit = f"Limit {n} per {per.lower()}"
     return stock, limit
 
 
@@ -675,10 +690,44 @@ def walmart_json_items(html, base_url="https://www.walmart.com/"):
         prev = items.get(pid)
         if prev and len(prev["text"]) >= len(text):
             continue
+        start, end = _event_times(d)
         items[pid] = {"id": pid, "name": clean_name(name), "url": url, "image": img.split("?")[0] if img else "",
                       "price": price, "avail": avail.upper(), "text": text[:800],
-                      "max_qty": d.get("maxOrderQuantity") or d.get("orderLimit") or ""}
+                      "max_qty": d.get("maxOrderQuantity") or d.get("orderLimit") or "",
+                      "start": start, "end": end}
     return list(items.values())
+
+
+RE_ISO_TS = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d")
+
+
+def _as_time(v):
+    """ISO string or epoch (s / ms) -> aware datetime in CT, else None."""
+    try:
+        if isinstance(v, str) and RE_ISO_TS.match(v):
+            d = datetime.fromisoformat(v.replace("Z", "+00:00"))
+            return (d if d.tzinfo else d.replace(tzinfo=timezone.utc)).astimezone(CT)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and 1.6e9 < v < 2.2e12:
+            return datetime.fromtimestamp(v / 1000 if v > 1e11 else v, timezone.utc).astimezone(CT)
+    except (ValueError, OSError, OverflowError):
+        return None
+    return None
+
+
+def _event_times(item):
+    """Drawing / event open + close times from an item's page data (keys like eventStartTime, drawStartDate...)."""
+    start = end = None
+    for d in _walk(item):
+        for k, v in d.items():
+            kl = k.lower()
+            t = _as_time(v)
+            if not t or not any(w in kl for w in ("start", "open", "begin", "end", "close", "expir")):
+                continue
+            if any(w in kl for w in ("start", "open", "begin")) and start is None:
+                start = t
+            elif any(w in kl for w in ("end", "close", "expir")) and end is None:
+                end = t
+    return start, end
 
 
 def _merge_walmart_json(tiles, html, base_url, live_if_price=False):
@@ -698,7 +747,8 @@ def _merge_walmart_json(tiles, html, base_url, live_if_price=False):
         merged = {"id": j["id"], "name": j["name"] or (x or {}).get("name", ""), "url": j["url"],
                   "image": j["image"] or (x or {}).get("image", ""), "price": j["price"] or (x or {}).get("price", ""),
                   "status": status, "live": live, "add_to_cart": add, "buy_now": buy, "text": text[:1200],
-                  "stock": stock or (x or {}).get("stock", ""), "limit": limit or (x or {}).get("limit", "")}
+                  "stock": stock or (x or {}).get("stock", ""), "limit": limit or (x or {}).get("limit", ""),
+                  "start": j["start"], "end": j["end"]}
         by_id[j["id"]] = merged
     return list(by_id.values())
 
@@ -746,3 +796,112 @@ def drawing_window(text, now=None):
         return w[0] if w else None
     low = (text or "").lower()
     return after(RE_DRAW_START), after(RE_DRAW_END), any(w in low for w in DRAW_CLOSED)
+
+
+# ---------------------------------------------------------------- topps.com: every product as it loads
+# topps.com/products/sitemap.xml indexes numbered product sitemaps; the highest numbers hold the newest products
+RE_SITEMAP_N = re.compile(r"topps\.com/products/sitemap/(\d+)\.xml")
+RE_TOPPS_PRODUCT_URL = re.compile(r"https?://www\.topps\.com/products/(?!sitemap)[^\s<>\"']+")
+TOPPS_SINGLE = re.compile(r"topps-now|living-set|-card-\d+$|card-\d+$|/?[a-z-]+-\d{2,4}-(?:mlb|nba|nfl)-topps-now|"
+                          r"autograph(?:ed)?-card|relic-card|graded|digital|gift-card|art-print|poster|apparel|"
+                          r"t-shirt|hoodie|jersey|hat$|-cap$", re.I)
+TOPPS_SEALED = re.compile(r"box|pack|blaster|mega|hobby|jumbo|value|hanger|case|tin|bundle|collector|fat|cello|"
+                          r"breaker|sapphire|display|starter|kit|factory-set|team-set|complete-set|set$|super", re.I)
+
+
+def topps_sitemap_numbers(text):
+    return sorted({int(n) for n in RE_SITEMAP_N.findall(text or "")})
+
+
+def topps_product_urls(text):
+    out = []
+    for u in RE_TOPPS_PRODUCT_URL.findall(text or ""):
+        u = u.split("?")[0].split("#")[0].rstrip("/.,")
+        if u not in out:
+            out.append(u)
+    return out
+
+
+def topps_handle(url):
+    from urllib.parse import unquote
+    return unquote(url.rstrip("/").rsplit("/products/", 1)[-1]).lower()
+
+
+def is_topps_sealed(url):
+    """Sealed formats (Hobby, Jumbo, Mega, Blaster, Value, hanger, cases, sets...) of any line - sports, Disney,
+    F1, Star Wars... - but not single cards (Topps NOW, Living Set, autographs) or merch."""
+    h = topps_handle(url)
+    return bool(TOPPS_SEALED.search(h)) and not TOPPS_SINGLE.search(h)
+
+
+RE_AVAILABLE_FROM = re.compile(r"available\s+(?:from|on)\s+(\d{1,2})\.?\s*([a-z]{3,9})\.?\s*(\d{4})", re.I)
+
+
+def parse_topps_item_page(html, url, now=None):
+    """One topps.com/products/<handle> page -> {name, url, image, price, status, live, limit, stock,
+    add_to_cart, buy_now, when (iso or ""), has_time}."""
+    soup = BeautifulSoup(html or "", "html.parser")
+
+    def meta(*names):
+        for n in names:
+            m = soup.find("meta", attrs={"property": n}) or soup.find("meta", attrs={"name": n})
+            if m and m.get("content"):
+                return m["content"].strip()
+        return ""
+    name = meta("og:title") or (soup.h1.get_text(" ", strip=True) if soup.h1 else "") or humanize_handle(topps_handle(url))
+    name = re.sub(r"\s*[|–-]\s*Topps\s*$", "", name).strip()
+    image = meta("og:image", "twitter:image")
+    price = meta("product:price:amount", "og:price:amount")
+    availability = ""
+    for sc in soup.find_all("script", type="application/ld+json"):
+        try:
+            data = json.loads(sc.string or "")
+        except ValueError:
+            continue
+        for d in _walk(data):
+            offers = d.get("offers")
+            for o in (offers if isinstance(offers, list) else [offers] if isinstance(offers, dict) else []):
+                price = price or str(o.get("price") or "")
+                availability = availability or str(o.get("availability") or "")
+    text = " ".join(soup.get_text(" ").split())
+    head = text[:6000]                               # the product's own block, before "you may also like"
+    low = head.lower()
+    av = availability.lower()
+    if any(w in low for w in ("enter drawing", "enter the drawing", "enter now")):
+        status = "Drawing open"
+    elif "preorder" in av or "pre-order" in low and "sold out" not in low:
+        status = "Pre-order"
+    elif "instock" in av or ("add to cart" in low and "sold out" not in low):
+        status = "On sale"
+    elif "outofstock" in av or "soldout" in av or "sold out" in low:
+        status = "Sold out"
+    elif any(w in low for w in ("notify me", "get notified", "coming soon")):
+        status = "Upcoming"
+    else:
+        status = "Listed"
+    if price and not price.startswith("$"):
+        try:
+            price = f"${float(price):,.2f}"
+        except ValueError:
+            price = ""
+    price = price or price_in(head)
+    m = re.search(r"ProductVariant/(\d+)", html or "") or re.search(r'"variantId"\s*:\s*"?(\d{6,})', html or "")
+    host = "https://www.topps.com"
+    variant = m.group(1) if m else ""
+    stock, limit = stock_hint(head)
+    when, has_time = "", False
+    w = best_time_for(head, now=now) or extract_when(head, now)
+    if w:
+        when, has_time = w[0].isoformat(), w[1]
+    else:
+        m2 = RE_AVAILABLE_FROM.search(head)
+        if m2 and m2.group(2)[:3].lower() in MONTHS:
+            try:
+                when = datetime(int(m2.group(3)), MONTHS[m2.group(2)[:3].lower()], int(m2.group(1)), 9,
+                                tzinfo=CT).isoformat()
+            except ValueError:
+                pass
+    return {"name": name[:200], "url": url, "image": image, "price": price, "status": status,
+            "live": status in ("On sale", "Pre-order", "Drawing open"), "stock": stock, "limit": limit,
+            "add_to_cart": f"{host}/cart/add?id={variant}&quantity=1" if variant else "",
+            "buy_now": f"{host}/cart/{variant}:1" if variant else "", "when": when, "has_time": has_time}

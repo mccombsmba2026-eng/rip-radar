@@ -176,9 +176,37 @@ def test_queue_channel_status_line(engine, monkeypatch):
     engine.check_keywords(t, st, True)
     assert posts[0][0] == "POST" and "No Pokémon Center queue right now" in posts[0][1]["content"]
     assert not any(p[0] == "ALERT" for p in posts)                           # no queue: nothing new posted
-    engine.fetcher = FakeFetch("<html>You are now in line " + PAD + "</html>", "https://www.pokemoncenter.com/")
+    # a normal (long) homepage that only mentions the virtual queue in a banner is NOT a queue
+    engine.fetcher = FakeFetch("<html><p>Learn about the Pokémon Center virtual queue</p>" + "shop cards " * 2000
+                               + "</html>", "https://www.pokemoncenter.com/")
+    engine.check_keywords(t, st, False)
+    assert not any(p[0] == "ALERT" for p in posts)
+    # the real waiting room: short page in Pokémon Center's wording
+    engine.fetcher = FakeFetch("<html><h1>You are in line to enter Pokémon Center</h1><p>Please keep this window open. "
+                               "You will be redirected automatically when it is your turn to enter.</p></html>",
+                               "https://www.pokemoncenter.com/")
     engine.check_keywords(t, st, False)
     assert any(p == ("ALERT", "🚨 POKÉMON CENTER QUEUE IS LIVE") for p in posts)
+    assert st["active"] is True
+
+
+def test_queue_redirect_and_blocked_checks(engine, monkeypatch):
+    import rip_radar.engine as eng_mod
+    settings.update({"webhooks": {"pokemon_queue": "https://q"}})
+    lines = []
+    monkeypatch.setattr(eng_mod.requests, "post", lambda url, json=None, timeout=None: lines.append(json["content"]) or Resp(200, {"id": "w1"}))
+    monkeypatch.setattr(eng_mod.requests, "patch", lambda url, json=None, timeout=None: lines.append(json["content"]) or Resp(200))
+    alerts = []
+    engine.notify.send = lambda *a, **k: alerts.append(a[1])
+    t = next(x for x in engine.targets() if x["name"] == "Pokémon Center queue")
+    st = {}
+    engine.fetcher = FakeFetch("<html>Pardon Our Interruption</html>", "https://www.pokemoncenter.com/")
+    health, _ = engine._run_target(t, {}) or engine.check_keywords(t, st, False)
+    assert health == "blocked" and "Couldn't check" in lines[-1] and alerts == []
+    assert "pokemoncenter.com" not in engine.host_backoff          # the queue is never paused
+    engine.fetcher = FakeFetch("<html>Pardon Our Interruption</html>", "https://pokemoncenter.queue-it.net/?c=pkmn")
+    engine.check_keywords(t, st, False)
+    assert alerts == ["🚨 POKÉMON CENTER QUEUE IS LIVE"]            # queue address counts even behind a wall
 
 
 def test_topps_calendar_board_uses_calendar_layout(engine):
@@ -188,3 +216,72 @@ def test_topps_calendar_board_uses_calendar_layout(engine):
     title, text = engine._render_topps_board()
     assert "**Wednesday, Sep 30**" in text
     assert "`11:00 AM` 🃏 [2026 Bowman Football](https://www.topps.com/pages/bowman-football) · Football · Upcoming" in text
+
+
+# ---------------------------------------------------------------- 1.0.14
+def test_topps_sitemap_every_new_product_and_format(engine):
+    from rip_radar.parsing import parse_topps_item_page
+    index = ('<sitemapindex><sitemap><loc>https://www.topps.com/products/sitemap/432.xml</loc></sitemap>'
+             '<sitemap><loc>https://www.topps.com/products/sitemap/433.xml</loc></sitemap></sitemapindex>')
+    sm = ('<urlset><url><loc>https://www.topps.com/products/max-clark-2026-mlb-topps-now®-card-593</loc></url>'
+          '<url><loc>https://www.topps.com/products/2026-topps-chrome®-tennis-value-box</loc></url></urlset>')
+    sm2 = sm.replace("</urlset>", '<url><loc>https://www.topps.com/products/2026-topps-chrome-disney-hobby-box</loc></url></urlset>')
+    page = ('<html><head><meta property="og:title" content="2026 Topps Chrome® Disney - Hobby Box">'
+            '<meta property="og:image" content="https://cdn.shopify.com/d.png"></head><body><h1>2026 Topps Chrome® Disney - '
+            'Hobby Box</h1><span>$249.99</span><p>Limit per cart: 2</p><button>Add to cart</button>'
+            '<script>{"id":"gid://shopify/ProductVariant/4455667788"}</script></body></html>')
+    item = parse_topps_item_page(page, "https://www.topps.com/products/2026-topps-chrome-disney-hobby-box")
+    assert item["status"] == "On sale" and item["price"] == "$249.99" and item["limit"] == "Limit 2 per cart"
+    assert item["buy_now"] == "https://www.topps.com/cart/4455667788:1"
+
+    class Site:
+        def __init__(self, maps):
+            self.maps = maps
+
+        def get(self, url, browser=False):
+            if url.endswith("sitemap.xml"):
+                return 200, url, index
+            if "/sitemap/" in url:
+                return 200, url, self.maps
+            return 200, url, page.replace("Disney", "Tennis") if "tennis" in url else page
+    settings.update({"webhooks": {"topps": "https://t"}})
+    queued = []
+    engine.cards.request = lambda store, pid, rec, bump=False, ping=False, headline="": queued.append((store, pid, bump, ping))
+    t = next(x for x in engine.targets() if x["type"] == "topps_sitemap")
+    st = {}
+    engine.fetcher = Site(sm)
+    health, _ = engine.check_topps_sitemap(t, st, True)
+    assert "1 sealed products tracked" in health                           # Topps NOW single card skipped
+    assert queued == [("topps", "2026-topps-chrome®-tennis-value-box", False, False)]   # carded quietly at first
+    queued.clear()
+    engine.fetcher = Site(sm2)
+    engine.check_topps_sitemap(t, st, False)
+    assert ("topps", "2026-topps-chrome-disney-hobby-box", True, True) in queued      # new product: fresh post + @everyone
+
+
+def test_topps_calendar_gets_announced_time_from_product_page(engine):
+    from tests.test_parsing import card
+    engine.notify.send = lambda *a, **k: None
+    p = {"slug": "bowman-football", "name": "2026 Bowman Football", "when": datetime.now(CT).replace(
+        hour=9, minute=0, second=0, microsecond=0).isoformat(), "has_time": False}
+    d = datetime.now(CT)
+    engine._remember_topps_time(p, f"2026 Bowman Football Available {d:%B} {d.day} at 12pm ET Get notified")
+    html = ('<h2>Dropping soon</h2>' + card("bowman-football", f"{d:%A}, {d:%b} {d.day}", "2026 Bowman Football",
+                                           "Notify me") + PAD)
+    engine.fetcher = FakeFetch(html)
+    engine.check_topps_calendar({"name": "Topps release calendar", "type": "topps_calendar",
+                                 "url": "https://www.topps.com/release-calendar"}, {}, True)
+    (bf,) = engine.topps
+    assert bf["has_time"] and datetime.fromisoformat(bf["when"]).hour == 11          # 12pm ET = 11 AM CT
+    title, text = engine._render_topps_board()
+    assert "`11:00 AM` 🃏 [2026 Bowman Football]" in text
+
+
+def test_walmart_page_data_drawing_times():
+    data = {"props": {"pageProps": {"initialData": {"items": [
+        {"usItemId": "20640569221", "name": "Pokémon TCG: 30th Celebration Booster Bundle 2-Pack Bundle",
+         "priceInfo": {"currentPrice": {"price": 79.94}},
+         "eventAttributes": {"eventStartTime": "2026-09-30T21:00:00Z", "eventEndTime": "2026-10-01T04:59:00Z"}}]}}}}
+    html = f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(data)}</script>' + PAD
+    (j,) = walmart_json_items(html)
+    assert j["start"].hour == 16 and j["start"].tzinfo is not None and j["end"].day == 30   # 4 PM CT, closes 11:59 PM

@@ -18,9 +18,10 @@ from bs4 import BeautifulSoup
 from . import __version__, paths, settings as settings_mod
 from .msrp import msrp_text, price_check
 from .notify import CHANNELS, STORE_NAMES, ChatBot, LiveBoard, Notifier, StatusBoard, store_in
-from .parsing import (CT, LIVE_STATUSES, RETAIL_STORES, categorize, extract_when, fmt_when, gcal_link, is_card_product,
+from .parsing import (CT, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
+                      topps_sitemap_numbers, LIVE_STATUSES, RETAIL_STORES, categorize, extract_when, fmt_when, gcal_link, is_card_product,
                       is_etb_or_upc, is_pokemon_product, is_sports_card_product, is_tcg_product, looks_blocked, parse_retail_tiles, parse_topps_calendar,
-                      parse_topps_product_page, tile_status, drawing_window, next_data, sport_of, stock_hint,
+                      parse_topps_product_page, humanize_handle, tile_status, drawing_window, next_data, sport_of, stock_hint,
                       title_tiles)
 from .cards import ProductCards
 from .stock import page_data_stock, target_key_in, target_stock, target_stock_text
@@ -73,7 +74,8 @@ class Engine:
         # store channels: one self-editing message per product (cards.py) instead of a list board
         self._lock = threading.RLock()
         self.cards = ProductCards(settings_mod.load, self.state, lock=self._lock)
-        self.old_store_boards = [f"board_{k}" for k in ("target", "walmart", "dicks", "amazon", "bestbuy", "pokemon")]
+        self.old_store_boards = [f"board_{k}" for k in ("target", "walmart", "dicks", "amazon", "bestbuy", "pokemon",
+                                                         "topps")]
         # drop calendar = Topps calendar, drawings and products with an announced date (no news / Reddit posts)
         self.state["events"] = {k: v for k, v in (self.state.get("events") or {}).items()
                                 if v.get("kind") in ("topps", "drawing") or v.get("product")}
@@ -138,6 +140,7 @@ class Engine:
         for t in out:
             if t["type"] == "topps_calendar":
                 t["sports"] = s.get("sports") or ["Baseball", "Basketball", "Football"]
+                t["all_products"] = s.get("topps_all_products", True)
         return out
 
     # ------------------------------------------------------------ main loop
@@ -160,7 +163,7 @@ class Engine:
                 # Pokémon Center queue stay on time even when slow store pages pile up
                 now = time.time()
                 due = [t for t in targets if t["name"] in pending and now >= self.next_due.get(t["name"], 0)
-                       and (t["type"] == "walmart_drawings"          # drawings never wait on a paused search
+                       and (t["type"] == "walmart_drawings" or t.get("track_duration")   # never paused
                             or now >= self.host_backoff.get(self._host(t), (0, 0))[0])]
                 if not due:
                     break
@@ -168,6 +171,7 @@ class Engine:
                         / t.get("interval_seconds", default_iv))
                 pending.discard(t["name"])
                 self._run_target(t, report)
+                self._clock_ticks()
                 iv = t.get("interval_seconds", default_iv)
                 self.next_due[t["name"]] = time.time() + iv * random.uniform(0.85, 1.15)
                 self._save_state()
@@ -185,6 +189,7 @@ class Engine:
                 lines = [f"{'✅' if v.startswith('ok') else '❌'} **{k}**: {v}" for k, v in report.items()]
                 self.notify.send("system", f"Rip Radar {__version__} started · source check",
                                  desc="\n".join(lines)[:4000])
+            self._clock_ticks()
             try:
                 self.board.tick()
                 self.calendar_tick()
@@ -220,7 +225,7 @@ class Engine:
             self.last_scan = now
         report[t["name"]] = f"{health} [HTTP {code}]"
         host = self._host(t)
-        if health.startswith("blocked") and t["type"] != "feed":
+        if health.startswith("blocked") and t["type"] != "feed" and not t.get("track_duration"):
             n = self.host_backoff.get(host, (0, 0))[1] + 1        # 5, 10, 20, then 30 min max
             self.host_backoff[host] = (time.time() + min(1800, 300 * 2 ** (n - 1)), n)
             log.info("%s blocked us - pausing it for %d min", host, min(30, 5 * 2 ** (n - 1)))
@@ -281,27 +286,72 @@ class Engine:
         st["links"] = list(seen | set(found))[-3000:]
         return f"ok ({len(found)} {'card ' if t.get('tcg_only') else ''}products)", status
 
+    def _queue_signals(self, t, final, html):
+        """-> (active, what was seen). A queue page = the address moved to a queue / waiting room, or the page is
+        a short waiting-room page with queue wording (a normal homepage that merely mentions the virtual queue
+        in a banner or footer doesn't count)."""
+        url_hit = any(k.lower() in (final or "").lower() for k in t.get("url_contains", []))
+        text = " ".join(BeautifulSoup(html or "", "html.parser").get_text(" ").split()).lower()
+        hits = [k for k in t.get("keywords", []) if k.lower() in text]
+        active = url_hit or (bool(hits) and (len(text) < 8000 or len(hits) >= 2))
+        return active, ("queue page address: " + (final or "")[:80]) if url_hit else ", ".join(hits[:4])
+
+    def check_queue(self, t, st, first):
+        """Pokémon Center queue: checked every minute, never paused for backoff. If the built-in browser gets a
+        bot wall, a plain request gets a second look (a queue redirect shows up in the address either way).
+        A blocked check is 'unknown', never 'no queue'."""
+        now = datetime.now(CT)
+        status, final, html = self._fetch(t, st)
+        blocked = (looks_blocked(status, html) or status >= 400)
+        active, detected = self._queue_signals(t, final, html)
+        if blocked and not active:
+            try:
+                s2, f2, h2 = self.fetcher.get(t["url"], False)
+                a2, d2 = self._queue_signals(t, f2, h2)
+                if a2 or not (looks_blocked(s2, h2) or s2 >= 400):
+                    blocked, active, detected, status, html = False, a2, d2, s2, h2
+            except Exception as e:
+                log.info("queue second look: %s", e)
+        was = st.get("active")
+        if active:
+            self._save_debug("pokemon-center-queue-page", html)     # proof of what the queue page looked like
+        if blocked and not active:
+            st["blocked_streak"] = st.get("blocked_streak", 0) + 1
+            if was is not True:
+                self._queue_watch(t, st, f"⚠️ **Couldn't check the Pokémon Center queue** at {self._clock(now)} CT · the "
+                                         f"site turned the check away. Retrying every minute.")
+            return ("blocked" if looks_blocked(status, html) else "error"), status
+        st["blocked_streak"] = 0
+        self._track_queue(t, st, active, was, detected)
+        st["active"] = active
+        since = st.get("live_since")
+        if active and since:
+            return f"ok · LIVE for {self._dur(now - datetime.fromisoformat(since))}", status
+        return "ok · not live", status
+
+    def test_queue_alert(self):
+        t = next((x for x in self.targets() if x.get("track_duration")), {"url": "https://www.pokemoncenter.com/",
+                                                                            "channel": ["pokemon_queue", "pokemon"]})
+        now = datetime.now(CT)
+        return self.notify.send("urgent", "🧪 TEST · 🚨 POKÉMON CENTER QUEUE IS LIVE", t["url"],
+                                {"Went up (CT)": self._clock(now), "Detected": "test message"},
+                                desc="This is what you'll get the moment a real queue goes up (with @everyone). "
+                                     "Then one message keeps counting how long it's been up, and a last one says when "
+                                     "it closed and how long it lasted.",
+                                links=[("Join the queue", t["url"])], channel=t.get("channel"), record=False)
+
     def check_keywords(self, t, st, first):
         """Alert when a page flips live: queue page, 'Enter drawing', 'Request invite', 'Add to cart'."""
+        if t.get("track_duration"):
+            return self.check_queue(t, st, first)
         status, final, html = self._fetch(t, st)
         url_hit = any(k.lower() in (final or "").lower() for k in t.get("url_contains", []))
         if (looks_blocked(status, html) or status >= 400) and not url_hit:
-            if t.get("track_duration") and st.get("active") is not True:
-                now = datetime.now(CT)
-                self._queue_watch(t, st, f"⚠️ **Couldn't check the Pokémon Center queue** · the site turned the check away at "
-                                         f"{self._clock(now)} CT. Retrying automatically.")
             return ("blocked" if looks_blocked(status, html) else "error"), status
         text = BeautifulSoup(html, "html.parser").get_text(" ").lower()
         hits = [k for k in t.get("keywords", []) if k.lower() in text]
         active = bool(hits) or url_hit
         was = st.get("active")
-        if t.get("track_duration"):
-            self._track_queue(t, st, active, was, "queue / waiting room" if url_hit else ", ".join(hits[:4]))
-            st["active"] = active
-            since = st.get("live_since")
-            if active and since:
-                return f"ok · LIVE for {self._dur(datetime.now(CT) - datetime.fromisoformat(since))}", status
-            return "ok · not live", status
         if active and was is not True and not (first and t.get("quiet_on_first", False)):
             title = t.get("alert_title", f"{t['name']}: LIVE")
             fields = {"Source": t["name"], "Detected": "queue / waiting room" if url_hit else ", ".join(hits[:4]),
@@ -679,11 +729,18 @@ class Engine:
             return [("🛒 Add to cart", x.get("add_to_cart")), ("⚡ Buy now", x.get("buy_now")), ("🔗 Product page", x["url"])]
         return [("🛒 Open & add to cart", x["url"])]
 
+    DRAW_OPEN_WORDS = ("enter drawing", "enter the drawing", "enter now", "entry open", "entries open",
+                       "drawing open", "drawing is open", "drawing ends", "drawing closes", "enter for a chance")
+
+    @staticmethod
+    def _norm(name):
+        return re.sub(r"[^a-z0-9]+", " ", (name or "").lower().replace("é", "e")).strip()
+
     def check_walmart_drawings(self, t, st, first):
         """walmart.com/shop/collectibles/draw - Walmart's limited-time drawings (lotteries).
-        Pokémon / sports-card items only. Pings (even on the first check - drawings don't wait):
-        when an item is listed (with open/close times), 15 min before entries open, when they open,
-        and 30 min before they close. Goes to the Drawings channel if set, else Walmart."""
+        Pokémon / sports-card items only. Announces each drawing once when it appears (with its open time),
+        then drawings_tick() - which runs on the clock every few seconds, not on this page's scan - pings
+        15 min before, 1 min before and the minute it opens, plus 30 min before it closes."""
         status, final, html = self._fetch(t, st)
         self._save_debug(t["name"], html)
         if looks_blocked(status, html):
@@ -692,73 +749,118 @@ class Engine:
             return "error", status
         tiles = parse_retail_tiles(html, final, "walmart")
         # the drawing page's tiles have no product links: add titles found on the page, and their drawing times
-        by_name = {x["name"].lower(): x for x in tiles}
+        by_name = {self._norm(x["name"]): x for x in tiles}
         for x in title_tiles(BeautifulSoup(html, "html.parser"), final, "walmart"):
-            same = by_name.get(x["name"].lower())
+            same = by_name.get(self._norm(x["name"]))
             if same:
-                if "drawing" not in same.get("text", "").lower():
-                    same["text"] = (same.get("text", "") + " " + x["text"])[:1500]
+                if not drawing_window(same.get("text", ""))[0]:
+                    same["text"] = (x["text"] + " " + same.get("text", ""))[:1500]
                 same["image"] = same.get("image") or x["image"]
                 same["price"] = same.get("price") or x["price"]
             else:
                 tiles.append(x)
-                by_name[x["name"].lower()] = x
+                by_name[self._norm(x["name"])] = x
         if not tiles:
             return "empty", status
         cards = [x for x in tiles if self._wanted_card(x["name"] + " " + x["url"])]
         known = st.setdefault("drawings", {})
         now = datetime.now(CT)
-        n_open = 0
+        n_open = n_upcoming = 0
         for x in cards:
             start, end, closed = drawing_window(x.get("text", ""), now)
-            low = x.get("text", "").lower()
-            if closed:
-                phase = "closed"
-            elif start and now < start:
-                phase = "upcoming"
-            else:
-                phase = "open" if ("enter" in low or start or not end or now < end) else "closed"
+            start, end = x.get("start") or start, x.get("end") or end
+            phase = self._draw_phase(start, end, closed, x.get("text", ""), now)
             n_open += phase == "open"
+            n_upcoming += phase == "upcoming"
             key = f"{x['id']}|{start.isoformat()[:16] if start else ''}"
-            rec = known.get(key)
+            for k in [k for k in known if k.split("|")[0] == x["id"] and k != key]:
+                known.pop(k)                    # same item with an older / missing time: replaced by this one
             kind = "pokemon" if is_tcg_product(x["name"]) else "sports"
             _, info = price_check(x["name"], x["price"], kind)
-            fields = {"Price": x["price"], "Entries open (CT)": fmt_when(start) if start else "",
-                      "Entries close (CT)": fmt_when(end) if end else "", "Limit": x.get("limit"),
-                      "Typical retail": msrp_text(info)}
+            rec = known.get(key)
+            fresh = rec is None
+            rec = rec or {}
+            rec.update({"phase": phase, "name": x["name"], "seen": time.time(), "url": x["url"], "page": t["url"],
+                        "price": x["price"], "image": x.get("image", ""), "limit": x.get("limit", ""),
+                        "retail": msrp_text(info), "start": start.isoformat() if start else "",
+                        "end": end.isoformat() if end else ""})
+            known[key] = rec
             if start and start > now:
-                fields["Calendar"] = f"[Add to Google Calendar]({gcal_link('Walmart drawing: ' + x['name'], start, t['url'])})"
                 self._add_event(f"Walmart drawing: {x['name']}", t["url"], start, True, "drawing", "walmart")
-            links = [("🎟️ ENTER THE DRAWING", x["url"]), ("All Walmart drawings", t["url"])]
-
-            def ping(title):
-                self.notify.send("urgent", title, x["url"], fields, image=x.get("image", ""), links=links,
-                                 copy_to=["drawings"], store="walmart", product=True, ping=is_etb_or_upc(x["name"]))
-
-            if rec is None and phase != "closed":
+            if fresh and phase != "closed":
                 if phase == "upcoming":
-                    ping(f"🎟️ WALMART DRAWING · opens {fmt_when(start)} CT: {x['name']}")
-                else:
-                    ping(f"🎟️ WALMART DRAWING OPEN NOW: {x['name']}")
-                rec = {"phase": phase, "announced_open": phase == "open"}
-            elif rec is not None:
-                if start and not rec.get("soon") and phase == "upcoming" and start - timedelta(minutes=15) <= now:
-                    ping(f"⏰ Walmart drawing opens in {max(1, int((start - now).total_seconds() // 60))} min: {x['name']}")
-                    rec["soon"] = True
-                if phase == "open" and not rec.get("announced_open"):
-                    ping(f"🎟️ OPEN NOW · enter the Walmart drawing: {x['name']}")
+                    self._draw_ping(rec, f"🎟️ WALMART DRAWING · opens {fmt_when(start)} CT: {x['name']}")
+                elif phase == "open":
+                    self._draw_ping(rec, f"🎟️ WALMART DRAWING OPEN NOW: {x['name']}")
                     rec["announced_open"] = True
-                if end and phase == "open" and not rec.get("closing") and end - timedelta(minutes=30) <= now < end:
-                    ping(f"⏳ Walmart drawing closes in {max(1, int((end - now).total_seconds() // 60))} min: {x['name']}")
-                    rec["closing"] = True
-            if rec is not None:
-                rec.update({"phase": phase, "name": x["name"], "seen": time.time(), "url": x["url"],
-                            "price": x["price"], "start": start.isoformat() if start else "",
-                            "end": end.isoformat() if end else ""})
-                known[key] = rec
+                else:
+                    self._draw_ping(rec, f"🎟️ WALMART DRAWING listed (open time not shown yet): {x['name']}")
         for k in [k for k, v in known.items() if time.time() - v.get("seen", 0) > 14 * 86400]:
             known.pop(k)
-        return f"ok ({len(cards)} card drawings · {n_open} open · {len(tiles) - len(cards)} other items skipped)", status
+        self.drawings_tick()
+        return (f"ok ({len(cards)} card drawings · {n_upcoming} upcoming · {n_open} open · "
+                f"{len(tiles) - len(cards)} other items skipped)", status)
+
+    def _clock_ticks(self):
+        try:
+            self.drawings_tick()
+        except Exception as e:
+            log.warning("drawing reminders: %s", e)
+
+    def _draw_phase(self, start, end, closed, text, now):
+        if closed or (end and now >= end):
+            return "closed"
+        if start and now < start:
+            return "upcoming"
+        if start or any(w in (text or "").lower() for w in self.DRAW_OPEN_WORDS):
+            return "open"
+        return "listed"                       # no time on the page and nothing saying it's open: don't guess
+
+    def _draw_ping(self, rec, title):
+        start = datetime.fromisoformat(rec["start"]) if rec.get("start") else None
+        end = datetime.fromisoformat(rec["end"]) if rec.get("end") else None
+        fields = {"Price": rec.get("price"), "Opens (CT)": fmt_when(start) if start else "",
+                  "Closes (CT)": fmt_when(end) if end else "", "Limit": rec.get("limit"),
+                  "Retail (MSRP)": rec.get("retail")}
+        if start and start > datetime.now(CT):
+            fields["Calendar"] = (f"[Add to Google Calendar]({gcal_link('Walmart drawing: ' + rec['name'], start, rec['page'])})")
+        links = [("🎟️ ENTER THE DRAWING", rec["url"]), ("All Walmart drawings", rec.get("page", ""))]
+        self.notify.send("urgent", title, rec["url"], fields, image=rec.get("image", ""), links=links, channel="walmart",
+                         copy_to=["drawings"], store="walmart", product=True, ping=is_etb_or_upc(rec["name"]))
+
+    def drawings_tick(self):
+        """Clock-driven drawing reminders, checked every few seconds from stored open/close times, so the
+        'opens in 15 min', 'opens in 1 min' and 'OPEN NOW' pings land on time no matter when the page was read."""
+        now = datetime.now(CT)
+        for t in self.targets():
+            if t.get("type") != "walmart_drawings":
+                continue
+            known = self.state.get("targets", {}).get(t["name"], {}).get("drawings") or {}
+            for rec in known.values():
+                if not rec.get("start"):
+                    continue
+                start = datetime.fromisoformat(rec["start"])
+                end = datetime.fromisoformat(rec["end"]) if rec.get("end") else None
+                if rec.get("phase") == "closed" or now - start > timedelta(hours=2) and not end:
+                    continue
+                if not rec.get("soon") and timedelta(minutes=1, seconds=30) < start - now <= timedelta(minutes=15):
+                    rec["soon"] = True
+                    self._draw_ping(rec, f"⏰ Walmart drawing opens in {max(1, round((start - now).total_seconds() / 60))} "
+                                         f"min ({self._clock(start)} CT): {rec['name']}")
+                if not rec.get("one_min") and timedelta(0) < start - now <= timedelta(minutes=1, seconds=30):
+                    rec["one_min"] = rec["soon"] = True
+                    self._draw_ping(rec, f"⏰ Walmart drawing opens in 1 min ({self._clock(start)} CT): {rec['name']}")
+                if not rec.get("announced_open") and start <= now < start + timedelta(minutes=30):
+                    rec["announced_open"] = rec["soon"] = rec["one_min"] = True
+                    rec["phase"] = "open"
+                    self._draw_ping(rec, f"🟢 OPEN NOW · enter the Walmart drawing: {rec['name']}")
+                if end and rec.get("announced_open") and not rec.get("closing") \
+                        and timedelta(0) < end - now <= timedelta(minutes=30):
+                    rec["closing"] = True
+                    self._draw_ping(rec, f"⏳ Walmart drawing closes in {max(1, int((end - now).total_seconds() // 60))} "
+                                         f"min: {rec['name']}")
+                if end and now >= end:
+                    rec["phase"] = "closed"
 
     def _save_debug(self, name, html):
         """Last page each source saw - bundled by Settings > Save diagnostics so parsers can be tuned."""
@@ -780,7 +882,14 @@ class Engine:
         via_browser = bool(t.get("browser") or st.get("auto_browser"))
         allp = parse_topps_calendar(html, final, default_tz=CT if via_browser else timezone.utc)
         wanted = set(t.get("sports", ["Baseball", "Basketball", "Football"]))
-        products = [p for p in allp if p["sport"] in wanted]
+        products = allp if t.get("all_products") else [p for p in allp if p["sport"] in wanted]
+        times = self.state.get("topps_times", {})
+        for p in products:          # the exact time from the product's own page when the card only shows a day
+            tt = times.get(p["slug"])
+            if tt and not p.get("has_time"):
+                d = datetime.fromisoformat(tt["when"])
+                if not p.get("when") or abs((d.date() - datetime.fromisoformat(p["when"]).date()).days) <= 3:
+                    p["when"], p["has_time"], p["time_from_page"] = tt["when"], True, tt.get("what", "Drops")
         if not products:
             return ("empty" if not allp else f"ok (0 of {len(allp)} match your sports)"), status
         known, now = st.get("products", {}), datetime.now(CT)
@@ -821,8 +930,13 @@ class Engine:
                     self.notify.send("normal", f"Topps: {p['name']} ({old.get('status')} → {p['status']})",
                                      p["url"], fields)
             if p["when"] and old.get("when") and p["when"][:16] != old["when"][:16]:
-                fields["Was"] = fmt_when(datetime.fromisoformat(old["when"]), old.get("has_time", False))
-                self.notify.send("normal", f"📅 🃏 Topps date moved: {p['name']}", p["url"], fields, ping=True)
+                was = datetime.fromisoformat(old["when"])
+                if p["has_time"] and not old.get("has_time") and d and d.date() == was.date():
+                    self.notify.send("normal", f"🕐 Topps time announced: {p['name']} · {p.get('time_from_page', 'Drops')} "
+                                               f"{self._clock(d)} CT", p["url"], fields, ping=True)
+                else:
+                    fields["Was"] = fmt_when(was, old.get("has_time", False))
+                    self.notify.send("normal", f"📅 🃏 Topps date moved: {p['name']}", p["url"], fields, ping=True)
 
         # heads-up before each timed drop, and again the minute it opens - both link straight to the page
         lead = int(t.get("remind_minutes_before", 15))
@@ -884,9 +998,10 @@ class Engine:
             checked += 1
             self._save_debug(f"topps-page-{p['slug']}", html)
             formats, page_when = parse_topps_product_page(html, final)
+            self._remember_topps_time(p, BeautifulSoup(html, "html.parser").get_text(" "))
             old = pages.get(p["slug"], {})
             new_map = {f["handle"]: f for f in formats}
-            baseline = first or p["slug"] not in seen_slugs
+            baseline = first or p["slug"] not in seen_slugs or t.get("times_only")
             for f in formats:
                 prev = old.get(f["handle"])
                 fields = {"Product": p["name"], "Format": f["name"], "Price": f["price"], "Status": f["status"],
@@ -917,6 +1032,138 @@ class Engine:
         if checked == 0 and blocked:
             return "blocked", last_status
         return f"ok ({n_formats} formats across {len(pages)} pages)", last_status
+
+    # ------------------------------------------------------------ topps.com: every product as it loads
+    def check_topps_sitemap(self, t, st, first):
+        """topps.com lists every product it loads in numbered product sitemaps (newest = highest numbers).
+        New sealed products of ANY line (sports, Disney, F1, Star Wars...) and every format (Hobby, Jumbo, Mega,
+        Blaster, Value, hanger, cases) get opened and posted in #topps as one self-editing card each.
+        @everyone when a new format loads and when it goes on sale / pre-order / drawing. First run: the latest
+        products are recorded and carded quietly, a few pages per run."""
+        status, final, index = self._fetch(t, st)
+        if looks_blocked(status, index) or status >= 400:
+            return ("blocked" if looks_blocked(status, index) else "error"), status
+        nums = topps_sitemap_numbers(index)
+        if not nums:
+            return "empty", status
+        urls = []
+        for n in nums[-int(t.get("sitemaps", 2)):]:
+            sm = {"name": t["name"], "url": f"https://www.topps.com/products/sitemap/{n}.xml",
+                  "browser": t.get("browser", False)}
+            ss, _, body = self._fetch(sm, st)
+            if not looks_blocked(ss, body) and ss < 400:
+                urls += [u for u in topps_product_urls(body) if u not in urls]
+        sealed = [u for u in urls if is_topps_sealed(u)]
+        if not sealed:
+            return f"ok (0 sealed products in {len(urls)} newest listings)", status
+        known = st.setdefault("products", {})
+        now = time.time()
+        for u in sealed:
+            h = topps_handle(u)
+            if h not in known:
+                known[h] = {"url": u, "first_seen": now, "baseline": bool(first), "checked": 0,
+                            "name": humanize_handle(h)}
+        # what to open this run: brand-new first, then anything near its drop / recently changed, then the backlog
+        hot_every, idle_every = t.get("hot_seconds", 120), t.get("idle_minutes", 30) * 60
+
+        def due(rec):
+            if not rec.get("checked"):
+                return True
+            fresh = now - rec.get("first_seen", now) < 3 * 86400
+            near = False
+            if rec.get("when"):
+                dt = datetime.fromisoformat(rec["when"]).timestamp()
+                near = dt - 7200 <= now <= dt + 6 * 3600
+            wait = hot_every if (near or (fresh and not rec.get("live"))) else idle_every
+            return now - rec["checked"] >= wait
+        order = sorted((h for h, r in known.items() if due(r)),
+                       key=lambda h: (known[h].get("baseline", False), bool(known[h].get("checked")),
+                                      known[h].get("checked", 0)))
+        opened = 0
+        use_cards = self.cards.enabled("topps")
+        for h in order[: t.get("max_pages_per_run", 4)]:
+            rec = known[h]
+            ps, pf, ph = self._fetch({"name": t["name"], "url": rec["url"], "browser": t.get("browser", False)}, st)
+            rec["checked"] = now
+            if looks_blocked(ps, ph) or ps >= 400:
+                continue
+            opened += 1
+            item = parse_topps_item_page(ph, rec["url"])
+            prev_status, was_live, new = rec.get("status"), rec.get("live"), not rec.get("status")
+            rec.update({k: v for k, v in item.items() if v not in ("", None) or k in ("live",)})
+            rec["retail"], rec["ratio"] = "Topps' own price", None
+            if rec.get("when") and rec.get("live") is False and datetime.fromisoformat(rec["when"]) > datetime.now(CT):
+                self._add_event(f"Topps: {rec['name']}", rec["url"], datetime.fromisoformat(rec["when"]),
+                                rec.get("has_time", False), "topps", "topps")
+            event = ""
+            if new and not rec.get("baseline"):
+                rec["loaded_before_stock"] = not rec["live"]
+                event = f"🆕 NEW ON TOPPS · {rec['status']}"
+            elif not new and rec["live"] and not was_live:
+                event = f"🚨 LIVE ON TOPPS · {rec['status']}"
+            if rec["live"]:
+                rec["loaded_before_stock"] = False
+            if rec["status"] == "Sold out":
+                rec.setdefault("sold_out_at", now)
+            else:
+                rec.pop("sold_out_at", None)
+            quiet_sold_out = rec["status"] == "Sold out" and not rec.get("carded")   # old sell-outs: no card
+            if use_cards and not quiet_sold_out:
+                self.cards.request("topps", h, rec, bump=bool(event), ping=bool(event), headline=event)
+                rec["carded"] = True
+            elif event:
+                self.notify.send("urgent", f"{event}: {rec['name']}", rec["url"],
+                                 {"Price": rec.get("price"), "Status": rec["status"], "Limit": rec.get("limit")},
+                                 image=rec.get("image", ""), links=self._buy_links(rec), store="topps", product=True,
+                                 ping=True, channel="topps",
+                                 copy_to=["drawings"] if rec["status"] == "Drawing open" else None)
+            if event and rec["status"] == "Drawing open" and use_cards:
+                self.notify.send("urgent", f"🎟️ TOPPS DRAWING OPEN: {rec['name']}", rec["url"],
+                                 {"Price": rec.get("price"), "Limit": rec.get("limit")}, image=rec.get("image", ""),
+                                 links=self._buy_links(rec), store="topps", product=True, ping=True,
+                                 channel="drawings", strict=True)
+        # sold out for 3 days: take the card down so #topps stays about what you can still get
+        for h, rec in known.items():
+            if rec.get("carded") and rec.get("status") == "Sold out" and now - rec.get("sold_out_at", now) > 3 * 86400:
+                self.cards.retire("topps", h)
+                rec["carded"] = False
+        if len(known) > 1500:
+            for h in sorted(known, key=lambda h: known[h].get("first_seen", 0))[: len(known) - 1500]:
+                known.pop(h)
+        self._link_formats_to_calendar(known)
+        live = sum(1 for r in known.values() if r.get("live"))
+        waiting = sum(1 for r in known.values() if not r.get("checked"))
+        return (f"ok ({len(known)} sealed products tracked · {live} live · {opened} pages opened"
+                + (f" · {waiting} still to open" if waiting else "") + ")"), status
+
+    def _link_formats_to_calendar(self, known):
+        """Show each calendar product's formats (from the product listings) in the app's Topps tab."""
+        def key(name):
+            return re.sub(r"[^a-z0-9]+", " ", re.sub(r"[®™]", "", (name or "").lower())).strip()
+        found = {}
+        for p in self.topps:
+            base = key(p["name"])
+            fmts = [{"name": r.get("name", ""), "url": r["url"], "price": r.get("price", ""),
+                     "status": r.get("status", ""), "add_to_cart": r.get("add_to_cart", ""),
+                     "buy_now": r.get("buy_now", "")}
+                    for r in known.values() if r.get("status") and key(r.get("name")).startswith(base)]
+            if fmts:
+                found[p["slug"]] = fmts
+        if found:
+            with self._lock:
+                self.topps_formats = {**self.topps_formats, **found}
+
+    def _remember_topps_time(self, p, page_text):
+        """Topps product pages say 'Available September 30 at 12pm ET' / 'Drawing opens Oct 1 at 11am ET' even
+        when the calendar card only shows the day. Keep that time for the calendar."""
+        day = datetime.fromisoformat(p["when"]).date() if p.get("when") else None
+        w = best_time_for(page_text[:30000], day) or best_time_for(page_text[:30000])
+        if not w or (day and abs((w[0].date() - day).days) > 3):
+            return
+        low = page_text.lower()
+        what = "Drawing opens" if re.search(r"drawing\s+(?:opens|starts|begins)", low) else "Drops"
+        self.state.setdefault("topps_times", {})[p["slug"]] = {"when": w[0].isoformat(), "what": what,
+                                                                "at": time.time()}
 
     def _when_text(self, p):
         if not p.get("when"):
@@ -970,13 +1217,14 @@ class Engine:
         dated, undated = [], []
         for p in self.topps:
             ev = {"title": p["name"], "url": p["url"], "icon": "🃏", "start": p["when"], "has_time": p["has_time"],
-                  "sport": p["sport"], "status": p["status"], "slug": p["slug"]}
+                  "sport": p["sport"], "status": p["status"], "slug": p["slug"], "what": p.get("time_from_page")}
             (dated if p["when"] else undated).append(ev)
         dated.sort(key=lambda e: (e["start"][:10], not e["has_time"], e["start"]))
 
         def extra(e):
             n = len(self.topps_formats.get(e["slug"], []))
-            return f" · {e['sport']} · {e['status']}" + (f" · {n} formats" if n else "")
+            what = " · 🎟️ drawing opens" if e.get("what") == "Drawing opens" else ""
+            return f" · {e['sport'] or 'Other'} · {e['status']}{what}" + (f" · {n} formats" if n else "")
         lines = self._day_lines(dated, extra)
         if undated:
             lines.append("\n**Date not shown right now**")
@@ -1031,7 +1279,7 @@ class Engine:
     # ------------------------------------------------------------ channel boards (current state of each channel)
     def _all_boards(self):
         out = [(self.cal_board, self._render_calendar), (self.topps_board, self._render_topps_board),
-               (self.drawings_board, self._render_drawings), (self.formats_board, self._render_formats)]
+               (self.drawings_board, self._render_drawings)]      # #topps: one card per product instead
         return out
 
     def _retire_store_boards(self):
@@ -1049,6 +1297,13 @@ class Engine:
         self._retire_store_boards()
         if repost:
             self.cards.resend_all()
+        if self.state.get("boards_redropped") != "1.0.14":        # new calendar layout: post it fresh once
+            self.state["boards_redropped"] = "1.0.14"
+            for board, render in ((self.topps_board, self._render_topps_board), (self.cal_board, self._render_calendar)):
+                try:
+                    board.tick(render, force=True, repost=True)
+                except Exception as e:
+                    log.warning("board %s: %s", board.channel, e)
         for board, render in self._all_boards():
             try:
                 board.tick(render, force=repost, repost=repost)
@@ -1117,12 +1372,17 @@ class Engine:
                 for rec in (st.get("drawings") or {}).values():
                     if rec.get("phase") == "closed" or now - rec.get("seen", 0) > 86400 or not rec.get("url"):
                         continue
-                    when = ""
-                    if rec.get("phase") == "upcoming" and rec.get("start"):
-                        when = f"opens {fmt_when(datetime.fromisoformat(rec['start']))} CT"
-                    elif rec.get("phase") == "open":
-                        when = "🟢 OPEN NOW" + (f" · closes {fmt_when(datetime.fromisoformat(rec['end']))} CT"
-                                               if rec.get("end") else "")
+                    ct = datetime.now(CT)
+                    start = datetime.fromisoformat(rec["start"]) if rec.get("start") else None
+                    end = datetime.fromisoformat(rec["end"]) if rec.get("end") else None
+                    if end and ct >= end:
+                        continue
+                    if start and ct < start:
+                        when = f"⏰ opens **{fmt_when(start)} CT**"
+                    elif start or rec.get("phase") == "open":
+                        when = "🟢 OPEN NOW" + (f" · closes {fmt_when(end)} CT" if end else "")
+                    else:
+                        when = "open time not shown yet"
                     lines.append(f"• 🎟️ Walmart · [{rec['name'][:70]}]({rec['url']}) · {rec.get('price', '')} · {when}")
             if t.get("type") == "retail_search" and (only_store is None or t.get("store") == only_store):
                 for rec in (st.get("items") or {}).values():

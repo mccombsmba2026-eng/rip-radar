@@ -69,6 +69,20 @@ captchas, and never automates purchases. Keep it that way.
 - Drop calendar = `state["events"]` (kind: topps / drawing / release, store). ONLY the Topps calendar, Walmart
   drawings and store product pages that show a date/countdown (`product=True`), each linked to the product.
   News / Reddit never add calendar entries (`_add_event` rejects them).
+- Topps: `topps_sitemap` watches topps.com/products/sitemap.xml -> the 2 highest-numbered product sitemaps (newest
+  products). Sealed formats of EVERY line (`is_topps_sealed`: box/pack/blaster/mega/hobby/jumbo/value/case..., not Topps
+  NOW / Living Set singles) are opened (`parse_topps_item_page`: og tags, JSON-LD, button text, ProductVariant id,
+  "Limit per cart: N") and posted as cards in #topps (store key "topps"); @everyone on new + going live.
+  `topps_products` now runs `times_only`: reads each calendar product's /pages/ page for the announced time
+  (`best_time_for`) -> `state["topps_times"]` -> calendar gets the exact time ("🕐 Topps time announced" ping).
+  `settings["topps_all_products"]` (default True): the Topps calendar includes Disney, F1, soccer...
+- Walmart drawings: announced once when first seen; the 15-min / 1-min / OPEN NOW / 30-min-to-close pings come from
+  `drawings_tick()` on the clock (runs after every source + every loop), not from page scans. No time on the page =
+  "listed (open time not shown yet)", never "open". Times also come from page data (`_event_times`).
+- Pokémon Center queue: `check_queue` (keywords + `track_duration`) never goes into host_backoff; a blocked browser
+  check gets a plain-HTTP second look; live = queue address OR short page with queue wording (a long homepage
+  mentioning "virtual queue" is not live). Blocked = "Couldn't check" on the status line, never "no queue".
+  Sources → "Test queue alert" posts a TEST sample (`engine.test_queue_alert`).
 - Walmart pages: parse `__NEXT_DATA__` (`walmart_json_items`); the drawing page's tiles have no /ip/ links, so
   `title_tiles` (h3 titles + card text "Drawing starts Sep 30, 2:00pm PDT") is merged in. Prices read
   "$7994current price $79.94" -> use `price_in` (labelled price first).

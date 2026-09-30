@@ -53,7 +53,7 @@ def test_sync_reposts_every_board_after_a_full_scan(engine, monkeypatch):
         engine.sync_at = 0
         engine._boards_tick(repost=True)
     channels = {c for c, repost in calls if repost}
-    assert {"calendar", "topps_calendar", "drawings", "topps"} <= channels   # store channels use product cards
+    assert {"calendar", "topps_calendar", "drawings"} <= channels   # store + topps channels use product cards
 
 
 def test_board_stays_under_discords_size_limit():

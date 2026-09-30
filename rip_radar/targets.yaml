@@ -18,12 +18,25 @@ targets:
     interval_seconds: 120
     remind_minutes_before: 15
 
-  # Opens each calendar product's Topps page and alerts per format (Hobby, Mega, Blaster, Value...):
-  # when it's listed and when it goes on sale / pre-order / drawing, with a direct link.
-  # Pages within ~2 h before to 6 h after their drop are checked every minute; others every 15 min.
+  # Every product topps.com loads (its product sitemaps list them the moment they're added): sealed formats of
+  # every line - sports, Disney, F1, Star Wars... - Hobby, Jumbo, Mega, Blaster, Value, hangers, cases.
+  # One self-editing card per format in #topps; @everyone when a new one loads and when it goes live.
+  - name: Topps · every new product
+    channel: topps
+    type: topps_sitemap
+    url: https://www.topps.com/products/sitemap.xml
+    interval_seconds: 90
+    sitemaps: 2
+    max_pages_per_run: 4
+    hot_seconds: 120
+    idle_minutes: 30
+
+  # Opens each calendar product's Topps page to read the exact announced time ("Available Sep 30 at 12pm ET",
+  # "Drawing opens ... at 11am ET") so the calendars show times, not just days.
   - name: Topps product pages
     channel: topps
     type: topps_products
+    times_only: true
     url: https://www.topps.com/release-calendar
     interval_seconds: 60
     idle_minutes: 15
@@ -51,7 +64,11 @@ targets:
     category: Pokémon
     alert_title: "🚨 POKÉMON CENTER QUEUE IS LIVE"
     url_contains: [queue-it, queue, waitingroom, waiting-room]
-    keywords: ["you are now in line", "waiting room", "virtual queue", "estimated wait", "your place in line"]
+    # Pokémon Center's own queue wording ("in line to enter", "redirected ... when it is your turn to enter") + common
+    # waiting-room text. The page address changing to a queue page counts too.
+    keywords: ["you are now in line", "in line to enter", "your turn to enter", "virtual queue", "waiting room",
+               "estimated wait", "your place in line", "you are in the queue", "you're in line", "users ahead of you",
+               "keep this window open", "do not refresh"]
     alert_on_end: true
 
   - name: Pokémon Center · card products

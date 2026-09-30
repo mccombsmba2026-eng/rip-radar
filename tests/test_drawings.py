@@ -24,48 +24,64 @@ def page(status):
 T = {"name": "Walmart · drawings", "type": "walmart_drawings", "url": DRAW_URL}
 
 
-def test_drawings_ping_on_first_look_and_when_they_open(engine):
+def at(moment):
+    import rip_radar.engine as eng_mod
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return moment.astimezone(tz) if tz else moment
+    eng_mod.datetime = Clock
+
+
+def test_drawings_announce_then_remind_on_the_clock(engine):
+    import rip_radar.engine as eng_mod
     got = []
     engine.notify.send = lambda level, title, url="", fields=None, desc="", **kw: got.append((title, fields, kw))
-    later = datetime.now(CT) + timedelta(hours=3)
-    when = f"{later:%b} {later.day}, {later.hour % 12 or 12}:{later:%M}{'pm' if later.hour >= 12 else 'am'} CT"
+    start = (datetime.now(CT) + timedelta(hours=3)).replace(second=0, microsecond=0)
+    when = f"{start:%b} {start.day}, {start.hour % 12 or 12}:{start:%M}{'pm' if start.hour >= 12 else 'am'} CT"
     st = {}
+    engine.state.setdefault("targets", {})[T["name"]] = st
     engine.fetcher = FakeFetch(page(f"Drawing starts {when}"), DRAW_URL)
     health, _ = engine.check_walmart_drawings(dict(T), st, True)
-    assert health == "ok (2 card drawings · 0 open · 2 other items skipped)"      # NeeDoh + Magic skipped
+    assert health == "ok (2 card drawings · 2 upcoming · 0 open · 2 other items skipped)"   # NeeDoh + Magic skipped
     titles = [g[0] for g in got]
     assert len(titles) == 2 and all(x.startswith("🎟️ WALMART DRAWING · opens") for x in titles)   # even on first run
     f = got[0][1]
-    assert f["Price"] == "$79.94" and f["Entries open (CT)"] and "Calendar" in f
-    assert f["Typical retail"].startswith("~$79.98")
-    assert got[0][2].get("copy_to") == ["drawings"]                 # #walmart AND #drawings
+    assert f["Price"] == "$79.94" and f["Opens (CT)"] and "Calendar" in f and f["Retail (MSRP)"].startswith("~$79.98")
+    assert got[0][2].get("copy_to") == ["drawings"] and got[0][2].get("channel") == "walmart"
     enter = dict(got[0][2]["links"])["🎟️ ENTER THE DRAWING"]
     assert enter.startswith("https://www.walmart.com/ip/") and enter.endswith("/20640569221")
     got.clear()
     engine.check_walmart_drawings(dict(T), st, False)
     assert got == []                                                                # no repeats
-    # entries open (start time now in the past, page shows the same item)
-    past = datetime.now(CT) - timedelta(minutes=1)
-    for rec in st["drawings"].values():
-        rec["phase"] = "upcoming"
-    key_before = set(st["drawings"])
-    engine.fetcher = FakeFetch(page(f"Drawing starts {when}"), DRAW_URL)
-    import rip_radar.engine as eng_mod
     real = eng_mod.datetime
-
-    class Later(real):
-        @classmethod
-        def now(cls, tz=None):
-            return (later + timedelta(minutes=1)).astimezone(tz) if tz else later + timedelta(minutes=1)
-    eng_mod.datetime = Later
     try:
-        engine.check_walmart_drawings(dict(T), st, False)
+        for moment, expect in [(start - timedelta(minutes=14, seconds=30), "⏰ Walmart drawing opens in 14 min"),
+                               (start - timedelta(minutes=10), None),
+                               (start - timedelta(seconds=50), "⏰ Walmart drawing opens in 1 min"),
+                               (start + timedelta(seconds=5), "🟢 OPEN NOW · enter the Walmart drawing"),
+                               (start + timedelta(minutes=3), None)]:
+            got.clear()
+            at(moment)
+            engine.drawings_tick()
+            if expect:
+                assert len(got) == 2 and all(g[0].startswith(expect) for g in got), (moment, got)
+            else:
+                assert got == []
     finally:
         eng_mod.datetime = real
-    assert set(st["drawings"]) == key_before
-    assert [g[0] for g in got] == [
-        "🎟️ OPEN NOW · enter the Walmart drawing: Pokémon TCG: 30th Celebration Booster Bundle 2-Pack Bundle",
-        "🎟️ OPEN NOW · enter the Walmart drawing: Pokémon TCG: 30th Celebration Mini Tin 10-Count Display Box"]
+
+
+def test_drawing_without_a_time_is_not_called_open(engine):
+    got = []
+    engine.notify.send = lambda level, title, url="", fields=None, desc="", **kw: got.append(title)
+    engine.fetcher = FakeFetch(item("20640569221", "Pokémon TCG: 30th Celebration Booster Bundle 2-Pack Bundle", "$79.94",
+                                    "").replace("<button>Enter drawing</button>", "<button>Get notified</button>") + PAD,
+                               DRAW_URL)
+    health, _ = engine.check_walmart_drawings(dict(T), {}, True)
+    assert "0 open" in health and got == ["🎟️ WALMART DRAWING listed (open time not shown yet): "
+                                          "Pokémon TCG: 30th Celebration Booster Bundle 2-Pack Bundle"]
 
 
 def test_reseller_prices_are_ignored(engine):

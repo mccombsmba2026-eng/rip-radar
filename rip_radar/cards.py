@@ -22,9 +22,11 @@ def card_status(rec):
     if st.startswith("Drawing"):
         return "🎟️ DRAWING / INVITE OPEN", "drawing"
     if rec.get("live"):
-        return "🟢 IN STOCK", "live"
+        return ("🟢 PRE-ORDER OPEN", "live") if st == "Pre-order" else ("🟢 IN STOCK", "live")
     if rec.get("loaded_before_stock"):
         return "🆕 LOADED · NOT IN STOCK YET", "loaded"
+    if st in ("Upcoming", "Listed", "Coming soon"):
+        return "⏳ NOT LIVE YET", "loaded"
     return "⚪ OUT OF STOCK", "oos"
 
 
@@ -62,6 +64,11 @@ def build_card(store, rec, headline=""):
     add("Stock", rec.get("stock") or ("in stock (count not shown by this store)" if rec.get("live") else
                                       rec.get("status", "")))
     add("Limit", rec.get("limit"))
+    if rec.get("when"):
+        from .parsing import fmt_when
+        d = datetime.fromisoformat(rec["when"])
+        if not rec.get("live") and d > datetime.now(d.tzinfo):
+            add("Drops (CT)", fmt_when(d, rec.get("has_time", False)))
     add("Stores", rec.get("stores"), inline=False)
     add("Link was up", rec.get("up_before"))
     color = {"live": STORE_COLORS.get(store), "drawing": PURPLE, "loaded": AMBER}.get(kind) or GREY
