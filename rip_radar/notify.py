@@ -299,7 +299,7 @@ class ChatBot:
 
         @client.event
         async def on_ready():
-            bot.state = "online"
+            bot.state = "online · waiting for a message (if it never hears one, it can't see that channel)"
             log.info("Discord bot online as %s", client.user)
 
         @client.event
@@ -307,10 +307,29 @@ class ChatBot:
             if msg.author.bot:
                 return
             s = bot.get_settings()
-            if not bot_channel_ok(getattr(msg.channel, "name", ""), getattr(msg.channel, "id", ""), s.get("bot_channel")):
+            where = "#" + str(getattr(msg.channel, "name", "") or "DM")
+            if not msg.content:
+                # Discord sent the message without its text: Message Content Intent is off for this bot
+                bot.state = (f"online · heard a message in {where} but can't read it: turn on Message Content Intent "
+                             "(discord.com/developers → your app → Bot) and save")
                 return
-            if bot_matches(msg.content, s.get("bot_triggers") or list(bot.TRIGGERS)):
-                await msg.reply(bot.reply_text()[:1900], mention_author=False)
+            if not bot_channel_ok(getattr(msg.channel, "name", ""), getattr(msg.channel, "id", ""), s.get("bot_channel")):
+                bot.state = f"online · heard {where}, but it only answers in #{str(s.get('bot_channel')).lstrip('#')}"
+                return
+            if not bot_matches(msg.content, s.get("bot_triggers") or list(bot.TRIGGERS)):
+                return
+            text = bot.reply_text()[:1900]
+            try:
+                await msg.reply(text, mention_author=False)
+                bot.state = f"online · last answered in {where}"
+            except Exception as e:                       # no Read Message History: a plain message still works
+                try:
+                    await msg.channel.send(text)
+                    bot.state = f"online · last answered in {where}"
+                except Exception as e2:
+                    bot.state = (f"online · heard {where} but isn't allowed to post there - give the bot View Channel, "
+                                 f"Send Messages and Read Message History in that channel ({type(e2).__name__})")
+                    log.warning("bot can't reply in %s: %s / %s", where, e, e2)
 
         self.state = "connecting"
         try:
