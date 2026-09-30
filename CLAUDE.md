@@ -82,6 +82,10 @@ captchas, and never automates purchases. Keep it that way.
 - Walmart drawings: announced once when first seen; the 15-min / 1-min / OPEN NOW / 30-min-to-close pings come from
   `drawings_tick()` on the clock (runs after every source + every loop), not from page scans. No time on the page =
   "listed (open time not shown yet)", never "open". Times also come from page data (`_event_times`).
+- Scheduler: sources run once per pass, EXCEPT `track_duration` (the queue), which re-runs whenever due even mid-pass
+  (a full pass takes minutes). The queue saves every check to debug/pokemon-center-queue-last-check.html.
+- Walmart drawings: open time from tile text, else the page's visible text near the item name, else the single
+  "Drawing starts ..." time shared by the page; "closed" only from visible page text (page data has template strings).
 - Pokémon Center queue: `check_queue` (keywords + `track_duration`) never goes into host_backoff; a blocked browser
   check gets a plain-HTTP second look; live = queue address OR short page with queue wording (a long homepage
   mentioning "virtual queue" is not live). Blocked = "Couldn't check" on the status line, never "no queue".

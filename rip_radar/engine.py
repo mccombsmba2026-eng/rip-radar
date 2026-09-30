@@ -158,11 +158,13 @@ class Engine:
             pass_started = time.time()
             targets = self.targets()
             pending = {t["name"] for t in targets}
-            while pending and not self._stop.is_set():
+            while not self._stop.is_set():
                 # one source at a time, most overdue first (relative to its interval), so fast sources like the
                 # Pokémon Center queue stay on time even when slow store pages pile up
                 now = time.time()
-                due = [t for t in targets if t["name"] in pending and now >= self.next_due.get(t["name"], 0)
+                # the queue watcher may run again mid-pass: a full pass takes minutes, the queue can't wait that long
+                due = [t for t in targets if (t["name"] in pending or t.get("track_duration"))
+                       and now >= self.next_due.get(t["name"], 0)
                        and (t["type"] == "walmart_drawings" or t.get("track_duration")   # never paused
                             or now >= self.host_backoff.get(self._host(t), (0, 0))[0])]
                 if not due:
@@ -313,8 +315,9 @@ class Engine:
             except Exception as e:
                 log.info("queue second look: %s", e)
         was = st.get("active")
+        self._save_debug("pokemon-center-queue-last-check", f"<!-- {final} -->\n" + (html or ""))
         if active:
-            self._save_debug("pokemon-center-queue-page", html)     # proof of what the queue page looked like
+            self._save_debug("pokemon-center-queue-page", f"<!-- {final} -->\n" + (html or ""))
         if blocked and not active:
             st["blocked_streak"] = st.get("blocked_streak", 0) + 1
             if was is not True:
@@ -765,10 +768,27 @@ class Engine:
         cards = [x for x in tiles if self._wanted_card(x["name"] + " " + x["url"])]
         known = st.setdefault("drawings", {})
         now = datetime.now(CT)
+        # the page's own visible text: if every drawing on it shows the same "Drawing starts ..." time, a tile we
+        # couldn't read a time from gets that one
+        page_text = " ".join(BeautifulSoup(html, "html.parser").get_text(" ").split())
+        page_starts = set()
+        for m in re.finditer(r"drawing\s+(?:starts|opens|begins)", page_text, re.I):
+            w = drawing_window(page_text[m.start(): m.start() + 80], now)[0]
+            if w:
+                page_starts.add(w.isoformat()[:16])
+        page_start = datetime.fromisoformat(next(iter(page_starts))) if len(page_starts) == 1 else None
         n_open = n_upcoming = 0
         for x in cards:
-            start, end, closed = drawing_window(x.get("text", ""), now)
-            start, end = x.get("start") or start, x.get("end") or end
+            visible = x.get("text", "")
+            if " ".join(x["name"].split()[:4]).lower() in page_text.lower():
+                i = page_text.lower().find(" ".join(x["name"].split()[:4]).lower())
+                visible = visible + " " + page_text[max(0, i - 200): i + 400]
+            start, end, _ = drawing_window(visible, now)
+            start, end = x.get("start") or start or page_start, x.get("end") or end
+            closed = any(w in page_text[max(0, page_text.lower().find(x["name"][:30].lower())):][:500].lower()
+                         for w in ("drawing closed", "drawing ended", "drawing has ended", "entries closed"))
+            if start and start > now:
+                closed = False
             phase = self._draw_phase(start, end, closed, x.get("text", ""), now)
             n_open += phase == "open"
             n_upcoming += phase == "upcoming"

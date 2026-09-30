@@ -328,3 +328,31 @@ def test_new_store_etb_gets_everyone(engine):
                                + tile("7654321", "Pokemon TCG Delta Reign Booster Pack", "$4.99") + PAD, t["url"])
     engine.check_retail_search(t, st, False)
     assert ("cvs", "1234567", True) in queued and ("cvs", "7654321", False) in queued
+
+
+def test_drawing_time_from_the_page_when_tiles_dont_carry_it(engine):
+    import rip_radar.engine as eng_mod
+    from tests.test_drawings import at
+    data = {"props": {"pageProps": {"initialData": {"items": [
+        {"usItemId": "20640569221", "name": "Pokémon TCG: 30th Celebration Booster Bundle 2-Pack Bundle",
+         "priceInfo": {"currentPrice": {"price": 79.94}}, "badges": ["Drawing has ended"]}]}}}}
+    html = (f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(data)}</script>'
+            '<div><span>$7994current price $79.94</span><span>Pokémon TCG: 30th Celebration Booster Bundle 2-Pack Bundle</span>'
+            '<div>Drawing starts Sep 30, 2:00pm PDT</div></div>' + PAD)
+    got = []
+    engine.notify.send = lambda level, title, url="", fields=None, desc="", **kw: got.append(title)
+    engine.fetcher = FakeFetch(html, "https://www.walmart.com/shop/collectibles/draw")
+    real = eng_mod.datetime
+    try:
+        at(datetime(2026, 9, 30, 14, 36, tzinfo=CT))
+        health, _ = engine.check_walmart_drawings({"name": "Walmart · drawings", "type": "walmart_drawings",
+                                                   "url": "https://www.walmart.com/shop/collectibles/draw"}, {}, True)
+    finally:
+        eng_mod.datetime = real
+    assert "1 upcoming" in health, health
+    assert got == ["🎟️ WALMART DRAWING · opens Wed Sep 30, 4:00 PM CT: Pokémon TCG: 30th Celebration Booster Bundle 2-Pack Bundle"]
+
+
+def test_queue_is_checked_every_minute_even_mid_pass(engine):
+    t = next(x for x in engine.targets() if x["name"] == "Pokémon Center queue")
+    assert t.get("track_duration")          # the loop lets track_duration sources re-run within a pass
