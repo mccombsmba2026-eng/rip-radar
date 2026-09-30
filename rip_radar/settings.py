@@ -17,6 +17,7 @@ DEFAULTS = {
     "status_every_minutes": 5,
     "sports": ["Baseball", "Basketball", "Football"],
     "start_with_windows": True,
+    "auto_update": True,             # install updates by itself while the app is in the tray
     "paused": False,
     "disabled_sources": [],
     # pages you add in the app: {"name","url","preset","keywords","enabled"}

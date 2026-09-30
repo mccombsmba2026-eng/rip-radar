@@ -127,3 +127,30 @@ def open_path(path):
             subprocess.Popen(["xdg-open", str(path)])
     except OSError as e:
         log.warning("open failed: %s", e)
+
+
+def desktop_dir():
+    """The real Desktop (OneDrive-redirected ones included)."""
+    from pathlib import Path
+    if IS_WINDOWS:
+        try:
+            out = subprocess.run(["powershell", "-NoProfile", "-Command", "[Environment]::GetFolderPath('Desktop')"],
+                                 capture_output=True, text=True, timeout=15, creationflags=CREATE_NO_WINDOW)
+            p = Path(out.stdout.strip())
+            if out.stdout.strip() and p.exists():
+                return p
+        except (OSError, subprocess.SubprocessError):
+            pass
+    p = Path.home() / "Desktop"
+    return p if p.exists() else Path.home()
+
+
+def reveal(path):
+    """Open Explorer with the file selected."""
+    try:
+        if IS_WINDOWS:
+            subprocess.Popen(["explorer", "/select,", str(path)])
+        else:
+            open_path(os.path.dirname(str(path)))
+    except OSError as e:
+        log.warning("reveal failed: %s", e)

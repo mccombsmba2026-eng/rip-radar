@@ -49,3 +49,19 @@ def test_toggle_source_and_pause(engine):
     assert "Topps.com homepage" in [t["name"] for t in engine.targets()]
     api.set_paused(True)
     assert settings.load()["paused"] and api.get_state()["paused"]
+
+
+def test_diagnostics_zip_never_includes_webhooks(engine, tmp_path, monkeypatch):
+    import zipfile
+    from rip_radar import paths, winsys
+    monkeypatch.setattr(winsys, "desktop_dir", lambda: tmp_path)
+    monkeypatch.setattr(winsys, "reveal", lambda p: None)
+    settings.update({"discord_webhook": "https://discord.com/api/webhooks/SECRET"})
+    engine._save_debug("Target · Pokémon cards", "<html>tiles</html>")
+    r = make_api(engine).save_diagnostics()
+    assert r["ok"]
+    with zipfile.ZipFile(r["path"]) as z:
+        names = z.namelist()
+        blob = b"".join(z.read(n) for n in names)
+    assert "pages/target-pok-mon-cards.html" in names and "status.json" in names
+    assert b"SECRET" not in blob and not any("settings" in n for n in names)

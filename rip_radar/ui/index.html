@@ -67,6 +67,10 @@ h2{font:700 18px var(--f-display);text-transform:uppercase;letter-spacing:.06em;
 .alert .bar{align-self:stretch;border-radius:0 3px 3px 0;background:var(--accent)}
 .alert.urgent .bar{background:var(--bad)} .alert.system .bar{background:var(--line)}
 .alert .t{font-weight:600;overflow-wrap:anywhere}
+.abody{display:flex;gap:12px;align-items:flex-start;min-width:0}
+.thumb{width:64px;height:64px;object-fit:contain;background:#fff;border-radius:6px;flex:none}
+.buy{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.buy .btn{padding:4px 10px;font-size:12.5px}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
 .chip{font:600 11px var(--f-body);text-transform:uppercase;letter-spacing:.05em;padding:2px 7px;border-radius:3px;background:var(--panel2);color:var(--muted)}
 .chip.when{background:color-mix(in srgb,var(--accent) 22%,transparent);color:var(--ink)}
@@ -188,9 +192,14 @@ details summary{cursor:pointer;font-weight:600}
   <!-- SOURCES -->
   <section class="view" id="view-sources" hidden>
     <h1>Sources</h1>
-    <p class="lede">What Rip Radar checks. Switch off anything you don't want. Pages marked "blocked" turned the scanner away; they usually recover on their own.</p>
-    <h2>Watch a page</h2>
-    <div class="card"><div class="form">
+    <p class="lede">What Rip Radar checks. Store searches ping only when a Pokémon or sports-card product is in stock or a drawing opens. Switch off anything you don't want. "Blocked" means the site turned the scanner away; it usually recovers on its own. If a store shows 0 products for a while, use Settings → Save diagnostics.</p>
+    <h2>What it checks</h2>
+    <div class="tablewrap"><table>
+      <thead><tr><th>On</th><th>Source</th><th>Last result</th></tr></thead>
+      <tbody id="sourcesBody"></tbody>
+    </table></div>
+    <details style="margin-top:24px"><summary>Optional: watch one specific page</summary>
+    <div class="form" style="margin-top:12px">
       <p class="hint" style="margin:0">Paste a product page (Walmart, Target, Dick's, Amazon, Best Buy, Pokémon Center, Topps). You get an alert the moment it shows "Enter drawing", "Request invite" or "Add to cart".</p>
       <div class="two">
         <label>Name <input type="text" id="wName" placeholder="Walmart 30th Celebration ETB"></label>
@@ -199,17 +208,14 @@ details summary{cursor:pointer;font-weight:600}
       <label>Page link <input type="url" id="wUrl" placeholder="https://www.walmart.com/ip/…"></label>
       <label id="wWordsLabel" hidden>Words to look for <small>Separate with commas</small><input type="text" id="wWords" placeholder="enter drawing, add to cart"></label>
       <div class="row"><button class="btn primary" id="wAdd">Watch this page</button><span class="msg" id="wMsg" role="status"></span></div>
-    </div></div>
+    </div>
     <h2>Your pages</h2>
     <div class="tablewrap"><table>
       <thead><tr><th>Name</th><th>Status</th><th></th></tr></thead>
       <tbody id="pagesBody"></tbody>
     </table></div>
-    <h2>Built-in sources</h2>
-    <div class="tablewrap"><table>
-      <thead><tr><th>On</th><th>Source</th><th>Last result</th></tr></thead>
-      <tbody id="sourcesBody"></tbody>
-    </table></div>
+    </details>
+
   </section>
 
   <!-- SETTINGS -->
@@ -242,6 +248,7 @@ details summary{cursor:pointer;font-weight:600}
 
       <h2>This computer</h2>
       <label class="switch"><input type="checkbox" id="sAuto"> Start Rip Radar when I sign in to Windows</label>
+      <label class="switch"><input type="checkbox" id="sAutoUpd"> Install updates automatically (only while the window is closed)</label>
       <p class="hint" style="margin:0">Closing the window keeps Rip Radar running in the tray by the clock. Right-click the tray icon to quit.</p>
 
       <details>
@@ -272,6 +279,7 @@ details summary{cursor:pointer;font-weight:600}
         <button class="btn" id="sUpd">Check for updates</button>
         <button class="btn" data-open="folder">Open data folder</button>
         <button class="btn" data-open="log">Open log</button>
+        <button class="btn" id="sDiag">Save diagnostics</button>
         <button class="btn danger" id="sQuit">Quit Rip Radar</button>
       </div>
       <p class="msg" id="sUpdMsg" role="status"></p>
@@ -352,10 +360,13 @@ function renderAlerts(){
     const f = a.fields||{}, cal = mdLink(f.Calendar);
     const chips = [];
     if(f["When (CT)"]||f["Drops (CT)"]) chips.push(`<span class="chip when">${esc(f["When (CT)"]||f["Drops (CT)"])} CT</span>`);
-    for(const k of ["Category","Sport","Status","Detected","Source"]) if(f[k]) chips.push(`<span class="chip">${esc(f[k])}</span>`);
+    if(f.Price) chips.push(`<span class="chip when">${esc(f.Price)}</span>`);
+    for(const k of ["Store","Category","Sport","Status","Format","Detected","Source"]) if(f[k]) chips.push(`<span class="chip">${esc(f[k])}</span>`);
+    const links = (a.links||[]).filter(l => l[1] && l[0]!=="Product page");
     return `<div class="alert ${esc(a.level)}"><span class="bar"></span>
-      <div><div class="t">${esc(a.title)}</div>${chips.length?`<div class="chips">${chips.join("")}</div>`:""}
-      ${a.desc && a.level!=="urgent" ? `<div class="desc">${esc(a.desc.replace(/\*\*/g,"").replace(/`/g,"")).slice(0,600)}</div>`:""}</div>
+      <div class="abody">${a.image?`<img class="thumb" src="${esc(a.image)}" alt="" loading="lazy">`:""}<div style="min-width:0"><div class="t">${esc(a.title)}</div>${chips.length?`<div class="chips">${chips.join("")}</div>`:""}
+      ${links.length?`<div class="buy">${links.map(l=>`<button class="btn ${l[0].includes("cart")||l[0].includes("Buy")?"primary":""}" data-url="${esc(l[1])}">${esc(l[0])}</button>`).join("")}</div>`:""}
+      ${a.desc && a.level!=="urgent" ? `<div class="desc">${esc(a.desc.replace(/\*\*/g,"").replace(/`/g,"")).slice(0,600)}</div>`:""}</div></div>
       <div class="side">${ago(a.at)}
         ${a.url?`<button class="linkbtn" data-url="${esc(a.url)}">Open page</button>`:""}
         ${cal?`<button class="linkbtn" data-url="${esc(cal)}">Add to calendar</button>`:""}</div></div>`;
@@ -369,7 +380,9 @@ function renderTopps(){
     <td><span class="sport" style="--c:${SPORT_C[p.sport]||"var(--line)"}">${esc(p.sport)}</span></td>
     <td><button class="linkbtn" style="font-size:14px;text-align:left" data-url="${esc(p.url)}">${esc(p.name)}</button>
       ${(F[p.slug]||[]).map(f=>`<div class="fmt"><button class="linkbtn" data-url="${esc(f.url)}">${esc(f.name)}</button>
-        <span class="meta">${esc(f.price)}</span> <span class="status ${LIVE.has(f.status)?"live":""}">${esc(f.status)}</span></div>`).join("")}</td>
+        <span class="meta">${esc(f.price)}</span> <span class="status ${LIVE.has(f.status)?"live":""}">${esc(f.status)}</span>
+        ${f.add_to_cart?`<button class="linkbtn" data-url="${esc(f.add_to_cart)}">Add to cart</button>`:""}
+        ${f.buy_now?`<button class="linkbtn" data-url="${esc(f.buy_now)}">Buy now</button>`:""}</div>`).join("")}</td>
     <td>${esc(fmtWhen(p.when,p.has_time))}</td>
     <td><span class="status ${LIVE.has(p.status)?"live":""}">${esc(p.status)}</span></td></tr>`).join("")
     : `<tr><td colspan="4" class="hint">${S.topps.length ? "No products for this sport right now." : "Waiting for the first Topps check…"}</td></tr>`;
@@ -406,7 +419,7 @@ function renderSettings(){
   const hooks = s.webhooks||{};
   $("#sStores").innerHTML = Object.entries(S.channels||{}).map(([k,label]) =>
     `<label>${esc(label)} <input type="url" data-hook="${esc(k)}" id="sHook-${esc(k)}" placeholder="optional" value="${esc(hooks[k]||"")}"></label>`).join("");
-  $("#sAuto").checked = !!s.start_with_windows; $("#sBot").value = s.bot_token||""; $("#sNtfy").value = s.ntfy_topic||"";
+  $("#sAuto").checked = !!s.start_with_windows; $("#sAutoUpd").checked = s.auto_update !== false; $("#sBot").value = s.bot_token||""; $("#sNtfy").value = s.ntfy_topic||"";
   $("#sTwSid").value = tw.account_sid||""; $("#sTwTok").value = tw.auth_token||""; $("#sTwFrom").value = tw.from||""; $("#sTwTo").value = tw.to||"";
   document.querySelectorAll("#sSports input").forEach(i => i.checked = (s.sports||[]).includes(i.value));
 }
@@ -449,7 +462,7 @@ async function saveSettings(quiet){
   await api.save_settings({
     discord_webhook: $("#sHook").value.trim(), discord_webhook_urgent: $("#sHookUrgent").value.trim(),
     webhooks: Object.fromEntries([...document.querySelectorAll("[data-hook]")].map(i => [i.dataset.hook, i.value.trim()])),
-    start_with_windows: $("#sAuto").checked, bot_token: $("#sBot").value.trim(), ntfy_topic: $("#sNtfy").value.trim(),
+    start_with_windows: $("#sAuto").checked, auto_update: $("#sAutoUpd").checked, bot_token: $("#sBot").value.trim(), ntfy_topic: $("#sNtfy").value.trim(),
     sports: sports.length ? sports : ["Baseball","Basketball","Football"],
     twilio: {account_sid:$("#sTwSid").value.trim(), auth_token:$("#sTwTok").value.trim(), from:$("#sTwFrom").value.trim(), to:$("#sTwTo").value.trim()}
   });
@@ -485,6 +498,11 @@ $("#sUpd").onclick = async () => {
   refresh();
 };
 $("#sQuit").onclick = () => api.quit_app();
+$("#sDiag").onclick = async () => {
+  msg($("#sUpdMsg"),"Saving…");
+  const r = await api.save_diagnostics();
+  msg($("#sUpdMsg"), r.ok ? "Saved to your Desktop (a RipRadar-diagnostics .zip). Attach it in your chat with Claude." : r.error, r.ok?"good":"bad");
+};
 $("#wAdd").onclick = async () => {
   const r = await api.add_watch_page($("#wName").value, $("#wUrl").value, $("#wPreset").value, $("#wWords").value);
   if(!r.ok) return msg($("#wMsg"), r.error, "bad");

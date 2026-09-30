@@ -460,7 +460,7 @@ class Engine:
         Pages near their drop time are checked every run; the rest every `idle_minutes`."""
         products = list(self.topps)
         if not products:
-            return "waiting for the Topps calendar", 0
+            return "ok · waiting for the Topps calendar", 0
         now = datetime.now(CT)
         hot_before, hot_after = timedelta(hours=t.get("hot_hours_before", 2)), timedelta(hours=t.get("hot_hours_after", 6))
         idle = timedelta(minutes=t.get("idle_minutes", 15))

@@ -6,7 +6,8 @@ A Windows app that watches for sports card and Pokémon drops and pings your pho
 
 - **Topps release calendar**: every baseball, basketball and football product. Alerts when one is added, goes on pre-order or sale, moves date, and 15 minutes before a timed drop.
 - **Pokémon Center**: alerts the moment the queue goes live, and when new 30th Celebration products load.
-- **Raffles and drawings**: Walmart, Target, Dick's, Amazon, Best Buy, from news and Reddit, plus any product page you paste in.
+- **Stores**: searches Target, Walmart, Dick's, Best Buy, Amazon and Pokémon Center for Pokémon and sports cards, and pings only when one is in stock or a drawing opens, with picture, price and Add to cart / Buy now links.
+- **Raffles and drawings in the news**: routed to each store's own Discord channel.
 - **Calendar**: every alert with a date gets an "Add to Google Calendar" link.
 
 It only alerts. You enter queues, raffles and checkouts yourself.
@@ -19,4 +20,4 @@ It only alerts. You enter queues, raffles and checkouts yourself.
 Closing the window keeps it running in the tray by the clock. It starts automatically when you sign in.
 
 ## Updates
-When a new version is out, the app shows a blue bar: **Restart to update**. Click it.
+Rip Radar checks for a new version every 15 minutes and posts to your main Discord channel when one is ready. With the window closed it installs itself; with it open, click **Restart to update** on the blue bar. It posts "✅ updated" when done.

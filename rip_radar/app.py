@@ -1,5 +1,6 @@
 """Rip Radar desktop app: window + tray icon + background scanner + self-update."""
 import argparse
+import json
 import logging
 import logging.handlers
 import sys
@@ -81,7 +82,7 @@ class Api:
 
     # --- actions
     def save_settings(self, changes):
-        allowed = {"discord_webhook", "discord_webhook_urgent", "webhooks", "ntfy_topic", "twilio", "sms_for", "bot_token",
+        allowed = {"discord_webhook", "discord_webhook_urgent", "webhooks", "ntfy_topic", "auto_update", "twilio", "sms_for", "bot_token",
                    "status_every_minutes", "sports", "start_with_windows"}
         s = settings.update({k: v for k, v in (changes or {}).items() if k in allowed})
         winsys.set_autostart(bool(s.get("start_with_windows")))
@@ -165,17 +166,31 @@ class Api:
         info = self._app.update_info
         if not info:
             return {"ok": False, "error": "No update available."}
-        self._app.update_status = "downloading"
-
-        def run():
-            try:
-                updater.download_and_restart(info, self._app.quit)
-            except Exception as e:
-                log.exception("update failed")
-                self._app.update_status = f"failed: {e}"
-
-        threading.Thread(target=run, daemon=True).start()
+        threading.Thread(target=self._app.install_update, daemon=True).start()
         return {"ok": True}
+
+    def save_diagnostics(self):
+        """Zip what each source last saw + the log to the Desktop, for tuning. Never includes settings/webhooks."""
+        import zipfile
+        from datetime import datetime
+        out_dir = winsys.desktop_dir()
+        out = out_dir / f"RipRadar-diagnostics-{datetime.now():%Y%m%d-%H%M}.zip"
+        try:
+            with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+                debug = paths.DATA_DIR / "debug"
+                for f in sorted(debug.glob("*.html")) if debug.exists() else []:
+                    z.write(f, f"pages/{f.name}")
+                for f in (paths.LOG_FILE, paths.TOPPS_CSV):
+                    if f.exists():
+                        z.write(f, f.name)
+                snap = self._app.engine.snapshot()
+                z.writestr("status.json", json.dumps({"version": snap["version"], "health": snap["health"],
+                                                      "topps": snap["topps"], "topps_formats": snap["topps_formats"]},
+                                                     indent=1, default=str))
+        except OSError as e:
+            return {"ok": False, "error": f"Couldn't save: {e}"}
+        winsys.reveal(out)
+        return {"ok": True, "path": str(out)}
 
     def hide_window(self):
         self._app.hide()
@@ -196,6 +211,7 @@ class App:
         self.update_info = None
         self.update_status = ""
         self.tray = None
+        self.visible = not background        # auto-updates only restart the app while it's in the tray
         self.fetcher = BrowserFetcher()
         self.engine = Engine(browser_fetch=self.fetcher)
         base_alert = self.engine.notify.on_alert
@@ -226,6 +242,7 @@ class App:
         return False   # cancel close; we live in the tray
 
     def show(self):
+        self.visible = True
         try:
             self.window.show()
             self.window.restore()
@@ -233,6 +250,7 @@ class App:
             log.warning("show failed: %s", e)
 
     def hide(self):
+        self.visible = False
         try:
             self.window.hide()
         except Exception as e:
@@ -276,23 +294,71 @@ class App:
         except Exception as e:
             self.update_status = f"couldn't check: {e}"[:120]
 
+    def install_update(self):
+        info = self.update_info
+        if not info or self.update_status == "downloading":
+            return
+        self.update_status = "downloading"
+        try:
+            (paths.DATA_DIR / "just_updated.json").write_text(json.dumps(
+                {"from": __version__, "to": info["version"], "notes": info.get("notes", "")}), encoding="utf-8")
+            updater.download_and_restart(info, self.quit)
+        except Exception as e:
+            log.exception("update failed")
+            self.update_status = f"failed: {e}"
+            self.engine.notify.send("system", f"⚠️ Update to {info['version']} failed: {e}"[:200])
+
     def _update_loop(self):
+        """Check GitHub every 15 min. Announce a new version in Discord once. With auto-update on, install it
+        as soon as the window is closed (app in the tray) - otherwise the blue bar waits for a click."""
         time.sleep(20)
+        last_check = 0
         while not self.quitting:
-            had = self.update_info
-            self.check_update()
-            if self.update_info and not had and self.tray is not None:
-                try:
-                    self.tray.notify("Open Rip Radar and click Restart to update.",
-                                     f"Update {self.update_info['version']} available")
-                except Exception:
-                    pass
-            time.sleep(6 * 3600)
+            if time.time() - last_check >= 15 * 60:
+                last_check = time.time()
+                self.check_update()
+                info = self.update_info
+                if info and self.engine.state.get("announced_update") != info["version"]:
+                    self.engine.state["announced_update"] = info["version"]
+                    auto = settings.load().get("auto_update", True)
+                    how = ("It installs itself the next time Rip Radar is in the tray (window closed)." if auto
+                           else "Open Rip Radar and click **Restart to update**.")
+                    self.engine.notify.send("normal", f"⬆️ Rip Radar {info['version']} is ready",
+                                            desc=f"{(info.get('notes') or '').splitlines()[0] if info.get('notes') else ''}"
+                                                 f"\n\n{how}")
+                    if self.tray is not None:
+                        try:
+                            self.tray.notify(how.replace("**", ""), f"Update {info['version']} ready")
+                        except Exception:
+                            pass
+            info = self.update_info
+            if info and settings.load().get("auto_update", True) and not self.visible \
+                    and not str(self.update_status).startswith("failed"):
+                self.install_update()
+            time.sleep(60)
+
+    def _report_finished_update(self):
+        f = paths.DATA_DIR / "just_updated.json"
+        if not f.exists():
+            return
+        try:
+            info = json.loads(f.read_text(encoding="utf-8"))
+            f.unlink()
+        except (OSError, ValueError):
+            return
+        if info.get("to") == __version__:
+            notes = (info.get("notes") or "").strip()
+            self.engine.notify.send("normal", f"✅ Rip Radar updated to {__version__}",
+                                    desc=(f"What's new: {notes.splitlines()[0]}" if notes else ""))
+        else:
+            self.engine.notify.send("system", f"⚠️ Update to {info.get('to')} didn't finish - still on {__version__}. "
+                                              "It will try again.")
 
     # --- lifecycle
     def _on_started(self):
         self._start_tray()
         self.engine.start()
+        threading.Thread(target=self._report_finished_update, daemon=True).start()
         threading.Thread(target=self._update_loop, daemon=True, name="updater").start()
 
     def run(self):

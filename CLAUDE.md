@@ -15,8 +15,10 @@ captchas, and never automates purchases. Keep it that way.
 4. GitHub Actions (`.github/workflows/build.yml`) runs tests, builds `RipRadar.exe` with PyInstaller
    on Windows, runs `RipRadar.exe --selftest` (checks packaging + hits every non-browser source
    live), and publishes release `v<version>` with the exe attached.
-5. Installed apps check `releases/latest` at launch and every 6 h, show "Restart to update",
-   download the exe, and swap it in via a tiny cmd script after exiting.
+5. Installed apps (1.0.4+) check `releases/latest` every 15 min, post "⬆️ Rip Radar X is ready" to the main
+   Discord channel once, and - with auto_update on (default) - install it themselves whenever the window is
+   closed (app in tray); otherwise the blue "Restart to update" bar waits for a click. After restarting,
+   the app posts "✅ Rip Radar updated to X" (via `just_updated.json` in the data folder).
 6. Verify: `curl -s https://api.github.com/repos/mccombsmba2026-eng/rip-radar/releases/latest` –
    the release body contains the selftest report (live source health + current Topps list).
    Pushing without a version bump only runs tests.
@@ -25,8 +27,10 @@ captchas, and never automates purchases. Keep it that way.
 - `run.py` – entry point. `rip_radar/app.py` – pywebview window, tray (pystray), single-instance
   (localhost:47831), self-install to `%LOCALAPPDATA%\Programs\RipRadar`, shortcuts, autostart.
 - `rip_radar/engine.py` – scanner thread + watchers: `topps_calendar`, `topps_products` (per-format: Hobby,
-  Mega, Blaster... from each product's /pages/ page), `listing` (`tcg_only` = Pokémon card products only),
-  `keywords`, `feed`.
+  Mega, Blaster... from each product's /pages/ page, with Shopify cart links), `retail_search` (store search
+  pages: Target, Walmart, Dick's, Best Buy, Amazon, Pokémon Center; pings only when a Pokémon/sports-card
+  product is in stock or a drawing/invite opens; first run is silent; `verify_pages` opens product pages when
+  tiles hide stock), `listing`, `keywords`, `feed`. One source runs at a time, most overdue first.
   Sources marked `browser: true` load in a hidden pywebview window (real Edge/WebView2) so bot-walled
   sites (Pokémon Center, Walmart) see a normal browser; falls back to plain HTTP.
 - `rip_radar/parsing.py` – pure parsing (dates → Central time, Topps cards, sports). Unit-tested.
@@ -37,6 +41,9 @@ captchas, and never automates purchases. Keep it that way.
 - `rip_radar/ui/index.html` – the whole UI (vanilla JS; talks to `Api` in app.py via `pywebview.api`).
 - `rip_radar/updater.py` – GitHub Releases check + swap.
 - User data lives in `%APPDATA%\RipRadar` (settings.json holds the webhook and any tokens).
+- Tuning store parsers: the user clicks Settings → Save diagnostics, which zips the last HTML each source saw
+  (`%APPDATA%\RipRadar\debug`) + log + status (never settings) to their Desktop; they attach it in chat.
+  Parser tests with fixtures live in `tests/test_retail.py`.
 
 ## Rules
 - Never commit secrets (webhooks, bot tokens, Twilio keys). The repo is public. They belong in the
