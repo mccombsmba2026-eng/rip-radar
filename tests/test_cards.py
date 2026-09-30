@@ -308,7 +308,7 @@ def test_new_store_product_links_and_shared_pharmacy_channel(engine):
     assert cards.hook("cvs") == cards.hook("walgreens") == "https://ph"
     names = {t["name"] for t in engine.targets()}
     assert {"Costco · Pokémon cards", "Sam's Club · sports cards", "CVS · trading cards", "Walgreens · trading cards",
-            "Ace Hardware · trading cards", "Barnes & Noble · Pokémon cards"} <= names
+            "Ace Hardware · Pokémon cards", "Barnes & Noble · Pokémon cards"} <= names
 
 
 def test_new_store_etb_gets_everyone(engine):
