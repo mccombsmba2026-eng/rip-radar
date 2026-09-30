@@ -138,7 +138,8 @@ captchas, and never automates purchases. Keep it that way.
 ## Rules
 - @everyone (`ping=True`) ONLY for: Pokémon Center queue going live; every Topps calendar change (as ONE re-posted
   calendar with the list of changes), Topps drops going live / 15-min / open now (in #topps); Topps formats listed or going live; and any ETB / UPC
-  (`parsing.is_etb_or_upc`) loaded-not-in-stock, in stock, back in stock, or drawing - in any channel, incl. news.
+  (`parsing.is_etb_or_upc`) loaded-not-in-stock, in stock, back in stock, or drawing - in any channel, incl. news;
+  and EVERY Amazon invite request ("Request invitation", any product) - #amazon card + #drawings copy.
   Everything else posts without @everyone. Store scanners ping "Loaded at X, not in stock yet" for every new
   card product (`alert_new_listed` defaults on) and back-in-stock pings show "Link was up X before stock".
 - Never set a webhook `username`: posts must show the name/avatar the user gave each webhook in Discord

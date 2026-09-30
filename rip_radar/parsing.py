@@ -522,7 +522,10 @@ def image_in(node, base_url):
 
 
 DRAWING_WORDS = ("enter drawing", "enter the drawing", "join drawing", "join the drawing", "request invite",
-                 "request an invite", "get invite", "enter for a chance")
+                 "request an invite", "get invite", "enter for a chance",
+                 # Amazon's invite-only buys: "Request invitation" at a set price
+                 "request invitation", "request an invitation", "invitation request", "invite only", "invite-only",
+                 "invitation only", "invitation-only")
 
 
 def tile_status(text, live_if_price=False):

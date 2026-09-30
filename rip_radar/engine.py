@@ -640,6 +640,8 @@ class Engine:
                 continue
             warn = f" · ⚠️ {int((info['ratio'] - 1) * 100)}% above retail" if verdict == "over" else ""
             big = is_etb_or_upc(x["name"])                      # ETB / UPC: @everyone in any channel
+            if store == "amazon" and x["status"].startswith("Drawing"):
+                big = True                                      # Amazon invite requests: always @everyone
             listed_at = (prev or {}).get("first_seen")
             up_before = ""
             if listed_at and not (prev or {}).get("live"):
@@ -649,7 +651,8 @@ class Engine:
             event = None
             if not first and x["live"] and (prev is None or not prev.get("live")):
                 if x["status"].startswith("Drawing"):
-                    event = f"🎟️ DRAWING / INVITE OPEN at {label}"
+                    event = (f"🎟️ INVITE REQUEST OPEN at {label}" if store == "amazon"
+                             else f"🎟️ DRAWING / INVITE OPEN at {label}")
                 else:
                     event = f"🟢 {'NEW & IN STOCK' if prev is None else 'BACK IN STOCK'} at {label}"
             elif not first and prev is None and t.get("alert_new_listed", True):

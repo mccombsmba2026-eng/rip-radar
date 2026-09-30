@@ -445,3 +445,24 @@ def test_bot_finds_lookup_channel_from_its_webhook(monkeypatch):
             return {"channel_id": "998877"}
     monkeypatch.setattr(notify.requests, "get", lambda url, timeout=None: R())
     assert bot.lookup_channel_id() == "998877"
+
+
+def test_amazon_invite_request_pings_everyone_in_amazon_and_drawings(engine):
+    settings.update({"webhooks": {"amazon": "https://am", "drawings": "https://dr"}})
+    queued, sent = [], []
+    engine.cards.request = lambda store, pid, rec, bump=False, ping=False, headline="": queued.append((pid, ping, headline))
+    engine.notify.send = lambda level, title, url="", fields=None, desc="", **kw: sent.append((title, kw.get("channel"),
+                                                                                             kw.get("ping")))
+    t = next(x for x in engine.targets() if x["name"] == "Amazon · Pokémon cards")
+
+    def tile(asin, name, button):
+        return (f'<div><a href="/dp/{asin}"><img alt="{name}" src="https://i/{asin}.jpg"></a><span>$29.99</span>'
+                f'<button>{button}</button></div>')
+    st = {}
+    engine.fetcher = FakeFetch(PAD, t["url"])
+    engine.check_retail_search(t, st, True)
+    engine.fetcher = FakeFetch(tile("B0DELTA123", "Pokémon TCG: Delta Reign Booster Bundle", "Request invitation") + PAD,
+                               t["url"])
+    engine.check_retail_search(t, st, False)
+    assert queued == [("B0DELTA123", True, "🎟️ INVITE REQUEST OPEN at Amazon")]          # #amazon card, @everyone
+    assert sent and sent[0][1] == "drawings" and sent[0][2] is True                        # + #drawings, @everyone
