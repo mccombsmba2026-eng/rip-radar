@@ -16,9 +16,9 @@ import yaml
 from bs4 import BeautifulSoup
 
 from . import __version__, paths, settings as settings_mod
-from .notify import ChatBot, Notifier, StatusBoard
-from .parsing import (CT, LIVE_STATUSES, categorize, extract_when, fmt_when, gcal_link, looks_blocked,
-                      parse_topps_calendar)
+from .notify import CHANNELS, ChatBot, Notifier, StatusBoard, store_in
+from .parsing import (CT, LIVE_STATUSES, categorize, extract_when, fmt_when, gcal_link, is_tcg_product, looks_blocked,
+                      parse_topps_calendar, parse_topps_product_page)
 
 log = logging.getLogger("rip_radar")
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -66,6 +66,8 @@ class Engine:
         self.last_scan = None
         self.health = {}           # name -> {"health","code","at","type","url"}
         self.topps = self.state.get("topps_products", [])
+        self.topps_formats = {k: list(v.values()) for k, v in
+                              self.state.get("targets", {}).get("Topps product pages", {}).get("formats", {}).items()}
         self.next_due = {}
         self.first_pass_done = False
         self._lock = threading.RLock()
@@ -111,7 +113,8 @@ class Engine:
                 continue
             out.append({"name": p["name"], "type": "keywords", "url": p["url"], "browser": True,
                         "interval_seconds": 90, "keywords": words, "category": categorize(p["name"]),
-                        "alert_title": f"{pre.get('alert', '🚨 PAGE LIVE')}: {p['name']}", "user": True})
+                        "alert_title": f"{pre.get('alert', '🚨 PAGE LIVE')}: {p['name']}", "user": True,
+                        "channel": pre.get("channel") or store_in(p["url"])})
         for t in out:
             if t["type"] == "topps_calendar":
                 t["sports"] = s.get("sports") or ["Baseball", "Basketball", "Football"]
@@ -156,11 +159,14 @@ class Engine:
         first = not st.get("initialized")
         prev = st.get("health", "")
         watcher = getattr(self, f"check_{t['type']}", None)
+        self.notify.set_channel(t.get("channel"))      # e.g. Pokémon Center -> its own Discord channel
         try:
             health, code = watcher(t, st, first) if watcher else (f"error: unknown type {t['type']}", 0)
         except Exception as e:
             health, code = f"error: {type(e).__name__}: {e}"[:160], 0
             log.exception("%s failed", t["name"])
+        finally:
+            self.notify.set_channel(None)
         st["initialized"] = True
         st["health"] = health
         now = datetime.now(CT)
@@ -187,7 +193,8 @@ class Engine:
 
     # ------------------------------------------------------------ watchers
     def check_listing(self, t, st, first):
-        """Alert on NEW product links appearing on a page (product loaded)."""
+        """Alert on NEW product links appearing on a page (product loaded).
+        tcg_only: keep only sealed Pokémon card products. include/exclude: word filters."""
         status, final, html = self._fetch(t, st)
         if looks_blocked(status, html):
             return "blocked", status
@@ -196,27 +203,32 @@ class Engine:
         soup = BeautifulSoup(html, "html.parser")
         pat = re.compile(t.get("link_pattern", r"/products?/"), re.I)
         want = [k.lower() for k in t.get("include", [])]
-        found = {}
+        avoid = [k.lower() for k in t.get("exclude", [])]
+        found, skipped = {}, 0
         for a in soup.find_all("a", href=True):
             href = urljoin(final, a["href"].split("?")[0].split("#")[0])
             if not pat.search(href):
                 continue
             text = " ".join(a.get_text(" ").split()) or a.get("aria-label", "") or href.rsplit("/", 1)[-1]
-            if want and not any(k in (text + " " + href).lower() for k in want):
+            blob = (text + " " + href).lower()
+            if (want and not any(k in blob for k in want)) or any(k in blob for k in avoid) \
+                    or (t.get("tcg_only") and not is_tcg_product(blob)):
+                skipped += 1
                 continue
             if href not in found or len(text) > len(found[href]):
                 found[href] = text
         if not found:
-            return "empty", status
+            return ("empty" if not skipped else f"ok (0 card products, {skipped} other items skipped)"), status
         seen = set(st.get("links", []))
         if not first:
             for h in [h for h in found if h not in seen][:10]:
                 name = found[h] or h
                 fields = {"Source": t["name"], "Category": t.get("category") or categorize(name + " " + h)}
                 self._when_fields(name[:120], h, extract_when(name), fields)
-                self.notify.send(t.get("level", "urgent"), f"New product on {t['name']}: {name[:120]}", h, fields)
+                label = "New card product" if t.get("tcg_only") else "New product"
+                self.notify.send(t.get("level", "urgent"), f"{label} on {t['name']}: {name[:120]}", h, fields)
         st["links"] = list(seen | set(found))[-3000:]
-        return f"ok ({len(found)} products)", status
+        return f"ok ({len(found)} {'card ' if t.get('tcg_only') else ''}products)", status
 
     def check_keywords(self, t, st, first):
         """Alert when a page flips live: queue page, 'Enter drawing', 'Request invite', 'Add to cart'."""
@@ -269,7 +281,10 @@ class Engine:
             fields = {"Source": t["name"], "Category": categorize(blob, t.get("category", ""))}
             self._when_fields(title[:120], link, extract_when(f"{title}. {summary}"), fields)
             level = "urgent" if any(k in blob for k in t.get("urgent_if", [])) else t.get("level", "normal")
-            self.notify.send(level, title[:240], link, fields, desc=summary[:300])
+            store = store_in(title + " " + summary) if t.get("route_by_store") else None
+            if store:
+                fields["Store"] = CHANNELS[store]
+            self.notify.send(level, title[:240], link, fields, desc=summary[:300], channel=store)
             sent += 1
             if sent >= t.get("max_per_run", 8):
                 break
@@ -282,28 +297,38 @@ class Engine:
             return "blocked", status
         if status >= 400:
             return "error", status
+        # Topps' own page says UTC. If a browser rewrote a time without a zone, it's local (Central).
+        via_browser = bool(t.get("browser") or st.get("auto_browser"))
+        allp = parse_topps_calendar(html, final, default_tz=CT if via_browser else timezone.utc)
         wanted = set(t.get("sports", ["Baseball", "Basketball", "Football"]))
-        allp = parse_topps_calendar(html, final)
         products = [p for p in allp if p["sport"] in wanted]
         if not products:
             return ("empty" if not allp else f"ok (0 of {len(allp)} match your sports)"), status
+        known, now = st.get("products", {}), datetime.now(CT)
+        for p in products:   # near a drop Topps swaps the date for a countdown - keep the last known time
+            old = known.get(p["slug"]) or {}
+            if not p["when"] and old.get("when"):
+                p["when"], p["has_time"] = old["when"], old.get("has_time", False)
+        products.sort(key=lambda p: p["when"] or "")
         with self._lock:
             self.topps = products
         self.state["topps_products"] = products
         self._write_topps_csv(products)
-        known, now = st.get("products", {}), datetime.now(CT)
+        paths.DATA_DIR.joinpath("topps_last_page.html").write_text(html[:3_000_000], encoding="utf-8",
+                                                                    errors="ignore")
 
         if first:
-            lines = [f"`{p['sport'][:4]}` **{p['name']}** · {fmt_when(datetime.fromisoformat(p['when']), p['has_time'])}"
-                     f" · {p['status']}" for p in products]
+            lines = [f"`{p['sport'][:4]}` **{p['name']}** · {self._when_text(p)} · {p['status']}" for p in products]
             self.notify.send("normal", f"Topps calendar: {len(products)} products", t["url"], desc="\n".join(lines))
 
         for p in products:
-            d = datetime.fromisoformat(p["when"])
-            fields = {"Sport": p["sport"], "Drops (CT)": fmt_when(d, p["has_time"]), "Status": p["status"],
-                      "Calendar": f"[Add to Google Calendar]({gcal_link(p['name'], d, p['url'], not p['has_time'])})"}
-            if d > now - timedelta(days=1):
-                self._add_event(f"Topps: {p['name']}", p["url"], d, p["has_time"])
+            d = datetime.fromisoformat(p["when"]) if p["when"] else None
+            fields = {"Sport": p["sport"], "Drops (CT)": self._when_text(p), "Status": p["status"],
+                      "Buy / enter": f"[Open on Topps]({p['url']})"}
+            if d:
+                fields["Calendar"] = f"[Add to Google Calendar]({gcal_link(p['name'], d, p['url'], not p['has_time'])})"
+                if d > now - timedelta(days=1):
+                    self._add_event(f"Topps: {p['name']}", p["url"], d, p["has_time"])
             old = known.get(p["slug"])
             if first:
                 continue
@@ -316,24 +341,104 @@ class Engine:
                 else:
                     self.notify.send("normal", f"Topps: {p['name']} ({old.get('status')} → {p['status']})",
                                      p["url"], fields)
-            if p["when"][:16] != old.get("when", "")[:16]:
+            if p["when"] and old.get("when") and p["when"][:16] != old["when"][:16]:
                 fields["Was"] = fmt_when(datetime.fromisoformat(old["when"]), old.get("has_time", False))
                 self.notify.send("normal", f"📅 Topps date moved: {p['name']}", p["url"], fields)
 
+        # heads-up before each timed drop, and again the minute it opens - both link straight to the page
         lead = int(t.get("remind_minutes_before", 15))
         reminded = set(st.get("reminded", []))
         for p in products:
+            if not (p["when"] and p["has_time"]):
+                continue
             d = datetime.fromisoformat(p["when"])
-            key = f"{p['slug']}|{p['when'][:16]}"
-            if p["has_time"] and key not in reminded and now <= d <= now + timedelta(minutes=lead):
+            formats = self._format_lines(p["slug"])
+            fields = {"Sport": p["sport"], "Drops (CT)": fmt_when(d), "Status": p["status"],
+                      "Buy / enter": f"[Open on Topps]({p['url']})"}
+            soon_key, open_key = f"{p['slug']}|{p['when'][:16]}", f"{p['slug']}|{p['when'][:16]}|open"
+            if soon_key not in reminded and now <= d <= now + timedelta(minutes=lead):
                 mins = max(1, int((d - now).total_seconds() // 60))
-                self.notify.send("urgent", f"⏰ Topps drop in {mins} min: {p['name']}", p["url"],
-                                 {"Sport": p["sport"], "Drops (CT)": fmt_when(d), "Status": p["status"]})
-                reminded.add(key)
-        st["reminded"] = list(reminded)[-200:]
-        st["products"] = {p["slug"]: {"status": p["status"], "when": p["when"], "has_time": p["has_time"]}
-                          for p in products}
+                self.notify.send("urgent", f"⏰ Topps drop in {mins} min: {p['name']}", p["url"], fields,
+                                 desc=formats)
+                reminded.add(soon_key)
+            if open_key not in reminded and d <= now <= d + timedelta(minutes=10):
+                self.notify.send("urgent", f"🟢 OPEN NOW on Topps: {p['name']}", p["url"], fields, desc=formats)
+                reminded.add(open_key)
+        st["reminded"] = list(reminded)[-300:]
+        st["products"] = {p["slug"]: {"status": p["status"], "when": p["when"], "has_time": p["has_time"],
+                                      "name": p["name"]} for p in products}
         return f"ok ({len(products)} products)", status
+
+    def check_topps_products(self, t, st, first):
+        """Open each calendar product's Topps page and track every format on it (Hobby, Mega, Blaster...).
+        Alerts when a format is listed and when it goes on sale / pre-order / drawing, with a direct link.
+        Pages near their drop time are checked every run; the rest every `idle_minutes`."""
+        products = list(self.topps)
+        if not products:
+            return "waiting for the Topps calendar", 0
+        now = datetime.now(CT)
+        hot_before, hot_after = timedelta(hours=t.get("hot_hours_before", 2)), timedelta(hours=t.get("hot_hours_after", 6))
+        idle = timedelta(minutes=t.get("idle_minutes", 15))
+        due_at = st.setdefault("next", {})
+        pages = st.setdefault("formats", {})
+        seen_slugs = st.setdefault("baselined", [])
+
+        def is_hot(p):
+            if p["status"] in LIVE_STATUSES or not p["when"]:
+                return True
+            d = datetime.fromisoformat(p["when"])
+            if p["has_time"]:
+                return d - hot_before <= now <= d + hot_after
+            return d.date() == now.date()
+
+        queue = [p for p in products if is_hot(p) or now.timestamp() >= due_at.get(p["slug"], 0)]
+        queue.sort(key=lambda p: (not is_hot(p), due_at.get(p["slug"], 0)))
+        checked, last_status, blocked = 0, 200, 0
+        for p in queue[: t.get("max_pages_per_run", 4)]:
+            page_t = {"name": t["name"], "url": p["url"], "browser": t.get("browser", False)}
+            status, final, html = self._fetch(page_t, st)
+            last_status = status
+            due_at[p["slug"]] = (now + idle).timestamp()
+            if looks_blocked(status, html) or status >= 400:
+                blocked += 1
+                continue
+            checked += 1
+            formats, page_when = parse_topps_product_page(html, final)
+            old = pages.get(p["slug"], {})
+            new_map = {f["handle"]: f for f in formats}
+            baseline = first or p["slug"] not in seen_slugs
+            for f in formats:
+                prev = old.get(f["handle"])
+                fields = {"Product": p["name"], "Format": f["name"], "Price": f["price"], "Status": f["status"],
+                          "Drops (CT)": self._when_text(p), "Buy / enter": f"[Open this format]({f['url']})"}
+                if baseline:
+                    continue
+                if prev is None:
+                    level = "urgent" if f["status"] in LIVE_STATUSES or is_hot(p) else "normal"
+                    self.notify.send(level, f"🆕 Topps {f['name']} listed · {f['status']}", f["url"], fields)
+                elif f["status"] != prev.get("status"):
+                    if f["status"] in LIVE_STATUSES:
+                        self.notify.send("urgent", f"🚨 LIVE: {f['name']} · {f['status']}", f["url"], fields)
+                    elif f["status"] == "Sold out":
+                        self.notify.send("normal", f"Sold out: {f['name']}", f["url"], fields)
+            pages[p["slug"]] = new_map
+            if p["slug"] not in seen_slugs:
+                seen_slugs.append(p["slug"])
+        with self._lock:
+            self.topps_formats = {k: list(v.values()) for k, v in pages.items()}
+        n_formats = sum(len(v) for v in pages.values())
+        if checked == 0 and blocked:
+            return "blocked", last_status
+        return f"ok ({n_formats} formats across {len(pages)} pages)", last_status
+
+    def _when_text(self, p):
+        if not p.get("when"):
+            return "Now / date not shown"
+        return fmt_when(datetime.fromisoformat(p["when"]), p["has_time"])
+
+    def _format_lines(self, slug):
+        fmts = getattr(self, "topps_formats", {}).get(slug, [])
+        return "\n".join(f"• [{f['name']}]({f['url']}) {f['price']} · {f['status']}" for f in fmts[:10])
 
     # ------------------------------------------------------------ calendar + csv
     def _when_fields(self, title, url, when, fields):
@@ -382,8 +487,7 @@ class Engine:
                 w = csv.writer(f)
                 w.writerow(["Sport", "Product", "Drops (CT)", "Status", "Section", "Link"])
                 for p in products:
-                    w.writerow([p["sport"], p["name"], fmt_when(datetime.fromisoformat(p["when"]), p["has_time"]),
-                                p["status"], p["section"], p["url"]])
+                    w.writerow([p["sport"], p["name"], self._when_text(p), p["status"], p["section"], p["url"]])
         except OSError as e:
             log.warning("couldn't write topps_calendar.csv (open in Excel?): %s", e)
 
@@ -424,6 +528,7 @@ class Engine:
                 "alerts": self.state.get("alerts", [])[:100],
                 "alerts_today": self.alerts_today(),
                 "topps": self.topps,
+                "topps_formats": self.topps_formats,
                 "bot": self.bot.state,
             }
 

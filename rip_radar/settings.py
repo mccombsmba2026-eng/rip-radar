@@ -8,6 +8,8 @@ from . import paths
 DEFAULTS = {
     "discord_webhook": "",
     "discord_webhook_urgent": "",
+    # one channel per store; empty = that store's alerts go to discord_webhook
+    "webhooks": {"topps": "", "pokemon": "", "walmart": "", "target": "", "dicks": "", "amazon": "", "bestbuy": ""},
     "ntfy_topic": "",
     "twilio": {"account_sid": "", "auth_token": "", "from": "", "to": ""},
     "sms_for": ["urgent"],
@@ -40,7 +42,11 @@ def load():
             data = json.loads(paths.SETTINGS_FILE.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             data = {}
-        return _merge(DEFAULTS, data)
+        merged = _merge(DEFAULTS, data)
+        old = merged.pop("discord_webhook_pokemon", "")
+        if old and not merged["webhooks"].get("pokemon"):
+            merged["webhooks"]["pokemon"] = old
+        return merged
 
 
 def save(settings):

@@ -83,6 +83,8 @@ tr:last-child td{border-bottom:0}
 .sport{font:700 12px var(--f-display);text-transform:uppercase;letter-spacing:.06em;border-left:3px solid var(--c,var(--line));padding-left:8px}
 .status{font:600 11px var(--f-body);text-transform:uppercase;letter-spacing:.05em;padding:2px 8px;border-radius:999px;background:var(--panel2);color:var(--muted);white-space:nowrap}
 .status.live{background:var(--bad);color:#fff}
+.fmt{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:6px;padding-left:12px;border-left:2px solid var(--line)}
+.fmt .linkbtn{font-size:13px;color:var(--ink)}
 .filters{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
 .fchip{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:4px 12px;cursor:pointer;font-weight:600;font-size:13px}
 .fchip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
@@ -165,7 +167,7 @@ details summary{cursor:pointer;font-weight:600}
   <!-- TOPPS -->
   <section class="view" id="view-topps" hidden>
     <h1>Topps release calendar</h1>
-    <p class="lede">Every baseball, basketball and football product on topps.com/release-calendar. You get an alert when one is added, goes on pre-order or sale, changes date, and 15 minutes before a timed drop.</p>
+    <p class="lede">Every baseball, basketball and football product on topps.com/release-calendar, with each format (Hobby, Mega, Blaster…) once Topps lists it. You get an alert when a product or format is added, goes on pre-order, sale or drawing, changes date, 15 minutes before a timed drop, and when it opens.</p>
     <div class="row" style="margin-bottom:12px">
       <div class="filters" id="toppsFilters" style="margin:0">
         <button class="fchip" data-sport="all" aria-pressed="true">All</button>
@@ -220,6 +222,16 @@ details summary{cursor:pointer;font-weight:600}
       <label>Urgent-only webhook <small>Optional second channel, e.g. #go-now</small>
         <input type="url" id="sHookUrgent" placeholder="optional"></label>
       <div class="row"><button class="btn" id="sTest">Send test alert</button><span class="msg" id="sTestMsg" role="status"></span></div>
+      <h2>Store channels</h2>
+      <p class="hint" style="margin:0">Each store's alerts go to its own channel. Leave one empty and that store's alerts go to the main channel above. Saved on this PC for good, including through updates.</p>
+      <div class="two" id="sStores"></div>
+      <details>
+        <summary>Paste them all at once</summary>
+        <p class="hint">One per line, store name then the link, e.g. <code>Walmart: https://discord.com/api/webhooks/…</code></p>
+        <textarea id="sBulk" rows="8" style="width:100%;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px;color:inherit;font:12px var(--f-mono)" aria-label="Paste webhooks"></textarea>
+        <div class="row"><button class="btn" id="sBulkFill">Fill in the boxes</button><span class="msg" id="sBulkMsg" role="status"></span></div>
+      </details>
+      <div class="row"><button class="btn" id="sTestAll">Save and test every channel</button><span class="msg" id="sTestAllMsg" role="status"></span></div>
 
       <h2>What to track</h2>
       <div class="row" id="sSports">
@@ -281,6 +293,7 @@ function ago(iso){
   if(s<86400) return Math.floor(s/3600)+"h ago"; return Math.floor(s/86400)+"d ago";
 }
 function fmtWhen(iso, hasTime){
+  if(!iso) return "Now · date not shown";
   const d = new Date(iso), opt = {timeZone:"America/Chicago",weekday:"short",month:"short",day:"numeric"};
   let s = d.toLocaleDateString("en-US",opt);
   if(hasTime) s += ", " + d.toLocaleTimeString("en-US",{timeZone:"America/Chicago",hour:"numeric",minute:"2-digit"});
@@ -351,9 +364,12 @@ function renderAlerts(){
 
 function renderTopps(){
   const rows = S.topps.filter(p => toppsSport==="all" || p.sport===toppsSport);
+  const F = S.topps_formats || {};
   $("#toppsBody").innerHTML = rows.length ? rows.map(p => `<tr>
     <td><span class="sport" style="--c:${SPORT_C[p.sport]||"var(--line)"}">${esc(p.sport)}</span></td>
-    <td><button class="linkbtn" style="font-size:14px;text-align:left" data-url="${esc(p.url)}">${esc(p.name)}</button></td>
+    <td><button class="linkbtn" style="font-size:14px;text-align:left" data-url="${esc(p.url)}">${esc(p.name)}</button>
+      ${(F[p.slug]||[]).map(f=>`<div class="fmt"><button class="linkbtn" data-url="${esc(f.url)}">${esc(f.name)}</button>
+        <span class="meta">${esc(f.price)}</span> <span class="status ${LIVE.has(f.status)?"live":""}">${esc(f.status)}</span></div>`).join("")}</td>
     <td>${esc(fmtWhen(p.when,p.has_time))}</td>
     <td><span class="status ${LIVE.has(p.status)?"live":""}">${esc(p.status)}</span></td></tr>`).join("")
     : `<tr><td colspan="4" class="hint">${S.topps.length ? "No products for this sport right now." : "Waiting for the first Topps check…"}</td></tr>`;
@@ -387,6 +403,9 @@ function renderSettings(){
   settingsLoaded = true;
   const s = S.settings, tw = s.twilio||{};
   $("#sHook").value = s.discord_webhook||""; $("#sHookUrgent").value = s.discord_webhook_urgent||"";
+  const hooks = s.webhooks||{};
+  $("#sStores").innerHTML = Object.entries(S.channels||{}).map(([k,label]) =>
+    `<label>${esc(label)} <input type="url" data-hook="${esc(k)}" id="sHook-${esc(k)}" placeholder="optional" value="${esc(hooks[k]||"")}"></label>`).join("");
   $("#sAuto").checked = !!s.start_with_windows; $("#sBot").value = s.bot_token||""; $("#sNtfy").value = s.ntfy_topic||"";
   $("#sTwSid").value = tw.account_sid||""; $("#sTwTok").value = tw.auth_token||""; $("#sTwFrom").value = tw.from||""; $("#sTwTo").value = tw.to||"";
   document.querySelectorAll("#sSports input").forEach(i => i.checked = (s.sports||[]).includes(i.value));
@@ -429,6 +448,7 @@ async function saveSettings(quiet){
   const sports = [...document.querySelectorAll("#sSports input:checked")].map(i=>i.value);
   await api.save_settings({
     discord_webhook: $("#sHook").value.trim(), discord_webhook_urgent: $("#sHookUrgent").value.trim(),
+    webhooks: Object.fromEntries([...document.querySelectorAll("[data-hook]")].map(i => [i.dataset.hook, i.value.trim()])),
     start_with_windows: $("#sAuto").checked, bot_token: $("#sBot").value.trim(), ntfy_topic: $("#sNtfy").value.trim(),
     sports: sports.length ? sports : ["Baseball","Basketball","Football"],
     twilio: {account_sid:$("#sTwSid").value.trim(), auth_token:$("#sTwTok").value.trim(), from:$("#sTwFrom").value.trim(), to:$("#sTwTo").value.trim()}
@@ -436,6 +456,28 @@ async function saveSettings(quiet){
   if(!quiet) msg($("#sSaveMsg"),"Saved.","good");
 }
 $("#sSave").onclick = () => saveSettings(false);
+const HOOK_RE = /https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\S+/;
+const NAME_HINTS = {topps:["topps","bowman"],pokemon:["pokemon center","pokémon center","pokemon","pokémon","pc"],walmart:["walmart"],
+  target:["target"],dicks:["dick","dicks","dsg"],amazon:["amazon"],bestbuy:["best buy","bestbuy","bby"],main:["main","general","alerts","all","ping"]};
+$("#sBulkFill").onclick = () => {
+  let filled = [], missed = 0;
+  for(const line of $("#sBulk").value.split(/\n+/)){
+    const m = HOOK_RE.exec(line); if(!m) continue;
+    const label = line.slice(0, m.index).toLowerCase().replace(/[#:\-–—=>]+/g," ").trim();
+    const key = Object.keys(NAME_HINTS).find(k => NAME_HINTS[k].some(h => new RegExp("(^|\\s)"+h.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+"($|\\s|')").test(label)));
+    if(!key){ missed++; continue; }
+    const input = key==="main" ? $("#sHook") : $(`#sHook-${key}`);
+    if(input){ input.value = m[0]; filled.push(key==="main" ? "Main" : S.channels[key]); }
+  }
+  msg($("#sBulkMsg"), filled.length ? `Filled: ${filled.join(", ")}${missed?` · ${missed} line(s) had no store name I recognised`:""}. Now click "Save and test every channel".` : "I couldn't match any lines. Put the store name before each link.", filled.length?"good":"bad");
+};
+$("#sTestAll").onclick = async () => {
+  await saveSettings(true);
+  msg($("#sTestAllMsg"),"Sending a test to each channel…");
+  const r = await api.test_all_channels();
+  const names = Object.entries(r.results).map(([k,ok]) => `${k==="main"?"Main":S.channels[k]} ${ok?"✓":"✗"}`);
+  msg($("#sTestAllMsg"), (r.ok ? "All connected: " : "Some failed (check those links): ") + names.join(" · "), r.ok?"good":"bad");
+};
 $("#sUpd").onclick = async () => {
   msg($("#sUpdMsg"),"Checking…");
   const r = await api.check_update();

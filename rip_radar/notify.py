@@ -11,16 +11,41 @@ log = logging.getLogger("rip_radar")
 COLORS = {"urgent": 0xE0342B, "normal": 0x2350C8, "system": 0x8A8F9E}
 
 
+# One Discord channel per store. Key -> label shown in the app. Webhooks live in settings["webhooks"].
+CHANNELS = {"topps": "Topps", "pokemon": "Pokémon Center", "walmart": "Walmart", "target": "Target",
+            "dicks": "Dick's", "amazon": "Amazon", "bestbuy": "Best Buy"}
+# news posts go to the store they mention first (checked in this order)
+STORE_WORDS = [("pokemon", ("pokémon center", "pokemon center", "pokemoncenter")),
+               ("walmart", ("walmart",)), ("target", ("target",)),
+               ("dicks", ("dick's", "dicks sporting", "dick’s", "dickssportinggoods", "dick's sporting goods")),
+               ("amazon", ("amazon",)), ("bestbuy", ("best buy", "bestbuy")), ("topps", ("topps", "bowman"))]
+
+
+def store_in(text):
+    """Which store a headline or link is about ('Target' only as a word, not 'targeting')."""
+    import re
+    t = (text or "").lower()
+    for key, words in STORE_WORDS:
+        if any(re.search(r"(?<![a-z])" + re.escape(w) + r"(?![a-z])", t) for w in words):
+            return key
+    return None
+
+
 class Notifier:
     def __init__(self, get_settings, on_alert=None):
         self.get_settings = get_settings   # callable -> current settings dict (picks up edits live)
         self.on_alert = on_alert or (lambda a: None)
+        self._local = threading.local()    # channel is per-thread: the scanner sets it, UI tests don't see it
 
-    def send(self, level, title, url="", fields=None, desc=""):
+    def set_channel(self, channel):
+        self._local.channel = channel
+
+    def send(self, level, title, url="", fields=None, desc="", channel=None):
         fields = {k: v for k, v in (fields or {}).items() if v}
+        channel = channel or getattr(self._local, "channel", None)
         log.info("ALERT [%s] %s %s", level, title, url)
         self.on_alert({"level": level, "title": title, "url": url, "fields": fields, "desc": desc,
-                       "at": datetime.now(timezone.utc).isoformat()})
+                       "channel": channel or "", "at": datetime.now(timezone.utc).isoformat()})
         s = self.get_settings()
         embed = {"title": title[:250], "color": COLORS.get(level, COLORS["normal"]),
                  "description": (desc or "")[:4000],
@@ -32,9 +57,13 @@ class Notifier:
         payload = {"username": "Rip Radar", "embeds": [embed]}
         if level == "urgent":
             payload["content"] = "@everyone"
-        hooks = {s.get("discord_webhook", "")}
-        if level == "urgent":
-            hooks.add(s.get("discord_webhook_urgent", ""))
+        own = (s.get("webhooks") or {}).get(channel, "") if channel else ""
+        if own.startswith("http"):
+            hooks = {own}                   # a channel with its own webhook gets only its own alerts
+        else:
+            hooks = {s.get("discord_webhook", "")}
+            if level == "urgent":
+                hooks.add(s.get("discord_webhook_urgent", ""))
         results = [self._post_discord(h, payload) for h in hooks if h.startswith("http")]
         if s.get("ntfy_topic") and level != "system":
             try:

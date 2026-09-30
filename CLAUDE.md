@@ -24,12 +24,16 @@ captchas, and never automates purchases. Keep it that way.
 ## Layout
 - `run.py` – entry point. `rip_radar/app.py` – pywebview window, tray (pystray), single-instance
   (localhost:47831), self-install to `%LOCALAPPDATA%\Programs\RipRadar`, shortcuts, autostart.
-- `rip_radar/engine.py` – scanner thread + watchers: `topps_calendar`, `listing`, `keywords`, `feed`.
+- `rip_radar/engine.py` – scanner thread + watchers: `topps_calendar`, `topps_products` (per-format: Hobby,
+  Mega, Blaster... from each product's /pages/ page), `listing` (`tcg_only` = Pokémon card products only),
+  `keywords`, `feed`.
   Sources marked `browser: true` load in a hidden pywebview window (real Edge/WebView2) so bot-walled
   sites (Pokémon Center, Walmart) see a normal browser; falls back to plain HTTP.
 - `rip_radar/parsing.py` – pure parsing (dates → Central time, Topps cards, sports). Unit-tested.
 - `rip_radar/targets.yaml` – built-in sources + "Watch a page" presets. Edit here to add sources.
-- `rip_radar/notify.py` – Discord/Twilio/ntfy, self-editing status message, chat bot.
+- `rip_radar/notify.py` – Discord/Twilio/ntfy, self-editing status message, chat bot. One Discord channel per
+  store (`CHANNELS`: topps, pokemon, walmart, target, dicks, amazon, bestbuy) via `settings["webhooks"]`;
+  sources set `channel:`, news feeds `route_by_store: true` (store named in the headline); empty = main webhook.
 - `rip_radar/ui/index.html` – the whole UI (vanilla JS; talks to `Api` in app.py via `pywebview.api`).
 - `rip_radar/updater.py` – GitHub Releases check + swap.
 - User data lives in `%APPDATA%\RipRadar` (settings.json holds the webhook and any tokens).

@@ -16,7 +16,7 @@ def engine(tmp_path, monkeypatch):
     from rip_radar.engine import Engine
     e = Engine()
     e.sent = []
-    e.notify.send = lambda level, title, url="", fields=None, desc="": e.sent.append((level, title))
+    e.notify.send = lambda level, title, url="", fields=None, desc="", channel=None: e.sent.append((level, title))
     return e
 
 
@@ -134,3 +134,140 @@ def test_challenge_detection():
     from rip_radar.parsing import is_challenge
     assert is_challenge("<html><title>Just a moment...</title></html>")
     assert not is_challenge(page())
+
+
+# ---------------------------------------------------------------- 1.0.3
+def test_calendar_keeps_last_known_time(engine):
+    st = {}
+    engine.fetcher = FakeFetch(page())
+    engine.check_topps_calendar(dict(TOPPS), st, True)
+    countdown = [list(c) for c in SOON]
+    countdown[1][1] = "Dropping in 00:12:00"                     # Bowman Football near drop
+    engine.fetcher = FakeFetch(page([tuple(c) for c in countdown], AVAIL))
+    engine.check_topps_calendar(dict(TOPPS), st, False)
+    bf = next(p for p in engine.topps if p["slug"] == "bowman-football")
+    assert bf["has_time"] and bf["when"].startswith("2026-09-30T11:00")
+    assert not any("date moved" in t or "New on Topps" in t for _, t in engine.sent)
+
+
+def test_open_now_alert_links_to_page(engine):
+    now = datetime.now(timezone.utc) - timedelta(minutes=2)
+    txt = f"{now:%A}, {now:%b} {now.day} at {now.hour % 12 or 12}:{now:%M} {'PM' if now.hour >= 12 else 'AM'} UTC"
+    html = (f'<h2>Dropping soon</h2><a href="/pages/bowman-football"><img alt="2026 Bowman Football"></a>'
+            f'<a href="/pages/bowman-football">{txt} 2026 Bowman Football</a><button>Notify me</button>' + "x" * 21000)
+    engine.fetcher = FakeFetch(html)
+    got = []
+    engine.notify.send = lambda level, title, url="", fields=None, desc="", channel=None: got.append((title, url, fields))
+    engine.check_topps_calendar(dict(TOPPS), {}, True)
+    opened = [g for g in got if "OPEN NOW" in g[0]]
+    assert len(opened) == 1 and opened[0][1] == "https://www.topps.com/pages/bowman-football"
+    assert "Open on Topps" in opened[0][2]["Buy / enter"]
+
+
+def test_format_monitor(engine):
+    engine.topps = [{"slug": "bowman-football", "name": "2026 Bowman Football", "sport": "Football",
+                     "url": "https://www.topps.com/pages/bowman-football", "when": datetime.now(timezone.utc).isoformat(),
+                     "has_time": True, "status": "Upcoming", "section": "Dropping soon"}]
+    t = {"name": "Topps product pages", "type": "topps_products", "url": "u"}
+    st = {}
+    engine.fetcher = FakeFetch("<p>Available soon. Get notified</p>", "https://www.topps.com/pages/bowman-football")
+    assert engine.check_topps_products(t, st, True)[0].startswith("ok (0 formats")
+    fmt = lambda h, name, price, btn: (f'<div><a href="/products/{h}">{name}</a><span>{price}</span>'
+                                       f'<button>{btn}</button></div>')
+    engine.fetcher = FakeFetch(fmt("bf-mega", "2026 Bowman Football Mega Box", "$59.99", "Notify me")
+                               + fmt("bf-blaster", "2026 Bowman Football Blaster Box", "$29.99", "Add to cart"),
+                               "https://www.topps.com/pages/bowman-football")
+    engine.check_topps_products(t, st, False)
+    titles = [x for _, x in engine.sent]
+    assert "🆕 Topps 2026 Bowman Football Mega Box listed · Upcoming" in titles
+    assert "🆕 Topps 2026 Bowman Football Blaster Box listed · On sale" in titles
+    engine.sent.clear()
+    engine.fetcher = FakeFetch(fmt("bf-mega", "2026 Bowman Football Mega Box", "$59.99", "Add to cart")
+                               + fmt("bf-blaster", "2026 Bowman Football Blaster Box", "$29.99", "Sold out"),
+                               "https://www.topps.com/pages/bowman-football")
+    engine.check_topps_products(t, st, False)
+    assert engine.sent == [("urgent", "🚨 LIVE: 2026 Bowman Football Mega Box · On sale"),
+                           ("normal", "Sold out: 2026 Bowman Football Blaster Box")]
+    assert [f["name"] for f in engine.snapshot()["topps_formats"]["bowman-football"]] == \
+        ["2026 Bowman Football Mega Box", "2026 Bowman Football Blaster Box"]
+
+
+def test_listing_cards_only(engine):
+    t = {"name": "Pokémon Center · card products", "url": "https://www.pokemoncenter.com/category/trading-card-game",
+         "link_pattern": "/product/", "tcg_only": True, "category": "Pokémon"}
+    def pc(items):
+        return "<div>" + "".join(f'<a href="/product/{i}/{s}">{n}</a>' for i, (s, n) in enumerate(items)) + "</div>" + "x" * 21000
+    base = [("pokemon-tcg-delta-reign-etb", "Pokémon TCG: Mega Evolution—Delta Reign Elite Trainer Box"),
+            ("pikachu-hat", "Pikachu 30th Celebration Hat")]
+    st = {}
+    engine.fetcher = FakeFetch(pc(base), t["url"])
+    assert engine.check_listing(t, st, True)[0] == "ok (1 card products)"
+    engine.fetcher = FakeFetch(pc(base + [("lanyard", "Pokémon Center Lanyard"),
+                                          ("pokemon-tcg-booster-bundle", "Pokémon TCG: 30th Celebration Booster Bundle")]),
+                               t["url"])
+    engine.check_listing(t, st, False)
+    assert engine.sent == [("urgent", "New card product on Pokémon Center · card products: "
+                                      "Pokémon TCG: 30th Celebration Booster Bundle")]
+
+
+def test_pokemon_channel_routing(engine, monkeypatch):
+    from rip_radar import notify as notify_mod
+    from rip_radar.notify import Notifier
+    posted = []
+    monkeypatch.setattr(notify_mod.Notifier, "_post_discord", staticmethod(lambda hook, payload: posted.append(hook) or True))
+    settings.update({"discord_webhook": "https://main", "discord_webhook_urgent": "https://urgent",
+                     "webhooks": {"pokemon": "https://poke"}})
+    n = Notifier(settings.load)
+    n.set_channel("pokemon")
+    n.send("urgent", "PC queue live")
+    assert posted == ["https://poke"]                       # only the Pokémon channel
+    posted.clear()
+    n.set_channel(None)
+    n.send("urgent", "Topps live")
+    assert sorted(posted) == ["https://main", "https://urgent"]
+    posted.clear()
+    settings.update({"webhooks": {"pokemon": ""}})
+    n.send("normal", "PC product", channel="pokemon")
+    assert posted == ["https://main"]                       # no Pokémon webhook -> main channel
+
+
+def test_store_detection():
+    from rip_radar.notify import store_in
+    assert store_in("Walmart's Pokémon drawing opens Oct 7") == "walmart"
+    assert store_in("Pokémon Center queue is live for Delta Reign") == "pokemon"
+    assert store_in("Target restocks Pokémon cards Friday") == "target"
+    assert store_in("Retailers targeting scalpers with new limits") is None
+    assert store_in("Dick's Sporting Goods Pokémon entry") == "dicks"
+    assert store_in("https://www.bestbuy.com/site/pokemon-etb/123.p") == "bestbuy"
+    assert store_in("Topps Chrome Football preorder") == "topps"
+
+
+def test_news_goes_to_store_channel(engine):
+    got = []
+    engine.notify.send = lambda level, title, url="", fields=None, desc="", channel=None: got.append((title, channel))
+    items = [("Target Pokémon drawing now open", "https://a/1"), ("Walmart drawing Oct 7", "https://a/2"),
+             ("New Pokémon drawing rules explained", "https://a/3")]
+    body = "".join(f"<item><title>{t}</title><link>{l}</link><guid>{l}</guid>"
+                   f"<pubDate>{datetime.now(timezone.utc):%a, %d %b %Y %H:%M:%S} GMT</pubDate></item>" for t, l in items)
+    rss = f'<?xml version="1.0"?><rss version="2.0"><channel><title>x</title>{body}</channel></rss>'
+    f = {"name": "News", "url": "u", "must_have": ["drawing"], "route_by_store": True}
+    st = {}
+    engine.fetcher = FakeFetch('<?xml version="1.0"?><rss version="2.0"><channel><title>x</title></channel></rss>')
+    engine.check_feed(f, st, True)
+    engine.fetcher = FakeFetch(rss)
+    engine.check_feed(f, st, False)
+    assert got == [("Target Pokémon drawing now open", "target"), ("Walmart drawing Oct 7", "walmart"),
+                   ("New Pokémon drawing rules explained", None)]
+
+
+def test_watch_page_channel_and_settings_migration(engine):
+    import json
+    paths.SETTINGS_FILE.write_text(json.dumps({"discord_webhook_pokemon": "https://poke"}))
+    s = settings.load()
+    assert s["webhooks"]["pokemon"] == "https://poke" and "discord_webhook_pokemon" not in s
+    settings.update({"watch_pages": [
+        {"name": "Target ETB", "url": "https://www.target.com/p/x", "preset": "target"},
+        {"name": "Mine", "url": "https://www.dickssportinggoods.com/p/y", "preset": "custom", "keywords": ["enter"]}]})
+    ch = {t["name"]: t.get("channel") for t in engine.targets()}
+    assert ch["Target ETB"] == "target" and ch["Mine"] == "dicks"
+    assert ch["Topps release calendar"] == "topps" and ch["Pokémon Center queue"] == "pokemon"

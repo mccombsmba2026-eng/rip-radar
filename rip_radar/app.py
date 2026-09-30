@@ -72,6 +72,8 @@ class Api:
                             "enabled": t["name"] not in disabled} for t in builtin["targets"]]
         snap["presets"] = {k: v["label"] for k, v in builtin.get("watch_presets", {}).items()}
         snap["settings"] = s
+        from .notify import CHANNELS
+        snap["channels"] = CHANNELS
         snap["update"] = a.update_info
         snap["update_status"] = a.update_status
         snap["installed"] = winsys.is_installed_copy()
@@ -79,18 +81,30 @@ class Api:
 
     # --- actions
     def save_settings(self, changes):
-        allowed = {"discord_webhook", "discord_webhook_urgent", "ntfy_topic", "twilio", "sms_for", "bot_token",
+        allowed = {"discord_webhook", "discord_webhook_urgent", "webhooks", "ntfy_topic", "twilio", "sms_for", "bot_token",
                    "status_every_minutes", "sports", "start_with_windows"}
         s = settings.update({k: v for k, v in (changes or {}).items() if k in allowed})
         winsys.set_autostart(bool(s.get("start_with_windows")))
         self._app.engine.reload()
         return {"ok": True}
 
-    def test_alert(self):
+    def test_alert(self, channel=None):
+        from .notify import CHANNELS
+        where = f"{CHANNELS[channel]} channel" if channel in CHANNELS else "main channel"
         ok = self._app.engine.notify.send(
-            "urgent", "Test alert from Rip Radar", "https://www.topps.com/release-calendar",
-            {"Source": "Test", "Note": "If your phone buzzed, you're set."})
+            "normal", f"✅ Rip Radar test · {where}", "",
+            {"Note": "This channel is connected."}, channel=channel)
         return {"ok": bool(ok)}
+
+    def test_all_channels(self):
+        """One test message to the main channel and to every store channel that has a webhook."""
+        from .notify import CHANNELS
+        s = settings.load()
+        results = {"main": self.test_alert(None)["ok"]}
+        for key in CHANNELS:
+            if (s.get("webhooks") or {}).get(key, "").startswith("http"):
+                results[key] = self.test_alert(key)["ok"]
+        return {"ok": all(results.values()), "results": results}
 
     def set_paused(self, paused):
         settings.update({"paused": bool(paused)})

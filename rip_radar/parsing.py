@@ -116,25 +116,37 @@ def categorize(text, default=""):
     return default
 
 
+
+
 # ---------------------------------------------------------------- Topps release calendar
 SPORT_WORDS = {"Baseball": ["baseball", " mlb", "bowman chrome", "bowman draft", "bowman sapphire"],
                "Basketball": ["basketball", " nba", "hoops"],
                "Football": ["football", " nfl"]}
 NOT_OUR_SPORTS = ("soccer", "uefa", " mls", "premier league", "formula", " f1", "tennis", "wwe", "ufc",
                   "star wars", "marvel", "disney", "golf", "hockey", " nhl", "mars attacks", "pokemon")
+_DAY = r"(?:(?:mon|tues|wednes|thurs|fri|satur|sun)day,?\s+)"
+_TIME = r"(?:\s+at\s+(\d{1,2})(?::(\d\d))?\s*([ap])\.?m\.?\s*(UTC|GMT|ET|EST|EDT|CT|CST|CDT|PT|PST|PDT)?)?"
 RE_CARD_DATE = re.compile(
-    r"^\s*(?:(?:mon|tues|wednes|thurs|fri|satur|sun)day,?\s+)?"
+    r"^\s*" + _DAY + r"?"
     # a year only counts after a comma ("Oct 6, 2026"), so "Oct 6 2026-27 Topps..." keeps the product's year
     r"(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:,\s*(20\d\d)(?![-\d]))?"
-    r"(?:\s+at\s+(\d{1,2})(?::(\d\d))?\s*([ap])\.?m\.?\s*(UTC|GMT|ET|EST|EDT|CT|CST|CDT|PT|PST|PDT)?)?", re.I)
+    + _TIME, re.I)
+RE_RELATIVE_DATE = re.compile(r"^\s*(today|tomorrow|tonight)" + _TIME, re.I)
+RE_ISO = re.compile(r"^20\d\d-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?(?:Z|[+-]\d\d:?\d\d)?$")
 STATUS_WORDS = [("sold out", "Sold out"), ("pre-order", "Pre-order"), ("preorder", "Pre-order"),
                 ("enter drawing", "Drawing open"), ("enter the drawing", "Drawing open"),
+                ("enter lottery", "Drawing open"), ("enter the lottery", "Drawing open"),
+                ("enter raffle", "Drawing open"), ("enter now", "Drawing open"),
                 ("buy now", "On sale"), ("shop now", "On sale"), ("add to cart", "On sale"),
-                ("available now", "On sale"), ("notify me", "Upcoming"), ("coming soon", "Upcoming")]
+                ("available now", "On sale"), ("live now", "On sale"), ("on sale now", "On sale"),
+                ("notify me", "Upcoming"), ("get notified", "Upcoming"), ("coming soon", "Upcoming")]
 LIVE_STATUSES = {"Pre-order", "Drawing open", "On sale"}
-BUTTON_NOISE = re.compile(r"\b(notify me|pre-?order( now)?|buy now|shop now|add to cart|sold out|"
-                          r"available now|coming soon|enter( the)? drawing)\b", re.I)
+BUTTON_NOISE = re.compile(r"\b(notify me|get notified|pre-?order( now)?|buy now|shop now|add to cart|sold out|"
+                          r"available now|live now|on sale now|coming soon|enter( the)? (drawing|lottery|raffle)|"
+                          r"enter now)\b", re.I)
 PRODUCT_LINK = re.compile(r"/(pages|products)/", re.I)
+TOPPS_PRODUCT_LINK = re.compile(r"/products/([a-z0-9][a-z0-9-]*)", re.I)
+RE_PRICE = re.compile(r"\$\s?(\d{1,5}(?:,\d{3})*(?:\.\d{2})?)")
 
 
 def sport_of(name):
@@ -147,45 +159,104 @@ def sport_of(name):
     return ""
 
 
-def parse_card_date(text, now=None):
-    """'Wednesday, Sep 30 at 4:00 PM UTC 2026 Bowman Football' -> (datetime CT, has_time, rest)."""
+def _time_part(base, m, first_group, default_tz):
+    """Apply 'at 4:00 PM UTC' (groups first_group..+3) to a date. No zone -> default_tz."""
+    if not m.group(first_group):
+        return base.replace(hour=9, tzinfo=CT), False
+    h = int(m.group(first_group)) % 12 + (12 if m.group(first_group + 2).lower() == "p" else 0)
+    zone = (m.group(first_group + 3) or "").upper()
+    if zone in ("UTC", "GMT"):
+        tz = timezone.utc
+    elif zone:
+        tz = ZoneInfo(TZS[zone])
+    else:
+        tz = default_tz
+    return base.replace(hour=h, minute=int(m.group(first_group + 1) or 0), tzinfo=tz).astimezone(CT), True
+
+
+def parse_card_date(text, now=None, default_tz=timezone.utc):
+    """'Wednesday, Sep 30 at 4:00 PM UTC 2026 Bowman Football' -> (datetime CT, has_time, rest).
+    Also 'Today at 11:00 AM ...'. A time with no zone uses default_tz (Topps' server page says UTC;
+    a browser may show local time instead). Returns (None, False, text) when there's no date."""
     now = now or datetime.now(CT)
-    m = RE_CARD_DATE.search(text or "")
-    if not m:
-        return None, False, text
-    month, day = MONTHS[m.group(1)[:3].lower()], int(m.group(2))
-    year = int(m.group(3)) if m.group(3) else now.year
-    try:
-        base = datetime(year, month, day)
-    except ValueError:
-        return None, False, text
-    if not m.group(3) and base.date() < (now - timedelta(days=120)).date():
-        base = base.replace(year=year + 1)  # calendar rolled into next year
-    if m.group(4):
-        h = int(m.group(4)) % 12 + (12 if m.group(6).lower() == "p" else 0)
-        zone = (m.group(7) or "").upper()
-        tz = timezone.utc if zone in ("", "UTC", "GMT") else ZoneInfo(TZS[zone])
-        when = base.replace(hour=h, minute=int(m.group(5) or 0), tzinfo=tz).astimezone(CT)
-        return when, True, text[m.end():]
-    return base.replace(hour=9, tzinfo=CT), False, text[m.end():]
+    text = text or ""
+    m = RE_CARD_DATE.search(text)
+    if m:
+        month, day = MONTHS[m.group(1)[:3].lower()], int(m.group(2))
+        year = int(m.group(3)) if m.group(3) else now.year
+        try:
+            base = datetime(year, month, day)
+        except ValueError:
+            return None, False, text
+        if not m.group(3) and base.date() < (now - timedelta(days=120)).date():
+            base = base.replace(year=year + 1)  # calendar rolled into next year
+        when, has_time = _time_part(base, m, 4, default_tz)
+        return when, has_time, text[m.end():]
+    m = RE_RELATIVE_DATE.search(text)
+    if m:
+        local_now = now.astimezone(CT)
+        d = local_now.date() + timedelta(days=1 if m.group(1).lower() == "tomorrow" else 0)
+        when, has_time = _time_part(datetime(d.year, d.month, d.day), m, 2, CT if default_tz is timezone.utc
+                                    else default_tz)
+        return when, has_time, text[m.end():]
+    return None, False, text
+
+
+def _iso_in(node):
+    """A machine-readable timestamp on the card (e.g. <time datetime="2026-09-30T16:00:00Z">), if any."""
+    for el in [node] + list(node.find_all(True)):
+        for v in el.attrs.values():
+            if isinstance(v, str) and RE_ISO.match(v.strip()):
+                try:
+                    d = datetime.fromisoformat(v.strip().replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if d.tzinfo is None:
+                    d = d.replace(tzinfo=timezone.utc)
+                has_time = "T00:00" not in v or d.hour or d.minute
+                return d.astimezone(CT), bool(has_time)
+    return None
+
+
+def _card_node(anchor, key_of):
+    """Highest ancestor of `anchor` whose product links all point to the same product."""
+    node = anchor
+    while node.parent is not None and node.parent.name not in ("body", "html", "[document]"):
+        keys = {key_of(x["href"]) for x in node.parent.find_all("a", href=True)}
+        keys.discard(None)
+        if len(keys) > 1:
+            break
+        node = node.parent
+    return node
+
+
+def status_from_text(text, default="Listed"):
+    low = (text or "").lower()
+    return next((label for word, label in STATUS_WORDS if word in low), default)
 
 
 def _slug(url):
     return url.rstrip("/").rsplit("/", 1)[-1]
 
 
-def parse_topps_calendar(html, base_url="https://www.topps.com/release-calendar", now=None):
-    """Every product card on the Topps release calendar -> list of dicts, sorted by date."""
+def parse_topps_calendar(html, base_url="https://www.topps.com/release-calendar", now=None, default_tz=timezone.utc):
+    """Every product card on the Topps release calendar -> list of dicts sorted by date.
+    Cards whose date can't be read (countdowns, 'Live' labels near drop time) are kept with when=None."""
     soup = BeautifulSoup(html or "", "html.parser")
     low = (html or "").lower()
     sec_avail, sec_soon = low.find("available now"), low.find("dropping soon")
+
+    def key_of(href):
+        h = href.split("?")[0].split("#")[0]
+        return _slug(urljoin(base_url, h)) if PRODUCT_LINK.search(h) else None
+
     cards = {}
     for a in soup.find_all("a", href=True):
-        href = a["href"].split("?")[0].split("#")[0]
-        if not PRODUCT_LINK.search(href):
+        slug = key_of(a["href"])
+        if not slug:
             continue
-        url = urljoin(base_url, href)
-        c = cards.setdefault(_slug(url), {"url": url, "texts": [], "alts": [], "raw": a["href"], "anchors": []})
+        url = urljoin(base_url, a["href"].split("?")[0].split("#")[0])
+        c = cards.setdefault(slug, {"url": url, "texts": [], "alts": [], "raw": a["href"], "anchors": []})
         c["anchors"].append(a)
         txt = " ".join(a.get_text(" ").split())
         if txt:
@@ -194,27 +265,101 @@ def parse_topps_calendar(html, base_url="https://www.topps.com/release-calendar"
 
     out = []
     for slug, c in cards.items():
+        node = _card_node(c["anchors"][0], key_of)
+        card_text = " ".join(node.get_text(" ").split())
         when, has_time, rest = None, False, ""
-        for txt in sorted(c["texts"], key=len, reverse=True):
-            when, has_time, rest = parse_card_date(txt, now)
+        for txt in sorted(c["texts"], key=len, reverse=True) + [card_text]:
+            when, has_time, rest = parse_card_date(txt, now, default_tz)
             if when:
                 break
-        if not when:
+        iso = _iso_in(node)
+        if iso:
+            when, has_time = iso
+        name = (c["alts"][0] if c["alts"] else BUTTON_NOISE.sub("", rest if when else max(c["texts"] or [""], key=len)))
+        name = " ".join(name.split()).strip(" -|·")
+        if not when and not (sport_of(name) or len(name) > 12 and re.search(r"\b20\d\d\b", name)):
             continue  # nav/footer link, not a calendar card
-        name = " ".join((c["alts"][0] if c["alts"] else BUTTON_NOISE.sub("", rest)).split()).strip(" -|·")
-        node = c["anchors"][0]  # the card = highest ancestor holding links to this product only
-        while node.parent is not None and node.parent.name not in ("body", "html", "[document]"):
-            others = {_slug(urljoin(base_url, x["href"].split("?")[0]))
-                      for x in node.parent.find_all("a", href=True) if PRODUCT_LINK.search(x["href"])}
-            if len(others) > 1:
-                break
-            node = node.parent
-        card_text = " ".join(node.get_text(" ").split()).lower()
-        status = next((label for word, label in STATUS_WORDS if word in card_text), "Listed")
         pos = low.find(c["raw"].lower())
         in_avail = sec_avail != -1 and pos > sec_avail and (sec_soon == -1 or sec_avail > sec_soon)
         out.append({"slug": slug, "name": name, "sport": sport_of(name), "url": c["url"],
-                    "when": when.isoformat(), "has_time": has_time, "status": status,
-                    "section": "Available now" if in_avail else "Dropping soon"})
-    out.sort(key=lambda p: p["when"])
+                    "when": when.isoformat() if when else None, "has_time": has_time,
+                    "status": status_from_text(card_text), "section": "Available now" if in_avail else "Dropping soon"})
+    out.sort(key=lambda p: p["when"] or "")
     return out
+
+
+def humanize_handle(handle):
+    words = handle.replace("-", " ").split()
+    keep = {"nfl", "nba", "mlb", "ufc", "wwe"}
+    return " ".join(w.upper() if w in keep else (w if w[:1].isdigit() else w.capitalize()) for w in words)
+
+
+def parse_topps_product_page(html, base_url):
+    """A Topps product landing page (/pages/<slug>) -> every buyable format on it:
+    [{"handle","name","url","price","status"}], plus any drop time shown on the page."""
+    soup = BeautifulSoup(html or "", "html.parser")
+
+    def key_of(href):
+        m = TOPPS_PRODUCT_LINK.search(href.split("?")[0])
+        return m.group(1).lower() if m else None
+
+    found = {}
+    for a in soup.find_all("a", href=True):
+        handle = key_of(a["href"])
+        if not handle:
+            continue
+        f = found.setdefault(handle, {"anchors": [], "texts": [], "alts": []})
+        f["anchors"].append(a)
+        t = " ".join(a.get_text(" ").split())
+        if t:
+            f["texts"].append(t)
+        f["alts"] += [i["alt"].strip() for i in a.find_all("img") if i.get("alt")]
+    # buttons that post straight to cart carry the product in a form, not a link
+    for form in soup.find_all("form", action=re.compile(r"/cart/add")):
+        handle = form.get("data-product-handle") or form.get("data-handle")
+        if handle and handle.lower() not in found:
+            found[handle.lower()] = {"anchors": [form], "texts": [], "alts": []}
+
+    formats = []
+    for handle, f in found.items():
+        node = _card_node(f["anchors"][0], key_of)
+        text = " ".join(node.get_text(" ").split())
+        name = f["alts"][0] if f["alts"] else BUTTON_NOISE.sub("", max(f["texts"] or [""], key=len))
+        name = RE_PRICE.sub("", " ".join(name.split())).strip(" -|·") or humanize_handle(handle)
+        if len(name) < 4:
+            name = humanize_handle(handle)
+        price = RE_PRICE.search(text)
+        formats.append({"handle": handle, "name": name, "url": urljoin(base_url, f"/products/{handle}"),
+                        "price": f"${price.group(1)}" if price else "", "status": status_from_text(text)})
+    page_text = soup.get_text(" ")
+    return formats, extract_when(page_text[:20000])
+
+
+# ---------------------------------------------------------------- Pokémon Center: cards only
+TCG_STRONG = ("pokémon tcg", "pokemon tcg", "pokemon-tcg", "trading card game", "elite trainer box", "booster",
+              "ultra-premium collection", "ultra premium collection", "premium collection", "build & battle",
+              "build and battle", "battle deck", "league battle deck", "blister", "tech sticker collection",
+              "poster collection", "knock out collection", "binder collection", "surprise box")
+TCG_ACCESSORY = ("card sleeves", "sleeves", "deck box", "playmat", "play mat", "portfolio", "binder",
+                 "card case", "toploader", "dice", "coin", "damage counter")
+MERCH = ("hat", "cap", "beanie", "lanyard", "plush", "pin", "shirt", "tee", "hoodie", "sweatshirt", "jacket",
+         "mug", "cup", "tumbler", "bottle", "sticker", "keychain", "key chain", "backpack", "bag", "pouch",
+         "figure", "figurine", "poster", "blanket", "pillow", "socks", "wallet", "towel", "ornament", "puzzle",
+         "lamp", "watch", "costume", "slippers", "necklace", "earrings", "bracelet", "lego", "pajama")
+TCG_SEALED = ("elite trainer box", "booster", "collection", "tin", "bundle", "deck", "pack", "box", "display")
+
+
+def is_tcg_product(text):
+    """True for sealed Pokémon card products (ETBs, booster bundles, packs, UPCs, tins, collections, decks);
+    False for merch (hats, lanyards, plush...) and card accessories (sleeves, binders, playmats)."""
+    t = " " + re.sub(r"[-_/]+", " ", (text or "").lower()) + " "
+    t = t.replace("pokemon tcg", "pokémon tcg")
+    has = lambda words: any(re.search(r"\b" + re.escape(w) + r"s?\b", t) for w in words)
+    strong = has(TCG_STRONG) or "pokémon tcg" in t
+    if has(TCG_ACCESSORY) and not has(("elite trainer box", "booster", "collection", "tin", "bundle", "deck")):
+        return False                       # sleeves / binders / playmats on their own
+    if strong:
+        return True
+    if has(MERCH):
+        return False
+    return has(TCG_SEALED) and ("pokémon" in t or "pokemon" in t)
