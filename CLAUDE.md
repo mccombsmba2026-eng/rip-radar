@@ -68,6 +68,11 @@ captchas, and never automates purchases. Keep it that way.
   Parser tests with fixtures live in `tests/test_retail.py`.
 
 ## Rules
+- @everyone (`ping=True`) ONLY for: Pokémon Center queue going live; every Topps calendar change (new product,
+  date moved, pre-order/sale/drawing, 15-min, open now); Topps formats listed or going live; and any ETB / UPC
+  (`parsing.is_etb_or_upc`) loaded-not-in-stock, in stock, back in stock, or drawing - in any channel, incl. news.
+  Everything else posts without @everyone. Store scanners ping "Loaded at X, not in stock yet" for every new
+  card product (`alert_new_listed` defaults on) and back-in-stock pings show "Link was up X before stock".
 - Never set a webhook `username`: posts must show the name/avatar the user gave each webhook in Discord
   (Palm Tree Edge Cards). "Rip Radar" is the program's name, not the poster's.
 - Product pings: `notify.send(..., store=<key>, product=True)` -> store color, big image, footer, and the

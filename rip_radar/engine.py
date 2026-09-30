@@ -19,7 +19,7 @@ from . import __version__, paths, settings as settings_mod
 from .msrp import msrp_text, price_check
 from .notify import CHANNELS, STORE_NAMES, ChatBot, LiveBoard, Notifier, StatusBoard, store_in
 from .parsing import (CT, LIVE_STATUSES, RETAIL_STORES, categorize, extract_when, fmt_when, gcal_link, is_card_product,
-                      is_pokemon_product, is_sports_card_product, is_tcg_product, looks_blocked, parse_retail_tiles, parse_topps_calendar,
+                      is_etb_or_upc, is_pokemon_product, is_sports_card_product, is_tcg_product, looks_blocked, parse_retail_tiles, parse_topps_calendar,
                       parse_topps_product_page, tile_status, drawing_window)
 
 log = logging.getLogger("rip_radar")
@@ -300,7 +300,7 @@ class Engine:
                       "Category": t.get("category", "")}
             raffle = any(w in h.lower() for h in hits for w in ("drawing", "invite", "raffle", "lottery", "chance"))
             self.notify.send(t.get("level", "urgent"), title, t["url"], fields,
-                             copy_to=["drawings"] if raffle else None)
+                             copy_to=["drawings"] if raffle else None, ping=is_etb_or_upc(t["name"] + " " + title))
         elif was is True and not active and t.get("alert_on_end"):
             self.notify.send("normal", f"{t['name']}: ended", t["url"], {"Source": t["name"]})
         st["active"] = active
@@ -310,6 +310,8 @@ class Engine:
     @staticmethod
     def _dur(td):
         m = max(0, int(td.total_seconds() // 60))
+        if m >= 1440:
+            return f"{m // 1440}d {(m % 1440) // 60}h"
         return f"{m // 60}h {m % 60}m" if m >= 60 else f"{m} min"
 
     @staticmethod
@@ -346,7 +348,7 @@ class Engine:
             st.pop("session_msg", None)
             self.notify.send("urgent", t.get("alert_title", "🚨 POKÉMON CENTER QUEUE IS LIVE"), t["url"],
                              {"Went up (CT)": self._clock(now), "Detected": detected},
-                             links=[("Join the queue", t["url"])])
+                             links=[("Join the queue", t["url"])], ping=True)
         if active:
             since = datetime.fromisoformat(st.get("live_since") or now.isoformat())
             self._queue_live_message(t, st, f"🟢 **Pokémon Center queue is LIVE** · up for **{self._dur(now - since)}** "
@@ -418,10 +420,12 @@ class Engine:
             if is_drawing:
                 # a store's raffle: that store's channel AND #drawings (any store: Walmart, Dick's, Target...)
                 self.notify.send(level, "🎟️ " + title[:240], link, fields, desc=summary[:300],
-                                 channel=store or "drawings", copy_to=["drawings"])
+                                 channel=store or "drawings", copy_to=["drawings"], ping=is_etb_or_upc(title))
             else:
                 # other news: main alerts channel, keeping store channels products-only
-                self.notify.send(level, "📰 " + title[:240], link, fields, desc=summary[:300], channel="main")
+                self.notify.send(level, "📰 " + title[:240], link, fields, desc=summary[:300], channel="main",
+                                 ping=is_etb_or_upc(title) and any(w in blob for w in ("restock", "drop", "live", "in stock",
+                                                                                         "pre-order", "preorder")))
             sent += 1
             if sent >= t.get("max_per_run", 8):
                 break
@@ -484,18 +488,26 @@ class Engine:
                 rec.update({"live": x["live"], **details})
                 continue
             warn = f" · ⚠️ {int((info['ratio'] - 1) * 100)}% above retail" if verdict == "over" else ""
+            big = is_etb_or_upc(x["name"])                      # ETB / UPC: @everyone in any channel
+            listed_at = (prev or {}).get("first_seen")
+            if listed_at and not (prev or {}).get("live"):
+                atleast = "at least " if (prev or {}).get("baseline") else ""
+                extra = {**extra, "Link was up": f"{atleast}{self._dur(timedelta(seconds=now - listed_at))} before stock"}
             if not first and x["live"] and (prev is None or not prev.get("live")):
                 if x["status"].startswith("Drawing"):
                     self._product_alert("urgent", f"🎟️ DRAWING / INVITE OPEN at {label}: {x['name']}{warn}", x, label,
-                                        extra, copy_to=["drawings"], store=store)
+                                        extra, copy_to=["drawings"], store=store, ping=big)
                 else:
                     what = "NEW & IN STOCK" if prev is None else "BACK IN STOCK"
                     self._product_alert("urgent", f"🟢 {what} at {label}: {x['name']}{warn}", x, label, extra,
-                                        store=store)
-            elif not first and prev is None and t.get("alert_new_listed"):
-                self._product_alert("normal", f"🆕 New at {label} (not in stock yet): {x['name']}", x, label, extra,
-                                    store=store)
+                                        store=store, ping=big)
+            elif not first and prev is None and t.get("alert_new_listed", True):
+                # the product page is up before stock: track it so we see when it goes live
+                self._product_alert("normal", f"🆕 Loaded at {label}, not in stock yet: {x['name']}", x, label, extra,
+                                    store=store, ping=big)
             rec = known.setdefault(x["id"], {})
+            if "first_seen" not in rec:
+                rec["first_seen"], rec["baseline"] = now, bool(first)
             if x["status"] != "Listed" or "live" not in rec:
                 rec["live"] = x["live"]
             rec.update(details)
@@ -507,12 +519,13 @@ class Engine:
         return (f"ok ({len(cards)} card products · {live} in stock{over} · {len(tiles) - len(cards)} other items skipped)",
                 status)
 
-    def _product_alert(self, level, title, x, store_label, extra=None, channel=None, copy_to=None, store=None):
+    def _product_alert(self, level, title, x, store_label, extra=None, channel=None, copy_to=None, store=None,
+                       ping=False):
         fields = {"Price": x.get("price"), "Stock": x.get("stock") or x.get("status"), "Limit": x.get("limit")}
         fields.update(extra or {})
         links = self._buy_links(x)
         self.notify.send(level, title, x["url"], fields, image=x.get("image", ""), channel=channel, copy_to=copy_to,
-                         links=links, store=store, product=True)
+                         links=links, store=store, product=True, ping=ping)
 
     @staticmethod
     def _buy_links(x):
@@ -563,7 +576,7 @@ class Engine:
 
             def ping(title):
                 self.notify.send("urgent", title, x["url"], fields, image=x.get("image", ""), links=links,
-                                 copy_to=["drawings"], store="walmart", product=True)
+                                 copy_to=["drawings"], store="walmart", product=True, ping=is_etb_or_upc(x["name"]))
 
             if rec is None and phase != "closed":
                 if phase == "upcoming":
@@ -641,18 +654,18 @@ class Engine:
             if first:
                 continue
             if old is None:
-                self.notify.send("urgent", f"🆕 New on Topps calendar: {p['name']}", p["url"], fields)
+                self.notify.send("urgent", f"🆕 New on Topps calendar: {p['name']}", p["url"], fields, ping=True)
                 continue
             if p["status"] != old.get("status"):
                 if p["status"] in LIVE_STATUSES:
-                    self.notify.send("urgent", f"🚨 TOPPS LIVE: {p['name']} · {p['status']}", p["url"], fields,
+                    self.notify.send("urgent", f"🚨 TOPPS LIVE: {p['name']} · {p['status']}", p["url"], fields, ping=True,
                                      copy_to=["drawings"] if p["status"] == "Drawing open" else None)
                 else:
                     self.notify.send("normal", f"Topps: {p['name']} ({old.get('status')} → {p['status']})",
                                      p["url"], fields)
             if p["when"] and old.get("when") and p["when"][:16] != old["when"][:16]:
                 fields["Was"] = fmt_when(datetime.fromisoformat(old["when"]), old.get("has_time", False))
-                self.notify.send("normal", f"📅 Topps date moved: {p['name']}", p["url"], fields)
+                self.notify.send("normal", f"📅 Topps date moved: {p['name']}", p["url"], fields, ping=True)
 
         # heads-up before each timed drop, and again the minute it opens - both link straight to the page
         lead = int(t.get("remind_minutes_before", 15))
@@ -667,11 +680,11 @@ class Engine:
             soon_key, open_key = f"{p['slug']}|{p['when'][:16]}", f"{p['slug']}|{p['when'][:16]}|open"
             if soon_key not in reminded and now <= d <= now + timedelta(minutes=lead):
                 mins = max(1, int((d - now).total_seconds() // 60))
-                self.notify.send("urgent", f"⏰ Topps drop in {mins} min: {p['name']}", p["url"], fields,
+                self.notify.send("urgent", f"⏰ Topps drop in {mins} min: {p['name']}", p["url"], fields, ping=True,
                                  desc=formats, links=[("Open on Topps", p["url"])])
                 reminded.add(soon_key)
             if open_key not in reminded and d <= now <= d + timedelta(minutes=10):
-                self.notify.send("urgent", f"🟢 OPEN NOW on Topps: {p['name']}", p["url"], fields, desc=formats,
+                self.notify.send("urgent", f"🟢 OPEN NOW on Topps: {p['name']}", p["url"], fields, desc=formats, ping=True,
                                  links=[("Open on Topps", p["url"])])
                 reminded.add(open_key)
         st["reminded"] = list(reminded)[-300:]
@@ -729,11 +742,11 @@ class Engine:
                 fields["Stock"], fields["Limit"] = f.get("stock") or f["status"], f.get("limit")
                 if prev is None:
                     level = "urgent" if f["status"] in LIVE_STATUSES or is_hot(p) else "normal"
-                    self.notify.send(level, f"🆕 Topps {f['name']} listed · {f['status']}", f["url"], fields,
+                    self.notify.send(level, f"🆕 Topps {f['name']} listed · {f['status']}", f["url"], fields, ping=True,
                                      image=f.get("image", ""), links=links, store="topps", product=True)
                 elif f["status"] != prev.get("status"):
                     if f["status"] in LIVE_STATUSES:
-                        self.notify.send("urgent", f"🚨 LIVE: {f['name']} · {f['status']}", f["url"], fields,
+                        self.notify.send("urgent", f"🚨 LIVE: {f['name']} · {f['status']}", f["url"], fields, ping=True,
                                          image=f.get("image", ""), links=links, store="topps", product=True,
                                          copy_to=["drawings"] if f["status"] == "Drawing open" else None)
                     elif f["status"] == "Sold out":

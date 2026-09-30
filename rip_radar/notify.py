@@ -51,11 +51,12 @@ class Notifier:
         self._local.channel = channel
 
     def send(self, level, title, url="", fields=None, desc="", channel=None, image="", links=None, strict=False,
-             record=True, copy_to=None, store=None, product=False):
+             record=True, copy_to=None, store=None, product=False, ping=False):
         """links: [(label, url)] shown as a row of clickable links (Add to cart, Buy now...). image: thumbnail.
         strict: only post if one of the wanted channels has its own webhook (never fall back to main).
         record: also show it in the app's alert list.
-        copy_to: extra channels that ALSO get this alert if they have a webhook (e.g. raffles -> #drawings too)."""
+        copy_to: extra channels that ALSO get this alert if they have a webhook (e.g. raffles -> #drawings too).
+        ping: @everyone. Only for the Pokémon Center queue, Topps drops/changes, and ETB/UPC drops."""
         fields = {k: v for k, v in (fields or {}).items() if v}
         links = [(lbl, u) for lbl, u in (links or []) if u]
         channel = channel or getattr(self._local, "channel", None)
@@ -83,7 +84,7 @@ class Notifier:
         if image.startswith("http"):
             embed["image" if product else "thumbnail"] = {"url": image}
         payload = {"embeds": [embed]}   # the webhook's own name + avatar
-        if level == "urgent":
+        if ping:
             payload["content"] = "@everyone"
         hooks_by_channel = s.get("webhooks") or {}
         # channel can be a preference list, e.g. ("drawings", "walmart"): the first one with a webhook wins

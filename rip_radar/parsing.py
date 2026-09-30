@@ -416,6 +416,15 @@ def is_pokemon_product(text):
     return bool(re.search(r"pok[eé]mon", text or "", re.I)) and is_tcg_product(text)
 
 
+RE_ETB_UPC = re.compile(r"elite\s+trainer\s+box|(?<![a-z])etb(?![a-z])|ultra[\s-]*premium\s+collection|(?<![a-z])upc(?![a-z])",
+                        re.I)
+
+
+def is_etb_or_upc(text):
+    """Elite Trainer Box or Ultra-Premium Collection - the drops that get @everyone anywhere."""
+    return bool(RE_ETB_UPC.search(text or ""))
+
+
 def is_card_product(text):
     """Pokémon card product or sealed sports-card product - what the store scanners keep."""
     return is_pokemon_product(text) or is_sports_card_product(text)
