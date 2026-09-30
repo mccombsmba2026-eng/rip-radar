@@ -39,12 +39,15 @@ targets:
     include: [basketball, baseball, football, bowman]
 
   # ===== POKEMON CENTER =====
+  # Checked every minute. @everyone the moment the queue (waiting room) is up, a message that keeps
+  # counting how long it's been up, and the total time when it closes. Own channel if set, else Pokémon Center.
   - name: Pokémon Center queue
     type: keywords
     url: https://www.pokemoncenter.com/
     browser: true
-    channel: pokemon
-    interval_seconds: 90
+    channel: [pokemon_queue, pokemon]
+    track_duration: true
+    interval_seconds: 60
     category: Pokémon
     alert_title: "🚨 POKÉMON CENTER QUEUE IS LIVE"
     url_contains: [queue-it, queue, waitingroom, waiting-room]
@@ -96,12 +99,12 @@ targets:
     interval_seconds: 300
 
   # Walmart's limited-time drawings (lotteries). Pings when a card item is listed, 15 min before entries
-  # open, when they open, and 30 min before they close. Goes to the Drawings channel if set, else Walmart.
+  # open, when they open, and 30 min before they close. Posts in #walmart AND #drawings.
   - name: Walmart · drawings
     type: walmart_drawings
     url: https://www.walmart.com/shop/collectibles/draw
     browser: true
-    channel: [drawings, walmart]
+    channel: walmart
     interval_seconds: 120
 
   - name: Walmart · Pokémon cards

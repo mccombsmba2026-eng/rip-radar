@@ -38,6 +38,7 @@ def test_drawings_ping_on_first_look_and_when_they_open(engine):
     f = got[0][1]
     assert f["Price"] == "$79.94" and f["Entries open (CT)"] and "Calendar" in f
     assert f["Typical retail"].startswith("~$79.98")
+    assert got[0][2].get("copy_to") == ["drawings"]                 # #walmart AND #drawings
     enter = dict(got[0][2]["links"])["🎟️ Enter the drawing"]
     assert enter.startswith("https://www.walmart.com/ip/") and enter.endswith("/20640569221")
     got.clear()
@@ -109,12 +110,14 @@ def test_drawings_and_status_channels(engine, monkeypatch):
     monkeypatch.setattr(notify_mod.Notifier, "_post_discord", staticmethod(lambda hook, payload: posted.append(hook) or True))
     settings.update({"discord_webhook": "https://main", "webhooks": {"walmart": "https://walmart"}})
     n = notify_mod.Notifier(settings.load)
-    n.send("urgent", "drawing", channel=("drawings", "walmart"))
+    n.send("urgent", "drawing", channel="walmart", copy_to=["drawings"])
     n.send("system", "source check")
-    assert posted == ["https://walmart", "https://main"]           # no drawings/status hooks yet -> fallbacks
+    assert posted == ["https://walmart", "https://main"]           # no drawings/status hooks yet
     posted.clear()
     settings.update({"webhooks": {"drawings": "https://draw", "status": "https://status"}})
-    n.send("urgent", "drawing", channel=("drawings", "walmart"))
+    n.send("urgent", "drawing", channel="walmart", copy_to=["drawings"])
+    assert sorted(posted) == ["https://draw", "https://walmart"]   # a raffle posts in BOTH channels
+    posted.clear()
     n.send("system", "source check")
     n.send("normal", "update ready", channel="status")
-    assert posted == ["https://draw", "https://status", "https://status"]
+    assert posted == ["https://status", "https://status"]

@@ -243,7 +243,7 @@ details summary{cursor:pointer;font-weight:600}
         <input type="url" id="sHookUrgent" placeholder="optional"></label>
       <div class="row"><button class="btn" id="sTest">Send test alert</button><span class="msg" id="sTestMsg" role="status"></span></div>
       <h2>Channels</h2>
-      <p class="hint" style="margin:0">Each store's alerts go to its own channel. <b>Topps calendar</b> gets Topps release-calendar changes, reminders and a pinned list of every upcoming Topps drop; <b>Topps products</b> gets the per-format pings (Mega, Blaster…). <b>Drawings &amp; raffles</b> collects every drawing, lottery and invite from all stores. <b>Drop calendar</b> gets every announced date, a pinned 14-day schedule and an 8 AM rundown (it only posts if you set it). <b>App status</b> gets start-up checks, problems and update notices. Leave any other box empty and those alerts go to the main channel. Saved on this PC for good, including through updates.</p>
+      <p class="hint" style="margin:0">Each store's alerts go to its own channel. <b>Pokémon Center queue</b> gets an @everyone the moment the queue is up, a live "up for X min" message, and how long it lasted. News articles go to the main channel, so store channels stay products-only. <b>Topps calendar</b> gets Topps release-calendar changes, reminders and a pinned list of every upcoming Topps drop; <b>Topps products</b> gets the per-format pings (Mega, Blaster…). <b>Drawings &amp; raffles</b> gets every drawing, lottery and invite from all stores, and each one also posts in that store's channel. <b>Drop calendar</b> gets every announced date, a pinned 14-day schedule and an 8 AM rundown (it only posts if you set it). <b>App status</b> gets start-up checks, problems and update notices. Leave any other box empty and those alerts go to the main channel. Saved on this PC for good, including through updates.</p>
       <div class="two" id="sStores"></div>
       <details>
         <summary>Paste them all at once</summary>
@@ -514,6 +514,7 @@ $("#sSave").onclick = () => saveSettings(false);
 $("#sKeep").addEventListener("change", () => saveSettings(true));
 const HOOK_RE = /https:\/\/(?:ptb\.|canary\.)?discord(?:app)?\.com\/api\/webhooks\/\S+/;
 const NAME_HINTS = {drawings:["drawing","drawings","draw","raffle","raffles","lottery","lotteries"],status:["status","app status","app"],
+  pokemon_queue:["pokemon center queue","pokémon center queue","pokemon queue","pokémon queue","pc queue","queue"],
   topps_calendar:["topps calendar","topps cal","topps release calendar"],calendar:["drop calendar","drops calendar","calendar","schedule"],
   topps:["topps","bowman","topps products"],pokemon:["pokemon center","pokémon center","pokemon","pokémon","pc"],walmart:["walmart"],
   target:["target"],dicks:["dick","dicks","dsg"],amazon:["amazon"],bestbuy:["best buy","bestbuy","bby"],main:["main","general","alerts","all","ping"]};

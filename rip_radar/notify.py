@@ -13,8 +13,8 @@ COLORS = {"urgent": 0xE0342B, "normal": 0x2350C8, "system": 0x8A8F9E}
 
 # One Discord channel per store. Key -> label shown in the app. Webhooks live in settings["webhooks"].
 CHANNELS = {"topps": "Topps products (formats, in stock)", "topps_calendar": "Topps calendar",
-            "pokemon": "Pokémon Center", "walmart": "Walmart", "target": "Target",
-            "dicks": "Dick's", "amazon": "Amazon", "bestbuy": "Best Buy",
+            "pokemon": "Pokémon Center products", "pokemon_queue": "Pokémon Center queue",
+            "walmart": "Walmart", "target": "Target", "dicks": "Dick's", "amazon": "Amazon", "bestbuy": "Best Buy",
             "drawings": "Drawings & raffles (all stores)", "calendar": "Drop calendar (all announced dates)",
             "status": "App status"}
 STORE_NAMES = {"topps": "Topps", "pokemon": "Pokémon Center", "walmart": "Walmart", "target": "Target",
@@ -48,10 +48,11 @@ class Notifier:
         self._local.channel = channel
 
     def send(self, level, title, url="", fields=None, desc="", channel=None, image="", links=None, strict=False,
-             record=True):
+             record=True, copy_to=None):
         """links: [(label, url)] shown as a row of clickable links (Add to cart, Buy now...). image: thumbnail.
         strict: only post if one of the wanted channels has its own webhook (never fall back to main).
-        record: also show it in the app's alert list."""
+        record: also show it in the app's alert list.
+        copy_to: extra channels that ALSO get this alert if they have a webhook (e.g. raffles -> #drawings too)."""
         fields = {k: v for k, v in (fields or {}).items() if v}
         links = [(lbl, u) for lbl, u in (links or []) if u]
         channel = channel or getattr(self._local, "channel", None)
@@ -90,6 +91,10 @@ class Notifier:
             hooks = {s.get("discord_webhook", "")}
             if level == "urgent":
                 hooks.add(s.get("discord_webhook_urgent", ""))
+        for extra in copy_to or []:            # e.g. a Walmart drawing: #walmart AND #drawings
+            h = hooks_by_channel.get(extra, "")
+            if h.startswith("http"):
+                hooks.add(h)
         results = [self._post_discord(h, payload) for h in hooks if h.startswith("http")]
         if s.get("ntfy_topic") and level != "system":
             try:

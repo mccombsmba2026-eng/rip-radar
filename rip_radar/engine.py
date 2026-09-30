@@ -272,15 +272,84 @@ class Engine:
         hits = [k for k in t.get("keywords", []) if k.lower() in text]
         active = bool(hits) or url_hit
         was = st.get("active")
+        if t.get("track_duration"):
+            self._track_queue(t, st, active, was, "queue / waiting room" if url_hit else ", ".join(hits[:4]))
+            st["active"] = active
+            since = st.get("live_since")
+            if active and since:
+                return f"ok · LIVE for {self._dur(datetime.now(CT) - datetime.fromisoformat(since))}", status
+            return "ok · not live", status
         if active and was is not True and not (first and t.get("quiet_on_first", False)):
             title = t.get("alert_title", f"{t['name']}: LIVE")
             fields = {"Source": t["name"], "Detected": "queue / waiting room" if url_hit else ", ".join(hits[:4]),
                       "Category": t.get("category", "")}
-            self.notify.send(t.get("level", "urgent"), title, t["url"], fields)
+            raffle = any(w in h.lower() for h in hits for w in ("drawing", "invite", "raffle", "lottery", "chance"))
+            self.notify.send(t.get("level", "urgent"), title, t["url"], fields,
+                             copy_to=["drawings"] if raffle else None)
         elif was is True and not active and t.get("alert_on_end"):
             self.notify.send("normal", f"{t['name']}: ended", t["url"], {"Source": t["name"]})
         st["active"] = active
         return ("ok · LIVE now" if active else "ok · not live"), status
+
+    # ------------------------------------------------------------ Pokémon Center queue timing
+    @staticmethod
+    def _dur(td):
+        m = max(0, int(td.total_seconds() // 60))
+        return f"{m // 60}h {m % 60}m" if m >= 60 else f"{m} min"
+
+    @staticmethod
+    def _clock(d):
+        return f"{d.hour % 12 or 12}:{d:%M} {'PM' if d.hour >= 12 else 'AM'}"
+
+    def _queue_hook(self, t):
+        hooks = settings_mod.load().get("webhooks") or {}
+        chans = t.get("channel") if isinstance(t.get("channel"), list) else [t.get("channel")]
+        return next((hooks.get(c) for c in chans if c and (hooks.get(c) or "").startswith("http")), "")
+
+    def _queue_live_message(self, t, st, text):
+        """One message in the queue channel that keeps saying how long the queue has been up."""
+        hook = self._queue_hook(t)
+        if not hook:
+            return
+        body = {"content": text}
+        try:
+            mid = st.get("session_msg")
+            if mid and st.get("session_hook") == hook:
+                if requests.patch(f"{hook}/messages/{mid}", json=body, timeout=15).status_code < 400:
+                    return
+            r = requests.post(hook + "?wait=true", json={**body, "username": "Rip Radar"}, timeout=15)
+            if r.status_code < 400:
+                st["session_msg"], st["session_hook"] = r.json()["id"], hook
+        except (requests.RequestException, ValueError, KeyError) as e:
+            log.warning("queue timer message: %s", e)
+
+    def _track_queue(self, t, st, active, was, detected):
+        now = datetime.now(CT)
+        history = self.state.setdefault("queue_history", [])
+        if active and was is not True:
+            st["live_since"] = now.isoformat()
+            st.pop("session_msg", None)
+            self.notify.send("urgent", t.get("alert_title", "🚨 POKÉMON CENTER QUEUE IS LIVE"), t["url"],
+                             {"Went up (CT)": self._clock(now), "Detected": detected},
+                             links=[("Join the queue", t["url"])])
+        if active:
+            since = datetime.fromisoformat(st.get("live_since") or now.isoformat())
+            self._queue_live_message(t, st, f"🟢 **Pokémon Center queue is LIVE** · up for **{self._dur(now - since)}** "
+                                            f"(since {self._clock(since)} CT)\n-# Last checked {self._clock(now)} CT")
+        elif was is True:
+            since = datetime.fromisoformat(st.pop("live_since", now.isoformat()))
+            dur = self._dur(now - since)
+            history.insert(0, {"start": since.isoformat(), "end": now.isoformat(), "minutes": int((now - since).total_seconds() // 60)})
+            del history[20:]
+            self._queue_live_message(t, st, f"⚪ Pokémon Center queue closed · was up **{dur}** "
+                                            f"({self._clock(since)}–{self._clock(now)} CT)")
+            st.pop("session_msg", None)
+            recent = "\n".join(f"• {datetime.fromisoformat(h['start']):%a %b} {datetime.fromisoformat(h['start']).day}: "
+                               f"{self._clock(datetime.fromisoformat(h['start']))}–{self._clock(datetime.fromisoformat(h['end']))}"
+                               f" ({self._dur(timedelta(minutes=h['minutes']))})" for h in history[:5])
+            self.notify.send("normal", f"⚪ Pokémon Center queue closed · was up {dur}", t["url"],
+                             {"Went up (CT)": self._clock(since), "Closed (CT)": self._clock(now), "Up for": dur},
+                             desc=f"Recent queues:\n{recent}")
 
     def check_feed(self, t, st, first):
         """News / Reddit RSS: new posts about raffles, drawings, invites, queues or drop times."""
@@ -291,15 +360,21 @@ class Engine:
         must = [k.lower() for k in t.get("must_have", [])]
         exclude = [k.lower() for k in t.get("exclude", [])]
         seen = set(st.get("seen", []))
+        shared = self.state.setdefault("news_seen", [])      # across all news searches: one post per article
+        shared_set = set(shared)
         sent = 0
         for e in feed.entries:
             key = e.get("id") or e.get("link") or e.get("title")
             if not key or key in seen:
                 continue
             seen.add(key)
-            if first:
-                continue
             title = e.get("title", "").strip()
+            story = re.sub(r"\W+", " ", title.lower().rsplit(" - ", 1)[0]).strip()[:120]
+            if first:
+                if story and story not in shared_set:
+                    shared.append(story)
+                    shared_set.add(story)
+                continue
             summary = BeautifulSoup(e.get("summary", ""), "html.parser").get_text(" ")
             blob = f"{title} {summary}".lower()
             if (must and not any(k in blob for k in must)) or any(k in blob for k in exclude):
@@ -315,18 +390,28 @@ class Engine:
                     self._when_fields(title[:120], link, when, fields, t.get("kind", "release"),
                                       store_in(title + " " + summary))
                 continue
-            self._when_fields(title[:120], link, when, fields, "news", store_in(title + " " + summary))
+            if story in shared_set:                             # another search already posted this story
+                continue
+            shared.append(story)
+            shared_set.add(story)
+            store = store_in(title + " " + summary)
+            self._when_fields(title[:120], link, when, fields, "news", store)
             level = "urgent" if any(k in blob for k in t.get("urgent_if", [])) else t.get("level", "normal")
-            store = store_in(title + " " + summary) if t.get("route_by_store") else None
             if store:
                 fields["Store"] = STORE_NAMES[store]
             is_drawing = any(w in blob for w in ("drawing", "raffle", "lottery", "invite"))
-            ch = ("drawings", store) if is_drawing and t.get("route_by_store") else store
-            self.notify.send(level, title[:240], link, fields, desc=summary[:300], channel=ch)
+            if is_drawing:
+                # a store's raffle: that store's channel AND #drawings (any store: Walmart, Dick's, Target...)
+                self.notify.send(level, "🎟️ " + title[:240], link, fields, desc=summary[:300],
+                                 channel=store or "drawings", copy_to=["drawings"])
+            else:
+                # other news: main alerts channel, keeping store channels products-only
+                self.notify.send(level, "📰 " + title[:240], link, fields, desc=summary[:300], channel="main")
             sent += 1
             if sent >= t.get("max_per_run", 8):
                 break
         st["seen"] = list(seen)[-2000:]
+        del shared[:-3000]
         return f"ok ({len(feed.entries)} posts)", status
 
     def check_retail_search(self, t, st, first):
@@ -384,7 +469,7 @@ class Engine:
             if not first and x["live"] and (prev is None or not prev.get("live")):
                 if x["status"].startswith("Drawing"):
                     self._product_alert("urgent", f"🎟️ DRAWING / INVITE OPEN at {label}: {x['name']}{warn}", x, label,
-                                        extra, channel=("drawings", t.get("channel")))
+                                        extra, copy_to=["drawings"])
                 else:
                     what = "NEW & IN STOCK" if prev is None else "BACK IN STOCK"
                     self._product_alert("urgent", f"🟢 {what} at {label}: {x['name']}{warn}", x, label, extra)
@@ -402,10 +487,10 @@ class Engine:
         return (f"ok ({len(cards)} card products · {live} in stock{over} · {len(tiles) - len(cards)} other items skipped)",
                 status)
 
-    def _product_alert(self, level, title, x, store_label, extra=None, channel=None):
+    def _product_alert(self, level, title, x, store_label, extra=None, channel=None, copy_to=None):
         fields = {"Price": x.get("price"), "Store": store_label, "Status": x.get("status")}
         fields.update(extra or {})
-        self.notify.send(level, title, x["url"], fields, image=x.get("image", ""), channel=channel,
+        self.notify.send(level, title, x["url"], fields, image=x.get("image", ""), channel=channel, copy_to=copy_to,
                          links=[("🛒 Add to cart", x.get("add_to_cart")), ("⚡ Buy now", x.get("buy_now")),
                                 ("Product page", x["url"])])
 
@@ -450,7 +535,8 @@ class Engine:
             links = [("🎟️ Enter the drawing", x["url"]), ("All Walmart drawings", t["url"])]
 
             def ping(title):
-                self.notify.send("urgent", title, x["url"], fields, image=x.get("image", ""), links=links)
+                self.notify.send("urgent", title, x["url"], fields, image=x.get("image", ""), links=links,
+                                 copy_to=["drawings"])
 
             if rec is None and phase != "closed":
                 if phase == "upcoming":
@@ -531,8 +617,7 @@ class Engine:
             if p["status"] != old.get("status"):
                 if p["status"] in LIVE_STATUSES:
                     self.notify.send("urgent", f"🚨 TOPPS LIVE: {p['name']} · {p['status']}", p["url"], fields,
-                                     channel=("drawings", "topps_calendar", "topps") if p["status"] == "Drawing open"
-                                     else None)
+                                     copy_to=["drawings"] if p["status"] == "Drawing open" else None)
                 else:
                     self.notify.send("normal", f"Topps: {p['name']} ({old.get('status')} → {p['status']})",
                                      p["url"], fields)
@@ -621,7 +706,7 @@ class Engine:
                     if f["status"] in LIVE_STATUSES:
                         self.notify.send("urgent", f"🚨 LIVE: {f['name']} · {f['status']}", f["url"], fields,
                                          image=f.get("image", ""), links=links,
-                                         channel=("drawings", "topps") if f["status"] == "Drawing open" else None)
+                                         copy_to=["drawings"] if f["status"] == "Drawing open" else None)
                     elif f["status"] == "Sold out":
                         self.notify.send("normal", f"Sold out: {f['name']}", f["url"], fields,
                                          image=f.get("image", ""))
@@ -822,6 +907,7 @@ class Engine:
                 "topps": self.topps,
                 "topps_formats": self.topps_formats,
                 "calendar": self.upcoming_events(days=30),
+                "queue_history": self.state.get("queue_history", [])[:10],
                 "bot": self.bot.state,
             }
 

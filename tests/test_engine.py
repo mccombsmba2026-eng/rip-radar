@@ -94,7 +94,7 @@ def test_feed_filters_and_urgency(engine):
                                     ("Walmart Pokemon drawing now open", "https://a/2"),
                                     ("Pokemon plush sale", "https://a/3")]))
     engine.check_feed(f, st, False)
-    assert engine.sent == [("urgent", "Walmart Pokemon drawing now open")]
+    assert engine.sent == [("urgent", "🎟️ Walmart Pokemon drawing now open")]
 
 
 def test_user_watch_pages_become_targets(engine):
@@ -243,25 +243,25 @@ def test_store_detection():
     assert store_in("Topps Chrome Football preorder") == "topps"
 
 
-def test_news_goes_to_store_channel(engine):
+def test_news_goes_to_news_channel_once(engine):
     got = []
     engine.notify.send = lambda level, title, url="", fields=None, desc="", channel=None, **kw: got.append((title, channel))
-    items = [("Target Pokémon drawing now open", "https://a/1"), ("Walmart drawing Oct 7", "https://a/2"),
-             ("New Pokémon drawing rules explained", "https://a/3")]
-    body = "".join(f"<item><title>{t}</title><link>{l}</link><guid>{l}</guid>"
-                   f"<pubDate>{datetime.now(timezone.utc):%a, %d %b %Y %H:%M:%S} GMT</pubDate></item>" for t, l in items)
-    rss = f'<?xml version="1.0"?><rss version="2.0"><channel><title>x</title>{body}</channel></rss>'
-    f = {"name": "News", "url": "u", "must_have": ["drawing"], "route_by_store": True}
-    st = {}
-    engine.fetcher = FakeFetch('<?xml version="1.0"?><rss version="2.0"><channel><title>x</title></channel></rss>')
-    engine.check_feed(f, st, True)
-    engine.fetcher = FakeFetch(rss)
-    engine.check_feed(f, st, False)
-    # drawing stories prefer the Drawings channel, then the store's own channel
-    assert got == [("Target Pokémon drawing now open", ("drawings", "target")),
-                   ("Walmart drawing Oct 7", ("drawings", "walmart")),
-                   ("New Pokémon drawing rules explained", ("drawings", None))]
 
+    def rss(items):
+        body = "".join(f"<item><title>{t}</title><link>{l}</link><guid>{l}</guid>"
+                       f"<pubDate>{datetime.now(timezone.utc):%a, %d %b %Y %H:%M:%S} GMT</pubDate></item>" for t, l in items)
+        return f'<?xml version="1.0"?><rss version="2.0"><channel><title>x</title>{body}</channel></rss>'
+    story = "The Pokémon Center Opens Pre-Orders For Delta Reign, The Next Big TCG Set - polygon.com"
+    feeds = [{"name": f"News {i}", "url": "u", "must_have": ["pre-order", "drawing"]} for i in range(3)]
+    sts = [{}, {}, {}]
+    engine.fetcher = FakeFetch(rss([]))
+    for f, st in zip(feeds, sts):
+        engine.check_feed(f, st, True)
+    engine.fetcher = FakeFetch(rss([(story, "https://polygon.com/a")]))
+    for i, (f, st) in enumerate(zip(feeds, sts)):
+        engine.fetcher = FakeFetch(rss([(story, f"https://news.google.com/{i}")]))   # same story, 3 searches
+        engine.check_feed(f, st, False)
+    assert got == [("📰 " + story, "main")]                         # once, main channel, not the store channel
 
 def test_watch_page_channel_and_settings_migration(engine):
     import json
@@ -273,4 +273,32 @@ def test_watch_page_channel_and_settings_migration(engine):
         {"name": "Mine", "url": "https://www.dickssportinggoods.com/p/y", "preset": "custom", "keywords": ["enter"]}]})
     ch = {t["name"]: t.get("channel") for t in engine.targets()}
     assert ch["Target ETB"] == "target" and ch["Mine"] == "dicks"
-    assert ch["Topps release calendar"] == ["topps_calendar", "topps"] and ch["Pokémon Center queue"] == "pokemon"
+    assert ch["Topps release calendar"] == ["topps_calendar", "topps"] and ch["Pokémon Center queue"] == ["pokemon_queue", "pokemon"]
+
+
+
+def test_raffles_post_to_store_and_drawings_everywhere(engine):
+    got = []
+    engine.notify.send = lambda level, title, url="", fields=None, desc="", channel=None, copy_to=None, **kw: \
+        got.append((title, channel, copy_to))
+    body = "".join(f"<item><title>{t}</title><link>{l}</link><guid>{l}</guid>"
+                   f"<pubDate>{datetime.now(timezone.utc):%a, %d %b %Y %H:%M:%S} GMT</pubDate></item>"
+                   for t, l in [("Dick's Sporting Goods opens Pokémon raffle entries", "https://a/1"),
+                                ("Target Pokémon drawing this weekend", "https://a/2"),
+                                ("Pokémon Delta Reign preorders open", "https://a/3")])
+    rss = f'<?xml version="1.0"?><rss version="2.0"><channel><title>x</title>{body}</channel></rss>'
+    f = {"name": "News", "url": "u", "must_have": ["raffle", "drawing", "preorder"]}
+    st = {}
+    engine.fetcher = FakeFetch('<?xml version="1.0"?><rss version="2.0"><channel><title>x</title></channel></rss>')
+    engine.check_feed(f, st, True)
+    engine.fetcher = FakeFetch(rss)
+    engine.check_feed(f, st, False)
+    assert got == [("🎟️ Dick's Sporting Goods opens Pokémon raffle entries", "dicks", ["drawings"]),
+                   ("🎟️ Target Pokémon drawing this weekend", "target", ["drawings"]),
+                   ("📰 Pokémon Delta Reign preorders open", "main", None)]
+    got.clear()
+    page = {"name": "Dick's ETB", "url": "https://www.dickssportinggoods.com/p/x", "keywords": ["enter drawing"],
+            "alert_title": "🚨 DICK'S ENTRY OPEN: Dick's ETB"}
+    engine.fetcher = FakeFetch("<button>Enter drawing</button>" + "x" * 25000, page["url"])
+    engine.check_keywords(page, {}, False)
+    assert got == [("🚨 DICK'S ENTRY OPEN: Dick's ETB", None, ["drawings"])]

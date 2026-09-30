@@ -46,7 +46,12 @@ captchas, and never automates purchases. Keep it that way.
   wins, else the main webhook. News feeds use `route_by_store: true`. Store scanners (not Pokémon Center) keep
   Pokémon items only if the name says Pokémon (skips Magic, Lorcana...). `topps_calendar` gets the Topps
   calendar watcher's alerts (falls back to `topps`, then main). `calendar` is STRICT (posts only with its own
-  webhook): "added to calendar" posts, 15-min reminders for news/release dates, 8 AM digest. `LiveBoard` keeps a
+  webhook): "added to calendar" posts, 15-min reminders for news/release dates, 8 AM digest.
+  Store channels are PRODUCTS ONLY. News -> main channel (`channel="main"`), one post per story across all feeds
+  (`state["news_seen"]`). Every raffle/drawing/invite (store scanners, Walmart draw page, Topps, watched pages,
+  raffle news naming a store) posts to the store's channel AND `drawings` via `copy_to=["drawings"]`.
+  `pokemon_queue` channel: `track_duration` on the queue watcher -> @everyone when up, one self-editing
+  "up for X min" message, "closed · was up X" with start/end + recent history (`state["queue_history"]`). `LiveBoard` keeps a
   self-editing pinned message in `calendar` (next 14 days) and `topps_calendar` (all Topps products).
 - Drop calendar = `state["events"]` (kind: topps / drawing / release / news, store). Fed by the Topps calendar,
   Walmart drawings, dated news, and `calendar_only` feeds (release dates: calendar entries, no pings).
