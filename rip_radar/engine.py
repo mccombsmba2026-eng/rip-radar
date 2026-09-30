@@ -45,7 +45,10 @@ class Fetcher:
                 return self.browser_fetch(url)
             except Exception as e:
                 log.warning("browser fetch failed for %s: %s - trying plain HTTP", url, e)
-        r = self.s.get(url, timeout=30, allow_redirects=True)
+        headers = None
+        if "reddit.com" in url:   # Reddit rate-limits generic browser agents; it asks apps to name themselves
+            headers = {"User-Agent": f"windows:rip-radar:{__version__} (personal drop alerts)"}
+        r = self.s.get(url, timeout=30, allow_redirects=True, headers=headers)
         return r.status_code, r.url, r.text
 
 

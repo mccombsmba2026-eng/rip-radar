@@ -108,12 +108,12 @@ targets:
     category: Pokémon
     must_have: [raffle, drawing, invite, queue, lottery]
 
-  - name: Reddit · Walmart / Target / Dick's drawings
+  - name: Reddit · r/PokemonTCGDeals drawings & drops
     type: feed
-    url: https://www.reddit.com/search.rss?q=pokemon+(walmart+OR+target+OR+dicks)+(drawing+OR+raffle+OR+lottery)&sort=new&t=week
-    interval_seconds: 300
+    url: https://www.reddit.com/r/PokemonTCGDeals/search.rss?q=drawing+OR+raffle+OR+lottery+OR+invite+OR+walmart+OR+target+OR+dicks&restrict_sr=on&sort=new&t=week
+    interval_seconds: 600
     category: Pokémon
-    must_have: [drawing, raffle, lottery]
+    must_have: [drawing, raffle, lottery, invite, queue, drop]
 
 # Presets for "Watch a page" in the app. Each becomes a keywords watcher with browser: true.
 watch_presets:
