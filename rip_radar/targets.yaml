@@ -200,6 +200,96 @@ targets:
     live_if_price: true
     interval_seconds: 300
 
+  # ===== MORE STORES (each has its own channel; CVS + Walgreens share one). Same rules as above: pings when a
+  # Pokémon / sports-card product loads or comes in stock, @everyone for ETBs and UPCs.
+  - name: Costco · Pokémon cards
+    type: retail_search
+    store: costco
+    products: pokemon
+    url: https://www.costco.com/s?keyword=pokemon%20trading%20cards
+    browser: true
+    channel: costco
+    verify_pages: 1
+    interval_seconds: 360
+
+  - name: Costco · sports cards
+    type: retail_search
+    store: costco
+    products: sports
+    url: https://www.costco.com/s?keyword=sports%20trading%20cards
+    browser: true
+    channel: costco
+    verify_pages: 1
+    interval_seconds: 420
+
+  - name: Sam's Club · Pokémon cards
+    type: retail_search
+    store: samsclub
+    products: pokemon
+    url: https://www.samsclub.com/s/pokemon%20trading%20cards
+    browser: true
+    channel: samsclub
+    interval_seconds: 360
+
+  - name: Sam's Club · sports cards
+    type: retail_search
+    store: samsclub
+    products: sports
+    url: https://www.samsclub.com/s/sports%20trading%20cards
+    browser: true
+    channel: samsclub
+    interval_seconds: 420
+
+  - name: CVS · trading cards
+    type: retail_search
+    store: cvs
+    products: cards
+    url: https://www.cvs.com/search?searchTerm=trading%20cards
+    browser: true
+    channel: pharmacy
+    verify_pages: 1
+    interval_seconds: 360
+
+  - name: Walgreens · trading cards
+    type: retail_search
+    store: walgreens
+    products: cards
+    url: https://www.walgreens.com/search/results.jsp?Ntt=trading%20cards
+    browser: true
+    channel: pharmacy
+    verify_pages: 1
+    interval_seconds: 360
+
+  - name: Ace Hardware · trading cards
+    type: retail_search
+    store: ace
+    products: cards
+    url: https://www.acehardware.com/search?query=trading%20cards
+    browser: true
+    channel: ace
+    verify_pages: 1
+    interval_seconds: 420
+
+  - name: Barnes & Noble · Pokémon cards
+    type: retail_search
+    store: barnes
+    products: pokemon
+    url: https://www.barnesandnoble.com/s/pokemon%20trading%20cards
+    browser: true
+    channel: barnes
+    verify_pages: 1
+    interval_seconds: 360
+
+  - name: Barnes & Noble · sports cards
+    type: retail_search
+    store: barnes
+    products: sports
+    url: https://www.barnesandnoble.com/s/sports%20trading%20cards
+    browser: true
+    channel: barnes
+    verify_pages: 1
+    interval_seconds: 420
+
   # ===== NEWS + REDDIT (raffle announcements and drop times anywhere) =====
   - name: News · Walmart Pokémon drawings
     type: feed

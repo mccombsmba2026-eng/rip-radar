@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 import requests
 
-from .notify import STORE_COLORS, STORE_NAMES
+from .notify import STORE_COLORS, STORE_NAMES, channel_of
 
 log = logging.getLogger("rip_radar")
 GREY, AMBER, PURPLE = 0x8A8F9E, 0xF0A020, 0x9B59B6
@@ -100,7 +100,7 @@ class ProductCards:
         self.http = requests
 
     def hook(self, store):
-        return (self.get_settings().get("webhooks") or {}).get(store) or ""
+        return (self.get_settings().get("webhooks") or {}).get(channel_of(store)) or ""
 
     def enabled(self, store):
         return self.hook(store).startswith("http")

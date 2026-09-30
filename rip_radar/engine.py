@@ -688,7 +688,7 @@ class Engine:
                 continue
             text = BeautifulSoup(ph, "html.parser").get_text(" ")
             hint, limit = stock_hint(text)
-            count, max_qty = page_data_stock(next_data(ph)) if t.get("store") == "walmart" else (None, None)
+            count, max_qty = page_data_stock(next_data(ph)) if t.get("store") in ("walmart", "samsclub") else (None, None)
             if count is not None and count > 0:
                 rec["stock"] = f"{count} available"
             elif hint:

@@ -454,6 +454,12 @@ RETAIL_STORES = {
     "amazon": {"label": "Amazon", "id": r"/(?:dp|gp/product)/([A-Z0-9]{10})"},
     "dicks": {"label": "Dick's", "id": r"/p/([a-z0-9-]*[a-z0-9]+)(?:/|$)"},
     "pokemon": {"label": "Pokémon Center", "id": r"/product/([0-9a-z-]+(?:/[0-9a-z-]+)?)"},
+    "costco": {"label": "Costco", "id": r"\.product\.(\d{6,})\.html"},
+    "samsclub": {"label": "Sam's Club", "id": r"/(?:ip|p)/(?:[^/?#]+/)?((?:prod)?\d{5,})"},
+    "cvs": {"label": "CVS", "id": r"prodid-(\d{5,})"},
+    "walgreens": {"label": "Walgreens", "id": r"ID=((?:prod|\d)\d{4,})-product"},
+    "ace": {"label": "Ace Hardware", "id": r"/departments/[^?#]*?/(\d{6,8})(?:[/?#]|$)"},
+    "barnes": {"label": "Barnes & Noble", "id": r"/w/(?:[^/?#]+/)?(\d{6,})"},
 }
 LIVE_WORDS = ("add to cart", "add to bag", "add for shipping", "add for pickup", "add for delivery", "buy now",
               "ship it", "pick it up", "deliver it", "add to basket")
@@ -567,8 +573,8 @@ def parse_retail_tiles(html, base_url, store, live_if_price=False):
                       "image": image_in(node, base_url), "price": price_in(text),
                       "status": status, "live": live, "add_to_cart": add, "buy_now": buy, "text": text[:800],
                       "stock": stock, "limit": limit})
-    if store == "walmart":
-        tiles = _merge_walmart_json(tiles, html, base_url, live_if_price)
+    if store in ("walmart", "samsclub"):          # same platform: product data embedded in the page
+        tiles = _merge_walmart_json(tiles, html, base_url, live_if_price, store)
     if not tiles:
         tiles = title_tiles(soup, base_url, store, live_if_price)
     return tiles
@@ -657,7 +663,7 @@ def _strings(o, depth=0, out=None):
     return out
 
 
-def walmart_json_items(html, base_url="https://www.walmart.com/"):
+def walmart_json_items(html, base_url="https://www.walmart.com/", host="https://www.walmart.com/"):
     """Products in Walmart's embedded page data (search, browse and drawing pages all carry it).
     The drawing page's tiles have no product links, so this is how its items are found."""
     data = next_data(html)
@@ -685,7 +691,7 @@ def walmart_json_items(html, base_url="https://www.walmart.com/"):
             img = d["imageInfo"].get("thumbnailUrl") or ""
         avail = d.get("availabilityStatusV2") if isinstance(d.get("availabilityStatusV2"), dict) else {}
         avail = str(avail.get("value") or d.get("availabilityStatus") or d.get("availabilityStatusDisplayValue") or "")
-        url = urljoin("https://www.walmart.com/", d.get("canonicalUrl") or f"/ip/{pid}").split("?")[0]
+        url = urljoin(host, d.get("canonicalUrl") or f"/ip/{pid}").split("?")[0]
         text = " ".join(_strings(d))
         prev = items.get(pid)
         if prev and len(prev["text"]) >= len(text):
@@ -730,9 +736,10 @@ def _event_times(item):
     return start, end
 
 
-def _merge_walmart_json(tiles, html, base_url, live_if_price=False):
+def _merge_walmart_json(tiles, html, base_url, live_if_price=False, store="walmart"):
     by_id = {x["id"]: x for x in tiles}
-    for j in walmart_json_items(html, base_url):
+    host = "https://www.samsclub.com/" if store == "samsclub" else "https://www.walmart.com/"
+    for j in walmart_json_items(html, base_url, host):
         x = by_id.get(j["id"])
         text = ((x or {}).get("text", "") + " " + j["text"]).strip()
         status, live = tile_status(text, live_if_price)
@@ -743,7 +750,7 @@ def _merge_walmart_json(tiles, html, base_url, live_if_price=False):
         stock, limit = stock_hint(text)
         if not limit and str(j["max_qty"]).isdigit() and 0 < int(j["max_qty"]) < 20:
             limit = f"Limit {j['max_qty']} per order"
-        add, buy = cart_links("walmart", j["id"])
+        add, buy = cart_links(store, j["id"])
         merged = {"id": j["id"], "name": j["name"] or (x or {}).get("name", ""), "url": j["url"],
                   "image": j["image"] or (x or {}).get("image", ""), "price": j["price"] or (x or {}).get("price", ""),
                   "status": status, "live": live, "add_to_cart": add, "buy_now": buy, "text": text[:1200],

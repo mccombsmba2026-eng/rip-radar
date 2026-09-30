@@ -11,24 +11,38 @@ import requests
 log = logging.getLogger("rip_radar")
 COLORS = {"urgent": 0xE0342B, "normal": 0x2350C8, "system": 0x8A8F9E}
 STORE_COLORS = {"target": 0xCC0000, "walmart": 0x0071CE, "bestbuy": 0x0046BE, "amazon": 0xFF9900,
-                "dicks": 0x006B54, "pokemon": 0xFFCB05, "topps": 0xE31837}
+                "dicks": 0x006B54, "pokemon": 0xFFCB05, "topps": 0xE31837, "costco": 0xE31837, "samsclub": 0x0067A0,
+                "cvs": 0xCC0000, "walgreens": 0xE31837, "ace": 0xD40029, "barnes": 0x2A5934}
 
 
 # One Discord channel per store. Key -> label shown in the app. Webhooks live in settings["webhooks"].
 CHANNELS = {"topps": "Topps products (formats, in stock)", "topps_calendar": "Topps calendar",
             "pokemon": "Pokémon Center products", "pokemon_queue": "Pokémon Center queue",
             "walmart": "Walmart", "target": "Target", "dicks": "Dick's", "amazon": "Amazon", "bestbuy": "Best Buy",
+            "costco": "Costco", "samsclub": "Sam's Club", "pharmacy": "CVS & Walgreens", "ace": "Ace Hardware",
+            "barnes": "Barnes & Noble",
             "drawings": "Drawings & raffles (all stores)", "calendar": "Drop calendar (all announced dates)",
             "status": "App status"}
 STORE_NAMES = {"topps": "Topps", "pokemon": "Pokémon Center", "walmart": "Walmart", "target": "Target",
-               "dicks": "Dick's", "amazon": "Amazon", "bestbuy": "Best Buy"}
+               "dicks": "Dick's", "amazon": "Amazon", "bestbuy": "Best Buy", "costco": "Costco",
+               "samsclub": "Sam's Club", "cvs": "CVS", "walgreens": "Walgreens", "ace": "Ace Hardware",
+               "barnes": "Barnes & Noble"}
+# stores that share a Discord channel (store key -> channel key); everything else posts to its own key
+STORE_CHANNEL = {"cvs": "pharmacy", "walgreens": "pharmacy"}
+
+
+def channel_of(store):
+    return STORE_CHANNEL.get(store, store)
 # channels that only ever post to their own webhook (never spill into the main channel)
 STRICT_CHANNELS = {"calendar"}
 # news posts go to the store they mention first (checked in this order)
 STORE_WORDS = [("pokemon", ("pokémon center", "pokemon center", "pokemoncenter")),
                ("walmart", ("walmart",)), ("target", ("target",)),
                ("dicks", ("dick's", "dicks sporting", "dick’s", "dickssportinggoods", "dick's sporting goods")),
-               ("amazon", ("amazon",)), ("bestbuy", ("best buy", "bestbuy")), ("topps", ("topps", "bowman"))]
+               ("amazon", ("amazon",)), ("bestbuy", ("best buy", "bestbuy")),
+               ("samsclub", ("sam's club", "sams club", "samsclub")), ("costco", ("costco",)),
+               ("cvs", ("cvs",)), ("walgreens", ("walgreens",)), ("ace", ("ace hardware", "acehardware")),
+               ("barnes", ("barnes & noble", "barnes and noble", "barnesandnoble")), ("topps", ("topps", "bowman"))]
 
 
 def store_in(text):
@@ -60,6 +74,8 @@ class Notifier:
         fields = {k: v for k, v in (fields or {}).items() if v}
         links = [(lbl, u) for lbl, u in (links or []) if u]
         channel = channel or getattr(self._local, "channel", None)
+        if isinstance(channel, str):
+            channel = channel_of(channel)
         log.info("ALERT [%s] %s %s", level, title, url)
         if record:
             self.on_alert({"level": level, "title": title, "url": url, "fields": fields, "desc": desc,

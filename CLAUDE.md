@@ -53,7 +53,10 @@ captchas, and never automates purchases. Keep it that way.
   `pokemon_queue` channel: `track_duration` on the queue watcher -> @everyone when up, one self-editing
   "up for X min" message, "closed · was up X" with start/end + recent history (`state["queue_history"]`). `LiveBoard` keeps a
   self-editing pinned message in `calendar` (next 14 days) and `topps_calendar` (all Topps products).
-- Store channels (target, walmart, dicks, amazon, bestbuy, pokemon) = ONE self-editing message PER PRODUCT
+- More stores (1.0.15): costco, samsclub (Walmart platform: page data via `_merge_walmart_json`), cvs + walgreens
+  (share the `pharmacy` channel: `notify.STORE_CHANNEL` / `channel_of`), ace, barnes. Store keys stay separate
+  (colors, names, product ids); `channel_of(store)` picks the Discord channel everywhere (Notifier, ProductCards).
+- Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT
   (`cards.py` `ProductCards`, background poster thread): link, ATC/Buy, big picture, price vs retail (MSRP), stock,
   limit, nearby stores. Edits in place on changes; new / back in stock / drawing open / loaded = delete + fresh
   post at the bottom (@everyone only for ETB/UPC). Unseen 24 h = deleted. Only card products in the user's sports

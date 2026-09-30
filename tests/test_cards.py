@@ -285,3 +285,46 @@ def test_walmart_page_data_drawing_times():
     html = f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(data)}</script>' + PAD
     (j,) = walmart_json_items(html)
     assert j["start"].hour == 16 and j["start"].tzinfo is not None and j["end"].day == 30   # 4 PM CT, closes 11:59 PM
+
+
+# ---------------------------------------------------------------- new stores
+def test_new_store_product_links_and_shared_pharmacy_channel(engine):
+    from rip_radar.cards import ProductCards
+    from rip_radar.notify import channel_of, store_in
+    links = {"costco": "/pokemon-tcg-elite-trainer-box-bundle.product.4000312345.html",
+             "samsclub": "/ip/Pokemon-TCG-Delta-Reign-Elite-Trainer-Box-2-pack/13987654",
+             "cvs": "/shop/pokemon-tcg-delta-reign-booster-pack-prodid-1234567",
+             "walgreens": "/store/c/pokemon-tcg-booster-bundle/ID=300455566-product",
+             "ace": "/departments/home-and-decor/toys/trading-cards/9021345",
+             "barnes": "/w/pokemon-tcg-delta-reign-elite-trainer-box-pokemon/1147123456?ean=0820650859452"}
+    for store, href in links.items():
+        html = (f'<div><a href="{href}"><img alt="Pokémon TCG: Delta Reign Elite Trainer Box" src="https://i/x.jpg"></a>'
+                f'<span>$49.99</span><button>Add to cart</button></div>' + PAD)
+        (x,) = parse_retail_tiles(html, "https://www.example.com/", store)
+        assert x["live"] and x["name"] == "Pokémon TCG: Delta Reign Elite Trainer Box", store
+    assert channel_of("cvs") == channel_of("walgreens") == "pharmacy" and channel_of("costco") == "costco"
+    assert store_in("Sam's Club has Pokémon ETBs") == "samsclub" and store_in("Walgreens restock") == "walgreens"
+    cards = ProductCards(lambda: {"webhooks": {"pharmacy": "https://ph"}}, {})
+    assert cards.hook("cvs") == cards.hook("walgreens") == "https://ph"
+    names = {t["name"] for t in engine.targets()}
+    assert {"Costco · Pokémon cards", "Sam's Club · sports cards", "CVS · trading cards", "Walgreens · trading cards",
+            "Ace Hardware · trading cards", "Barnes & Noble · Pokémon cards"} <= names
+
+
+def test_new_store_etb_gets_everyone(engine):
+    settings.update({"webhooks": {"pharmacy": "https://ph"}})
+    queued = []
+    engine.cards.request = lambda store, pid, rec, bump=False, ping=False, headline="": queued.append((store, pid, ping))
+    engine.notify.send = lambda *a, **k: None
+    t = next(x for x in engine.targets() if x["name"] == "CVS · trading cards")
+
+    def tile(pid, name, price):
+        return (f'<div><a href="/shop/{name.lower().replace(" ", "-")}-prodid-{pid}"><img alt="{name}" src="https://i/{pid}.jpg">'
+                f'</a><span>{price}</span><button>Add to cart</button></div>')
+    st = {}
+    engine.fetcher = FakeFetch(PAD, t["url"])
+    engine.check_retail_search(t, st, True)
+    engine.fetcher = FakeFetch(tile("1234567", "Pokemon TCG Delta Reign Elite Trainer Box", "$49.99")
+                               + tile("7654321", "Pokemon TCG Delta Reign Booster Pack", "$4.99") + PAD, t["url"])
+    engine.check_retail_search(t, st, False)
+    assert ("cvs", "1234567", True) in queued and ("cvs", "7654321", False) in queued
