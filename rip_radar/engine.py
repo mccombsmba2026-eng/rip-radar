@@ -406,10 +406,10 @@ class Engine:
 
     def _watch_bot_check(self, t, st, kind, now):
         """Posts (no @everyone) when Pokémon Center switches its bot check / captcha on or off for the checker:
-        sites often tighten it right before a drop. Needs 2 checks in a row to count, and 20 min between posts."""
+        sites often tighten it right before a drop. Needs 3 checks in a row to count, and 20 min between posts."""
         prev, streak = st.get("wall", ""), st.get("wall_streak", 0)
         st["wall_streak"] = streak + 1 if bool(kind) != bool(prev) else 0
-        if bool(kind) == bool(prev) or st["wall_streak"] < 2:
+        if bool(kind) == bool(prev) or st["wall_streak"] < 3:
             return
         st["wall"], st["wall_streak"] = kind, 0
         if time.time() - st.get("wall_posted", 0) < 1200:
@@ -759,6 +759,13 @@ class Engine:
         elif t.get("stock_pages", 2):
             self._refresh_page_stock(t, st, changed)
         if use_cards:
+            # listings the filters no longer want (graded slabs, lots...): take their posts down now
+            kept = {x["id"] for x in cards}
+            for x in tiles:
+                rec = known.get(x["id"])
+                if x["id"] not in kept and rec and rec.get("carded"):
+                    self.cards.retire(store, x["id"])
+                    rec["carded"] = False
             for x, rec, event, ping in changed:
                 self.cards.request(store, x["id"], rec, bump=bool(event), ping=ping, headline=event or "")
                 rec["carded"] = True

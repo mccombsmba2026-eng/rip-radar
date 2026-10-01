@@ -146,16 +146,25 @@ def test_tcg_filter():
            "Pokémon TCG: Charizard ex Ultra-Premium Collection",
            "Pokémon TCG: 30th Celebration Pin Collection",
            "Scarlet & Violet—Surging Sparks Booster Display Box (36 Packs)",
-           "Pokémon TCG: Mega Lucario ex Battle Deck",
            "/product/10-10372-109/pokemon-tcg-mega-evolution-pitch-black-3-booster-blister",
            "Pokémon TCG: 30th Celebration Poster Collection"]
+    yes += ["Pokémon TCG: Pikachu Playmat", "Pokémon TCG: Eevee Binder",          # accessories: kept (M's call)
+            "Pokemon Charizard ex 199/165 Special Illustration Rare Holo Card"]    # single cards: kept
     no = ["Pikachu Pokémon Center 30th Celebration Hat", "Pokémon Center 30th Celebration Lanyard",
-          "Pikachu Sitting Cuties Plush", "Eevee Pin", "Charizard Card Sleeves (65 Sleeves)",
-          "Pokémon TCG: Pikachu Playmat", "Umbreon Ceramic Mug", "Pokémon Center 30th Celebration Hoodie",
-          "Gengar Figure", "Pokémon TCG: Eevee Binder"]
+          "Pikachu Sitting Cuties Plush", "Eevee Pin", "Umbreon Ceramic Mug", "Pokémon Center 30th Celebration Hoodie",
+          "Gengar Figure", "Pokémon TCG: Mega Lucario ex Battle Deck",                   # deck, no packs: cut
+          "Pokemon Charizard ex 199/165 PSA 10 Gem Mint", "Pokémon TCG Umbreon VMAX BGS 9.5 Graded Card",
+          "Lot of 50 Pokemon Cards Holo Guaranteed", "100 Pokemon Cards Random Bulk", "Pokemon Mystery Booster Repack Box"]
     assert [x for x in yes if not is_tcg_product(x)] == []
     assert [x for x in no if is_tcg_product(x)] == []
 
+
+
+def test_sports_graded_and_lots_cut():
+    from rip_radar.parsing import is_sports_card_product
+    assert is_sports_card_product("2026 Topps NFL Flagship Football Trading Card Mega Box")
+    assert not is_sports_card_product("2024 Topps Chrome Shohei Ohtani #1 PSA 10 Gem Mint Baseball Card")
+    assert not is_sports_card_product("Lot of 100 Football Trading Cards Topps Panini Random")
 
 
 def test_stock_hints():

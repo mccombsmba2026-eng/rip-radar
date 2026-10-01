@@ -59,6 +59,12 @@ captchas, and never automates purchases. Keep it that way.
 - More stores (1.0.15): costco, samsclub (Walmart platform: page data via `_merge_walmart_json`), cvs + walgreens
   (share the `pharmacy` channel: `notify.STORE_CHANNEL` / `channel_of`), ace, barnes. Store keys stay separate
   (colors, names, product ids); `channel_of(store)` picks the Discord channel everywhere (Notifier, ProductCards).
+- What counts (1.0.31, M's rules): Pokémon = sealed (ETB, UPC, booster bundles/boxes/packs/blisters, tins,
+  collections) + single cards + Pokémon accessories; sports = sealed + singles. ALWAYS cut (`is_excluded_listing`):
+  graded slabs (PSA/BGS/CGC/SGC/TAG + grade, "graded", "slab"), card lots / bulk / random / mystery / repacks,
+  battle/theme decks without packs. Posts for listings that stop qualifying are taken down.
+- Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
+  3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT
   (`cards.py` `ProductCards`, background poster thread): link, ATC/Buy, big picture, price vs retail (MSRP), stock,
   limit, nearby stores. Edits in place on changes; new / back in stock / drawing open / loaded = delete + fresh

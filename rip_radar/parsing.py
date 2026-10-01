@@ -34,15 +34,33 @@ WALL_KINDS = [  # (what the page contains, what to call it)
     ("captcha", "captcha")]
 
 
+WALL_TEXT = [("pardon our interruption", "Imperva bot check (“Pardon Our Interruption”)"),
+             ("press & hold", "PerimeterX “Press & Hold”"), ("press and hold", "PerimeterX “Press & Hold”"),
+             ("verify you are human", "“Verify you are human” check"), ("are you a robot", "“Are you a robot” check"),
+             ("robot or human", "“Robot or human?” check"), ("checking your browser", "Cloudflare check"),
+             ("just a moment", "Cloudflare check"), ("access denied", "Akamai “Access Denied”"),
+             ("request unsuccessful", "Imperva block"), ("complete the security check", "security check")]
+CAPTCHA_FRAMES = [("hcaptcha.com", "hCaptcha"), ("recaptcha", "Google reCAPTCHA"), ("challenges.cloudflare", "Cloudflare Turnstile"),
+                  ("captcha-delivery", "DataDome captcha"), ("px-captcha", "PerimeterX “Press & Hold”")]
+
+
 def wall_kind(status, html):
-    """Which bot check / captcha a page is showing, or '' for a normal page."""
-    head = (html or "")[:60000].lower()
-    if len(html or "") > 150000:          # a full normal page that merely mentions one in a script tag
+    """Which bot check / captcha the page is SHOWING (judged on visible text + captcha frames), or '' for a normal
+    page. Normal pages load these sites' bot-protection scripts too, so script names alone never count."""
+    soup = BeautifulSoup(html or "", "html.parser")
+    frames = " ".join((f.get("src") or "") for f in soup.find_all("iframe")).lower()
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+    text = " ".join(soup.get_text(" ").split()).lower()
+    if len(text) > 2500:                   # a real page with real content
         return ""
-    for marker, name in WALL_KINDS:
-        if marker in head:
+    for marker, name in WALL_TEXT:
+        if marker in text:
             return name
-    return "blocked (HTTP %s)" % status if status in (401, 403, 429, 503) else ""
+    for marker, name in CAPTCHA_FRAMES:
+        if marker in frames or (marker.split(".")[0] in text and "captcha" in text):
+            return name
+    return "blocked (HTTP %s)" % status if status in (401, 403, 429, 503) and len(text) < 600 else ""
 
 
 def is_challenge(html):
@@ -413,17 +431,41 @@ TCG_SEALED = ("elite trainer box", "booster", "collection", "tin", "bundle", "de
               "trading card")      # Ace: "Pokemon Chaos Rising Trading Cards" (a pack)
 
 
+# never wanted, any store: graded slabs, card lots / repacks, and pre-built decks with no booster packs
+RE_GRADED = re.compile(r"\b(?:psa|bgs|cgc|sgc|beckett|tag)\s*(?:gem\s*)?(?:mint\s*)?\d{1,2}(?:\.\d)?\b|\bgraded\b|"
+                       r"\bslab(?:bed)?\b|\bgem mint\b", re.I)
+RE_LOT = re.compile(r"\blot\s+of\b|\bcards?\s+lot\b|\bbulk\b|\brandom\b|\bmystery\b|\brepack|\bgrab\s*bag\b|"
+                    r"\bassorted\b|\b\d{2,4}\s*\+?\s*(?:pok[eé]mon\s+)?(?:trading\s+)?cards\b(?!\s+game)", re.I)
+RE_DECK_ONLY = re.compile(r"\b(?:theme|battle|league\s+battle|ex\s+battle|starter)\s+decks?\b", re.I)
+RE_SINGLE = re.compile(r"\b\d{1,3}/\d{2,3}\b|\bholo\b|full\s+art|\bpromo\b|illustration\s+rare|secret\s+rare|"
+                       r"\bsingle\s+card\b|\b(?:ex|gx|v|vmax|vstar)\s+#?\d{1,3}\b", re.I)
+
+
+def is_excluded_listing(text):
+    """Graded slabs (PSA 10...), card lots / repacks / mystery boxes, and booster-less battle / theme decks."""
+    t = text or ""
+    if RE_DECK_ONLY.search(t) and not re.search(r"booster|pack|bundle|collection|box", RE_DECK_ONLY.sub("", t), re.I):
+        return True
+    return bool(RE_GRADED.search(t) or RE_LOT.search(t))
+
+
 def is_tcg_product(text):
-    """True for sealed Pokémon card products (ETBs, booster bundles, packs, UPCs, tins, collections, decks);
-    False for merch (hats, lanyards, plush...) and card accessories (sleeves, binders, playmats)."""
+    """Pokémon card products: sealed (ETBs, booster bundles/boxes, packs, blisters, UPCs, tins, collections) plus
+    single cards and card accessories (sleeves, binders...) - but never graded slabs, card lots/repacks or
+    booster-less decks, and never merch (hats, plush, lanyards...)."""
+    if is_excluded_listing(text):
+        return False
     t = " " + re.sub(r"[-_/]+", " ", (text or "").lower()) + " "
     t = t.replace("pokemon tcg", "pokémon tcg")
     has = lambda words: any(re.search(r"\b" + re.escape(w) + r"s?\b", t) for w in words)
     strong = has(TCG_STRONG) or "pokémon tcg" in t
+    poke = "pokémon" in t or "pokemon" in t
     if has(TCG_ACCESSORY) and not has(("elite trainer box", "booster", "collection", "tin", "bundle", "deck")):
-        return False                       # sleeves / binders / playmats on their own
+        return poke                        # Pokémon sleeves / binders / playmats: kept (M's call)
     if strong:
         return True
+    if poke and RE_SINGLE.search(text or ""):
+        return True                        # single cards: kept
     if has(MERCH):
         return False
     return has(TCG_SEALED) and ("pokémon" in t or "pokemon" in t)
@@ -442,9 +484,9 @@ CARD_ACCESSORY = ("sleeve", "top loader", "toploader", "card saver", "one-touch"
 
 
 def is_sports_card_product(text):
+    if is_excluded_listing(text):
+        return False                       # graded slabs, lots, repacks
     t = " " + re.sub(r"[-_/]+", " ", (text or "").lower()) + " "
-    if any(w in t for w in CARD_ACCESSORY):
-        return False
     brand = any(re.search(r"(?<![a-z])" + re.escape(b) + r"(?![a-z])", t) for b in CARD_BRANDS)
     sport = bool(re.search(r"\b(baseball|basketball|football|nfl|nba|mlb|wnba|soccer|hockey|nhl|ufc|wwe|f1|"
                            r"formula 1|racing)\b", t))

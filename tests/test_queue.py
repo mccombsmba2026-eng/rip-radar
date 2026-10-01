@@ -87,19 +87,24 @@ def test_queue_has_its_own_browser_and_drop_mode_pauses_pc_scans(engine):
 def test_bot_check_heads_up_on_and_off(engine):
     from rip_radar.parsing import wall_kind
     assert wall_kind(200, "<html>Pardon Our Interruption...</html>").startswith("Imperva")
-    assert wall_kind(200, '<div class="h-captcha"></div>') == "hCaptcha"
+    assert wall_kind(200, '<p>Please complete the captcha</p><iframe src="https://newassets.hcaptcha.com/x"></iframe>') == "hCaptcha"
     assert wall_kind(200, "<html>shop cards</html>") == ""
+    # a normal Pokémon Center page that merely loads its bot-protection scripts is NOT a captcha
+    normal = ('<script src="/_Incapsula_Resource?x"></script><script src="https://www.google.com/recaptcha/api.js">'
+              '</script><main>' + "Shop the newest Pokémon TCG Elite Trainer Box and more " * 80 + "</main>")
+    assert wall_kind(200, normal) == ""
     sent = []
     engine.notify.send = lambda level, title, url="", fields=None, desc="", **kw: sent.append(title)
     t = {"url": "https://www.pokemoncenter.com/", "channel": ["pokemon_queue", "pokemon"]}
     st, now = {}, datetime.now(CT)
     engine._watch_bot_check(t, st, "hCaptcha", now)
-    assert sent == []                                    # one check isn't enough
+    engine._watch_bot_check(t, st, "hCaptcha", now)
+    assert sent == []                                    # two checks aren't enough
     engine._watch_bot_check(t, st, "hCaptcha", now)
     assert sent == ["🛡️ Pokémon Center turned on its bot check · hCaptcha"]
     st["wall_posted"] = 0
-    engine._watch_bot_check(t, st, "", now)
-    engine._watch_bot_check(t, st, "", now)
+    for _ in range(3):
+        engine._watch_bot_check(t, st, "", now)
     assert sent[-1].startswith("🛡️ Pokémon Center bot check is off again")
 
 
