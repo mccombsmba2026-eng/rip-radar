@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 from . import __version__, paths, settings as settings_mod
 from .msrp import msrp_text, price_check
 from .notify import CHANNELS, STORE_NAMES, ChatBot, LiveBoard, Notifier, StatusBoard, store_in
-from .parsing import (CT, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
+from .parsing import (CT, wall_kind, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
                       topps_sitemap_numbers, LIVE_STATUSES, RETAIL_STORES, categorize, extract_when, fmt_when, gcal_link, is_card_product,
                       is_etb_or_upc, is_pokemon_product, is_sports_card_product, is_tcg_product, looks_blocked, parse_retail_tiles, parse_topps_calendar,
                       parse_topps_product_page, humanize_handle, tile_status, drawing_window, next_data, sport_of, stock_hint,
@@ -387,6 +387,7 @@ class Engine:
                 log.info("queue second look: %s", e)
         was = st.get("active")
         self._save_debug("pokemon-center-queue-last-check", f"<!-- {final} -->\n" + (html or ""))
+        self._watch_bot_check(t, st, wall_kind(status, html) if (blocked and not active) else "", now)
         if active:
             self._save_debug("pokemon-center-queue-page", f"<!-- {final} -->\n" + (html or ""))
         if blocked and not active:
@@ -402,6 +403,30 @@ class Engine:
         if active and since:
             return f"ok · LIVE for {self._dur(now - datetime.fromisoformat(since))}", status
         return "ok · not live", status
+
+    def _watch_bot_check(self, t, st, kind, now):
+        """Posts (no @everyone) when Pokémon Center switches its bot check / captcha on or off for the checker:
+        sites often tighten it right before a drop. Needs 2 checks in a row to count, and 20 min between posts."""
+        prev, streak = st.get("wall", ""), st.get("wall_streak", 0)
+        st["wall_streak"] = streak + 1 if bool(kind) != bool(prev) else 0
+        if bool(kind) == bool(prev) or st["wall_streak"] < 2:
+            return
+        st["wall"], st["wall_streak"] = kind, 0
+        if time.time() - st.get("wall_posted", 0) < 1200:
+            return
+        st["wall_posted"] = time.time()
+        if kind:
+            st["wall_since"] = now.isoformat()
+            self.notify.send("normal", f"🛡️ Pokémon Center turned on its bot check · {kind}", t["url"],
+                             {"Since (CT)": self._clock(now)},
+                             desc="Sites often tighten bot checks right before a drop or queue. It may also just be "
+                                  "aimed at this checker. The queue is still watched every minute (30 s in drop mode).",
+                             channel=t.get("channel"), record=True)
+        else:
+            since = st.get("wall_since")
+            dur = f" · was on {self._dur(now - datetime.fromisoformat(since))}" if since else ""
+            self.notify.send("normal", f"🛡️ Pokémon Center bot check is off again{dur}", t["url"],
+                             channel=t.get("channel"), record=True)
 
     def test_queue_alert(self):
         t = next((x for x in self.targets() if x.get("track_duration")), {"url": "https://www.pokemoncenter.com/",

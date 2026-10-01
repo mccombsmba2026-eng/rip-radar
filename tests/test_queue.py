@@ -82,3 +82,22 @@ def test_queue_has_its_own_browser_and_drop_mode_pauses_pc_scans(engine):
     t = next(x for x in e.targets() if x.get("track_duration"))
     health, _ = e.check_keywords(t, {}, False)
     assert calls == ["https://www.pokemoncenter.com/"] and "LIVE" in health
+
+
+def test_bot_check_heads_up_on_and_off(engine):
+    from rip_radar.parsing import wall_kind
+    assert wall_kind(200, "<html>Pardon Our Interruption...</html>").startswith("Imperva")
+    assert wall_kind(200, '<div class="h-captcha"></div>') == "hCaptcha"
+    assert wall_kind(200, "<html>shop cards</html>") == ""
+    sent = []
+    engine.notify.send = lambda level, title, url="", fields=None, desc="", **kw: sent.append(title)
+    t = {"url": "https://www.pokemoncenter.com/", "channel": ["pokemon_queue", "pokemon"]}
+    st, now = {}, datetime.now(CT)
+    engine._watch_bot_check(t, st, "hCaptcha", now)
+    assert sent == []                                    # one check isn't enough
+    engine._watch_bot_check(t, st, "hCaptcha", now)
+    assert sent == ["🛡️ Pokémon Center turned on its bot check · hCaptcha"]
+    st["wall_posted"] = 0
+    engine._watch_bot_check(t, st, "", now)
+    engine._watch_bot_check(t, st, "", now)
+    assert sent[-1].startswith("🛡️ Pokémon Center bot check is off again")

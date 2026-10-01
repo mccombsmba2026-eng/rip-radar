@@ -20,6 +20,31 @@ CHALLENGE_MARKERS = ["just a moment", "checking your browser", "cf-chl", "please
                      "pardon our interruption"]
 
 
+WALL_KINDS = [  # (what the page contains, what to call it)
+    ("pardon our interruption", "Imperva bot check (“Pardon Our Interruption”)"),
+    ("_incapsula_resource", "Imperva bot check"), ("incapsula", "Imperva bot check"),
+    ("hcaptcha", "hCaptcha"), ("h-captcha", "hCaptcha"),
+    ("g-recaptcha", "Google reCAPTCHA"), ("recaptcha", "Google reCAPTCHA"),
+    ("press & hold", "PerimeterX “Press & Hold”"), ("px-captcha", "PerimeterX “Press & Hold”"),
+    ("cf-chl", "Cloudflare check"), ("just a moment", "Cloudflare check"), ("checking your browser", "Cloudflare check"),
+    ("turnstile", "Cloudflare Turnstile"),
+    ("datadome", "DataDome captcha"), ("captcha-delivery", "DataDome captcha"),
+    ("access denied", "Akamai “Access Denied”"), ("request unsuccessful", "Imperva block"),
+    ("verify you are human", "“Verify you are human” check"), ("are you a robot", "“Are you a robot” check"),
+    ("captcha", "captcha")]
+
+
+def wall_kind(status, html):
+    """Which bot check / captcha a page is showing, or '' for a normal page."""
+    head = (html or "")[:60000].lower()
+    if len(html or "") > 150000:          # a full normal page that merely mentions one in a script tag
+        return ""
+    for marker, name in WALL_KINDS:
+        if marker in head:
+            return name
+    return "blocked (HTTP %s)" % status if status in (401, 403, 429, 503) else ""
+
+
 def is_challenge(html):
     head = (html or "")[:8000].lower()
     return len(html or "") < 60000 and any(m in head for m in CHALLENGE_MARKERS)

@@ -122,6 +122,9 @@ captchas, and never automates purchases. Keep it that way.
   `track_duration` sources while that thread runs. DROP MODE (`settings["drop_mode_until"]`; app top-bar button = 3 h;
   Discord "drop mode on" / "drop mode 5" / "drop mode off" from any channel the bot sees): queue every 30 s and the
   Pokémon Center product scanners are skipped (less PC traffic = fewer bot walls). The ONLY exception to the 60 s rule.
+- Bot-check watch (1.0.29): `parsing.wall_kind` names the wall (Imperva, hCaptcha, reCAPTCHA, PerimeterX, Cloudflare,
+  DataDome, Akamai...). `_watch_bot_check` posts to the queue channel (no @everyone) when Pokémon Center's bot check
+  turns on / off for the checker (2 checks in a row, ≥20 min apart). Detect only - never solve or click through.
 - Pokémon Center queue: `check_queue` (keywords + `track_duration`) never goes into host_backoff; a blocked browser
   check gets a plain-HTTP second look; live = queue address OR short page with queue wording (a long homepage
   mentioning "virtual queue" is not live). Blocked = "Couldn't check" on the status line, never "no queue".
