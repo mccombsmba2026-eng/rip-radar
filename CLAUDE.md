@@ -117,6 +117,11 @@ captchas, and never automates purchases. Keep it that way.
   (a full pass takes minutes). The queue saves every check to debug/pokemon-center-queue-last-check.html.
 - Walmart drawings: open time from tile text, else the page's visible text near the item name, else the single
   "Drawing starts ..." time shared by the page; "closed" only from visible page text (page data has template strings).
+- Queue has its OWN hidden browser window ("Rip Radar queue watch", `BrowserFetcher(scroll=False, settle=2,
+  challenge_wait=12)`) and its own thread (`Engine._queue_loop`): never waits behind store pages; the main loop skips
+  `track_duration` sources while that thread runs. DROP MODE (`settings["drop_mode_until"]`; app top-bar button = 3 h;
+  Discord "drop mode on" / "drop mode 5" / "drop mode off" from any channel the bot sees): queue every 30 s and the
+  Pokémon Center product scanners are skipped (less PC traffic = fewer bot walls). The ONLY exception to the 60 s rule.
 - Pokémon Center queue: `check_queue` (keywords + `track_duration`) never goes into host_backoff; a blocked browser
   check gets a plain-HTTP second look; live = queue address OR short page with queue wording (a long homepage
   mentioning "virtual queue" is not live). Blocked = "Couldn't check" on the status line, never "no queue".
@@ -152,7 +157,7 @@ captchas, and never automates purchases. Keep it that way.
   reuses the parent's deleted _MEI folder: "Failed to load Python DLL". CI's "Relaunch check" step guards this.
 - Never commit secrets (webhooks, bot tokens, Twilio keys). The repo is public. They belong in the
   app's Settings screen only.
-- Keep scan intervals ≥ 60 s per source.
+- Keep scan intervals ≥ 60 s per source (exception: the Pokémon Center queue at 30 s while drop mode is on).
 - pywebview 6.x: `closing` handlers returning False cancel the close (used for hide-to-tray);
   `load_url`/`evaluate_js` block until the window is shown/ready (hidden windows still fire `shown`).
 - topps.com returns 403 to plain HTTP from data-center IPs (the build machine's selftest always shows

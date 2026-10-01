@@ -27,9 +27,10 @@ class BrowserFetcher:
     """Loads a page in a hidden window running the real Edge engine (WebView2), then reads its HTML.
     Sites with bot walls (Pokémon Center, Walmart...) treat it like a normal browser visit."""
 
-    def __init__(self):
+    def __init__(self, scroll=True, settle=4, challenge_wait=25):
         self.window = None
         self._lock = threading.Lock()
+        self.scroll, self.settle, self.challenge_wait = scroll, settle, challenge_wait
 
     def __call__(self, url):
         if self.window is None:
@@ -40,12 +41,12 @@ class BrowserFetcher:
             if not w.events.loaded.wait(45):
                 raise TimeoutError("page took too long")
             from .parsing import is_challenge
-            deadline = time.time() + 25
-            time.sleep(4)  # let redirects / scripts settle
+            deadline = time.time() + self.challenge_wait
+            time.sleep(self.settle)  # let redirects / scripts settle
             # store pages draw their product tiles after load and more as you scroll: scroll down in steps and wait
             # until the number of links stops growing (max ~10 s)
             last = -1
-            for _ in range(8):
+            for _ in range(8 if self.scroll else 0):
                 try:
                     n = w.evaluate_js("window.scrollBy(0, Math.max(900, window.innerHeight)); document.links.length") or 0
                 except Exception:
@@ -117,6 +118,10 @@ class Api:
     def test_queue_alert(self):
         """Posts exactly what a Pokémon Center queue alert looks like (marked TEST, no @everyone)."""
         return {"ok": bool(self._app.engine.test_queue_alert())}
+
+    def set_drop_mode(self, hours):
+        left = self._app.engine.set_drop_mode(hours)
+        return {"ok": True, "seconds_left": left}
 
     def test_all_channels(self):
         """One test message to the main channel and to every store channel that has a webhook."""
@@ -239,7 +244,9 @@ class App:
         self.visible = not background        # auto-updates restart the app only in the tray or right after launch
         self.started_at = time.time()
         self.fetcher = BrowserFetcher()
-        self.engine = Engine(browser_fetch=self.fetcher)
+        # the Pokémon Center queue gets its OWN hidden browser: it never waits behind a slow store page
+        self.queue_fetcher = BrowserFetcher(scroll=False, settle=2, challenge_wait=12)
+        self.engine = Engine(browser_fetch=self.fetcher, queue_fetch=self.queue_fetcher)
         base_alert = self.engine.notify.on_alert
 
         def on_alert(a):
@@ -259,6 +266,7 @@ class App:
         self.window.events.closing += self._on_closing
         # second, hidden window = the scanner's browser (no js_api: it only visits outside sites)
         self.fetcher.window = webview.create_window("Rip Radar scanner", url="about:blank", hidden=True)
+        self.queue_fetcher.window = webview.create_window("Rip Radar queue watch", url="about:blank", hidden=True)
 
     # --- window / tray
     def _on_closing(self):

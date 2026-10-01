@@ -61,3 +61,24 @@ def test_queue_stays_open_while_site_blocks_us(engine, monkeypatch):
     engine.fetcher = FakeFetch("<html>Pardon Our Interruption</html>", "https://www.pokemoncenter.com/")
     assert engine.check_keywords(Q, st, False)[0] == "blocked"
     assert st["active"] is True and st.get("live_since")             # not wrongly marked closed
+
+
+def test_drop_mode_commands_and_timer(engine):
+    from rip_radar.notify import drop_mode_command
+    assert drop_mode_command("drop mode on") == 3 and drop_mode_command("Drop Mode 5 hours") == 5
+    assert drop_mode_command("drop mode off") == 0 and drop_mode_command("dropping soon") is None
+    left = engine.set_drop_mode(3)
+    assert 3 * 3600 - 5 < left <= 3 * 3600 and engine.snapshot()["drop_mode"] > 0
+    engine.set_drop_mode(0)
+    assert engine.drop_mode() == 0
+
+
+def test_queue_has_its_own_browser_and_drop_mode_pauses_pc_scans(engine):
+    from rip_radar.engine import Engine
+    calls = []
+    e = Engine(browser_fetch=lambda url: (200, url, "store"), queue_fetch=lambda url: calls.append(url) or
+               (200, url, "<html><h1>You are in line to enter Pokémon Center</h1><p>Please keep this window open.</p></html>"))
+    e.notify.send = lambda *a, **k: True
+    t = next(x for x in e.targets() if x.get("track_duration"))
+    health, _ = e.check_keywords(t, {}, False)
+    assert calls == ["https://www.pokemoncenter.com/"] and "LIVE" in health

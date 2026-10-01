@@ -265,6 +265,16 @@ def bot_matches(text, triggers):
     return False
 
 
+def drop_mode_command(text):
+    """'drop mode on' / 'drop mode 5' (hours) / 'drop mode off' -> hours (0 = off), else None."""
+    import re
+    m = re.fullmatch(r"\s*drop\s*mode\s*(on|off|\d{1,2}(?:\.\d)?)?\s*(?:h|hr|hrs|hours)?\s*[.!]*\s*", (text or "").lower())
+    if not m:
+        return None
+    v = m.group(1) or "on"
+    return 0 if v == "off" else (3 if v == "on" else min(12.0, float(v)))
+
+
 def bot_channel_ok(channel_name, channel_id, wanted):
     """wanted: '' (any channel), a channel name ('app-status' / '#app-status') or a channel ID."""
     w = str(wanted or "").strip().lstrip("#").lower()
@@ -276,11 +286,12 @@ class ChatBot:
     Needs a bot token. Wording changes apply right away - it reads settings on every message."""
     TRIGGERS = {"still running", "running", "status", "you up", "alive"}
 
-    def __init__(self, status_text, get_settings=None, reply_text=None, zip_lookup=None):
+    def __init__(self, status_text, get_settings=None, reply_text=None, zip_lookup=None, drop_mode=None):
         self.status_text = status_text
         self.get_settings = get_settings or (lambda: {})
         self.reply_text = reply_text or (lambda: status_text())
         self.zip_lookup = zip_lookup          # (zip, miles) -> [message chunks]
+        self.drop_mode = drop_mode            # (hours) -> seconds left; "drop mode on" / "drop mode off" in Discord
         self._lookup_channel = {}             # webhook url -> channel id
         self.token = None
         self.state = "off"   # off | connecting | online | error: ...
@@ -355,6 +366,14 @@ class ChatBot:
                 # Discord sent the message without its text: Message Content Intent is off for this bot
                 bot.state = (f"online · heard a message in {where} but can't read it: turn on Message Content Intent "
                              "(discord.com/developers → your app → Bot) and save")
+                return
+            dm = drop_mode_command(msg.content)
+            if dm is not None and bot.drop_mode:
+                left = bot.drop_mode(dm)
+                await msg.channel.send(
+                    f"🚨 **Drop mode ON** for {round(left / 3600, 1)} h: Pokémon Center queue checked every 30 s, "
+                    f"Pokémon Center product scans paused. Type `drop mode off` to stop." if left else
+                    "Drop mode off. Queue back to every 60 s.")
                 return
             if not bot_channel_ok(getattr(msg.channel, "name", ""), getattr(msg.channel, "id", ""), s.get("bot_channel")):
                 bot.state = f"online · heard {where}, but it only answers in #{str(s.get('bot_channel')).lstrip('#')}"

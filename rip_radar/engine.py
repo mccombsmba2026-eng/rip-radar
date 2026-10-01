@@ -68,12 +68,14 @@ class Fetcher:
 
 
 class Engine:
-    def __init__(self, browser_fetch=None):
+    def __init__(self, browser_fetch=None, queue_fetch=None):
         paths.ensure_dirs()
         self.builtin = load_builtin()
         self.state = self._load_state()
         self.state.setdefault("alerts", [])
         self.fetcher = Fetcher(browser_fetch)
+        self.queue_fetcher = Fetcher(queue_fetch) if queue_fetch else None   # own browser for the PC queue
+        self._queue_thread = None
         self.notify = Notifier(settings_mod.load, on_alert=self._record_alert)
         self.board = StatusBoard(settings_mod.load, self.status_text, self.state)
         self.cal_board = LiveBoard(settings_mod.load, "calendar", self.state, "calendar_board_msg", every_minutes=5)
@@ -97,7 +99,8 @@ class Engine:
                                        color=STORE_COLORS.get("topps"))
         self.sync_at = 0
         self.startup_sync = False
-        self.bot = ChatBot(self.status_text, settings_mod.load, self.bot_reply, zip_lookup=self.zip_lookup)
+        self.bot = ChatBot(self.status_text, settings_mod.load, self.bot_reply, zip_lookup=self.zip_lookup,
+                           drop_mode=lambda hours: self.set_drop_mode(hours))
         self.started = datetime.now(CT)
         self.last_scan = None
         self.health = {}           # name -> {"health","code","at","type","url"}
@@ -120,6 +123,37 @@ class Engine:
         self.sync_at, self.startup_sync = time.time(), True
         self._thread = threading.Thread(target=self._loop, daemon=True, name="engine")
         self._thread.start()
+        if self.queue_fetcher:
+            self._queue_thread = threading.Thread(target=self._queue_loop, daemon=True, name="queue-watch")
+            self._queue_thread.start()
+
+    # ------------------------------------------------------------ Pokémon Center queue: its own loop + browser
+    def drop_mode(self):
+        """-> seconds left in drop mode (0 = off). Drop mode: queue checked every 30 s, Pokémon Center product
+        scanners paused so the queue check is the only Pokémon Center traffic (fewer bot walls)."""
+        return max(0, int(float(settings_mod.load().get("drop_mode_until") or 0) - time.time()))
+
+    def set_drop_mode(self, hours):
+        until = time.time() + float(hours) * 3600 if hours else 0
+        settings_mod.update({"drop_mode_until": until})
+        self._wake.set()
+        return self.drop_mode()
+
+    def _queue_loop(self):
+        """Checks the queue on its own timer in its own browser window, every 60 s (30 s in drop mode)."""
+        while not self._stop.is_set():
+            started = time.time()
+            if not settings_mod.load().get("paused"):
+                for t in [t for t in self.targets() if t.get("track_duration")]:
+                    try:
+                        self._run_target(t, {})
+                    except Exception as e:
+                        log.warning("queue watch: %s", e)
+            every = 30 if self.drop_mode() else 60
+            self._stop.wait(max(5, every - (time.time() - started)))
+
+    def _queue_has_own_loop(self):
+        return bool(self._queue_thread and self._queue_thread.is_alive())
 
     def stop(self):
         self._stop.set()
@@ -173,7 +207,9 @@ class Engine:
                 continue
             report = {}
             pass_started = time.time()
-            targets = self.targets()
+            targets = [t for t in self.targets()
+                       if not (t.get("track_duration") and self._queue_has_own_loop())
+                       and not (self.drop_mode() and t.get("store") == "pokemon")]
             pending = {t["name"] for t in targets}
             while not self._stop.is_set():
                 # one source at a time, most overdue first (relative to its interval), so fast sources like the
@@ -335,7 +371,10 @@ class Engine:
         bot wall, a plain request gets a second look (a queue redirect shows up in the address either way).
         A blocked check is 'unknown', never 'no queue'."""
         now = datetime.now(CT)
-        status, final, html = self._fetch(t, st)
+        if self.queue_fetcher:
+            status, final, html = self.queue_fetcher.get(t["url"], True)
+        else:
+            status, final, html = self._fetch(t, st)
         blocked = (looks_blocked(status, html) or status >= 400)
         active, detected = self._queue_signals(t, final, html)
         if blocked and not active:
@@ -463,8 +502,11 @@ class Engine:
                              links=[("Join the queue", t["url"])], ping=True)
         if not active:
             # one self-editing line so you can see it's watching; nothing new is posted until a queue goes up
+            left = self.drop_mode()
+            mode = (f"\n🚨 **DROP MODE** until {self._clock(now + timedelta(seconds=left))} CT · checking every 30 s"
+                    if left else "\n-# Checked every minute.")
             self._queue_watch(t, st, f"⚪ **No Pokémon Center queue right now** · last checked {self._clock(now)} CT"
-                                     f"\n-# Checked every minute. You'll get an @everyone the moment a queue goes up.",
+                                     f"{mode} You'll get an @everyone the moment a queue goes up.",
                               repost=was is True)
         else:
             self._queue_watch(t, st, f"🟢 **Queue is UP** since {self._clock(datetime.fromisoformat(st['live_since']))} CT "
@@ -1739,6 +1781,7 @@ class Engine:
                 "calendar": self.upcoming_events(days=30),
                 "queue_history": self.state.get("queue_history", [])[:10],
                 "sync_pending": bool(self.sync_at),
+                "drop_mode": self.drop_mode(),
                 "bot": self.bot.state,
             }
 
@@ -1749,8 +1792,16 @@ class Engine:
             return {"targets": {}, "events": {}, "alerts": []}
 
     def _save_state(self):
-        with self._lock:
-            data = json.dumps(self.state, indent=1)
+        data = None
+        for _ in range(5):            # the queue / card threads may be changing a dict this instant: retry
+            try:
+                with self._lock:
+                    data = json.dumps(self.state, indent=1)
+                break
+            except RuntimeError:
+                time.sleep(0.05)
+        if data is None:
+            return
         tmp = paths.STATE_FILE.with_suffix(".tmp")
         try:
             tmp.write_text(data, encoding="utf-8")
