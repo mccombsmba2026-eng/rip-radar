@@ -68,13 +68,14 @@ class Fetcher:
 
 
 class Engine:
-    def __init__(self, browser_fetch=None, queue_fetch=None):
+    def __init__(self, browser_fetch=None, queue_fetch=None, stock_json=None):
         paths.ensure_dirs()
         self.builtin = load_builtin()
         self.state = self._load_state()
         self.state.setdefault("alerts", [])
         self.fetcher = Fetcher(browser_fetch)
         self.queue_fetcher = Fetcher(queue_fetch) if queue_fetch else None   # own browser for the PC queue
+        self.stock_json = stock_json          # Target stock asked from inside a browser on target.com
         self._queue_thread = None
         self.notify = Notifier(settings_mod.load, on_alert=self._record_alert)
         self.board = StatusBoard(settings_mod.load, self.status_text, self.state)
@@ -242,7 +243,8 @@ class Engine:
                     ok = sum(1 for v in report.values() if v.startswith("ok"))
                     bad = [f"❌ **{k}**: {v}" for k, v in report.items() if not v.startswith("ok")]
                     self.notify.send("system", f"🟢 Rip Radar {__version__} is running · all channels synced",
-                                     desc=f"{ok}/{len(report)} sources working.\n" + "\n".join(bad)[:3500])
+                                     desc=f"{ok}/{len(report)} sources working.\n{self.stock_health()}\n"
+                                          + "\n".join(bad)[:3400])
                 else:
                     self.notify.send("normal", "🔄 All channels synced", desc="Each channel has a fresh board with "
                                      "its current state. They keep themselves up to date.", channel="status")
@@ -802,7 +804,8 @@ class Engine:
             if n >= per_run or (not event and now - rec.get("stock_at", 0) < every):
                 continue
             n += 1
-            info = target_stock(session, x["id"], zip_code, self.state.get("target_key", ""), miles=miles)
+            info = target_stock(session, x["id"], zip_code, self.state.get("target_key", ""), miles=miles,
+                                browser_json=self.stock_json)
             rec["stock_at"] = now
             if info:
                 rec["stock"], rec["stores"] = target_stock_text(info, zip_code)
@@ -839,6 +842,20 @@ class Engine:
                          channel=["instore", store], store=store, product=True, ping=is_etb_or_upc(x["name"]))
         self._restock_board_dirty = True
 
+    def stock_health(self):
+        """One real Target store-count request, so the startup message says whether Mat local / look-ups work."""
+        from .stock import LAST_ERROR
+        pid = next((pid for t in self.targets() if t.get("store") == "target"
+                    for pid in (self.state.get("targets", {}).get(t["name"], {}).get("items") or {})), None)
+        if not pid:
+            return "🏬 Target store counts: no Target products yet to test with"
+        zip_code = str(settings_mod.load().get("zip") or "77007")
+        info = target_stock(getattr(self.fetcher, "s", None) or requests.Session(), pid, zip_code,
+                            self.state.get("target_key", ""), stores_only=True, browser_json=self.stock_json)
+        if info and info["stores"]:
+            return f"🏬 Target store counts: ✅ working ({len(info['stores'])} stores near {zip_code})"
+        return f"🏬 Target store counts: ❌ not working · {LAST_ERROR.get('text') or 'no stores returned'}"[:300]
+
     def zip_lookup(self, zip_code, miles=30, max_products=60):
         """In store look up: every Target card product we know of, at every Target within `miles` of any ZIP.
         -> Discord messages (each under 2000 characters), stores nearest first, only products they have."""
@@ -856,7 +873,8 @@ class Engine:
         session = getattr(self.fetcher, "s", None) or requests.Session()
         stores, dist, answered = {}, {}, 0
         for pid in order:
-            info = target_stock(session, pid, zip_code, self.state.get("target_key", ""), miles=miles, stores_only=True)
+            info = target_stock(session, pid, zip_code, self.state.get("target_key", ""), miles=miles, stores_only=True,
+                                browser_json=self.stock_json)
             time.sleep(0.25)
             if not info:
                 continue
@@ -867,7 +885,9 @@ class Engine:
                 if q > 0:
                     stores[name].append((items[pid]["name"], q, items[pid]["url"]))
         if not answered:
-            return [f"Target didn't answer the stock look-up for {zip_code} right now. Try again in a few minutes."]
+            from .stock import LAST_ERROR
+            why = f"\n-# Reason: {LAST_ERROR['text'][:180]}" if LAST_ERROR.get("text") else ""
+            return [f"Target didn't answer the stock look-up for {zip_code} right now. Try again in a few minutes.{why}"]
         with_stock = {n: v for n, v in stores.items() if v}
         head = (f"🏬 **Target stores within {miles} mi of {zip_code}** · {len(stores)} stores · "
                 f"{len(with_stock)} have card product · {answered} products checked")

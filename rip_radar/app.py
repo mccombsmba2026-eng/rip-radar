@@ -73,6 +73,46 @@ class BrowserFetcher:
             return 200, current, html
 
 
+class TargetStockBrowser(BrowserFetcher):
+    """A hidden window parked on target.com that asks Target's stock service the way Target's own pages do
+    (same cookies, visitor id and current key). Used for store counts, Mat local and ZIP look-ups."""
+    JS = r"""(function(){
+      var h = document.documentElement.innerHTML;
+      var m = h.match(/apiKey\\?"\s*:\s*\\?"([0-9a-f]{40})/);
+      var key = m ? m[1] : "%(key)s";
+      var v = (document.cookie.match(/visitorId=([^;]+)/) || [])[1] || "";
+      var u = %(url)s.replace(/([?&])key=[0-9a-f]{40}/, "$1key=" + key) + (v ? "&visitor_id=" + v : "");
+      var x = new XMLHttpRequest(); x.open("GET", u, false);
+      try { x.send(); } catch (e) { return "0|" + e; }
+      return x.status + "|" + x.responseText;
+    })()"""
+
+    def __init__(self):
+        super().__init__(scroll=False, settle=3, challenge_wait=15)
+        self.parked_at = 0
+
+    def get_json(self, url):
+        import json as _json
+        from .stock import TARGET_KEY
+        if self.window is None:
+            raise RuntimeError("browser not ready")
+        with self._lock:
+            w = self.window
+            cur = ""
+            try:
+                cur = w.get_current_url() or ""
+            except Exception:
+                pass
+            if "target.com" not in cur or time.time() - self.parked_at > 3600:   # refresh cookies hourly
+                w.load_url("https://www.target.com/")
+                w.events.loaded.wait(45)
+                time.sleep(self.settle)
+                self.parked_at = time.time()
+            out = w.evaluate_js(self.JS % {"key": TARGET_KEY, "url": _json.dumps(url)}) or "0|no answer"
+        status, _, text = str(out).partition("|")
+        return int(status) if status.isdigit() else 0, text
+
+
 class Api:
     """Everything the UI can ask for. Only methods are exposed to the page."""
 
@@ -246,7 +286,9 @@ class App:
         self.fetcher = BrowserFetcher()
         # the Pokémon Center queue gets its OWN hidden browser: it never waits behind a slow store page
         self.queue_fetcher = BrowserFetcher(scroll=False, settle=2, challenge_wait=12)
-        self.engine = Engine(browser_fetch=self.fetcher, queue_fetch=self.queue_fetcher)
+        self.stock_browser = TargetStockBrowser()
+        self.engine = Engine(browser_fetch=self.fetcher, queue_fetch=self.queue_fetcher,
+                             stock_json=self.stock_browser.get_json)
         base_alert = self.engine.notify.on_alert
 
         def on_alert(a):
@@ -267,6 +309,7 @@ class App:
         # second, hidden window = the scanner's browser (no js_api: it only visits outside sites)
         self.fetcher.window = webview.create_window("Rip Radar scanner", url="about:blank", hidden=True)
         self.queue_fetcher.window = webview.create_window("Rip Radar queue watch", url="about:blank", hidden=True)
+        self.stock_browser.window = webview.create_window("Rip Radar Target stock", url="about:blank", hidden=True)
 
     # --- window / tray
     def _on_closing(self):

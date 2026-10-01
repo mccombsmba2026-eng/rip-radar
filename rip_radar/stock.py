@@ -1,6 +1,7 @@
 """How many are left. Target publishes exact counts (online and per store) through the same stock service its
 product pages use; other stores only say "Only N left" when it's low, or a number in their page data.
 Read-only lookups, a handful per scan - nothing is added to a cart."""
+import json
 import logging
 import re
 
@@ -78,15 +79,37 @@ def parse_target_fulfillment(*payloads):
     return out
 
 
-def target_stock(session, tcin, zip_code="", key="", timeout=15, miles=30, stores_only=False):
-    """Exact counts for one Target item: shipping + nearby stores. None if Target didn't answer."""
+LAST_ERROR = {"text": ""}           # why the last Target stock request failed (shown in look-up replies / Sources)
+
+
+def target_stock(session, tcin, zip_code="", key="", timeout=15, miles=30, stores_only=False, browser_json=None):
+    """Exact counts for one Target item: shipping + nearby stores. None if Target didn't answer.
+    browser_json(url) -> (status, text): asks from inside a hidden browser on target.com - with Target's own cookies,
+    visitor id and current key, exactly like Target's product page does. Plain HTTP is only the fallback."""
     key = key or TARGET_KEY
     got = []
     tries = [] if stores_only else [(f"{REDSKY}/product_fulfillment_v1",
-                                     {"key": key, "tcin": tcin, "zip": zip_code, "channel": "WEB", "is_bot": "false"})]
+                                     {"key": key, "tcin": tcin, "zip": zip_code, "channel": "WEB", "is_bot": "false",
+                                      "page": f"/p/A-{tcin}"})]
     if zip_code:
         tries.append((f"{REDSKY}/fiats_v1", {"key": key, "tcin": tcin, "nearby": zip_code, "radius": miles, "limit": 30,
-                                             "include_only_available_stores": "false", "requested_quantity": 1}))
+                                             "include_only_available_stores": "false", "requested_quantity": 1,
+                                             "channel": "WEB", "page": f"/p/A-{tcin}"}))
+    if browser_json:
+        from urllib.parse import urlencode
+        for url, params in tries:
+            try:
+                status, text = browser_json(url + "?" + urlencode(params))
+                if status and status < 400 and text.strip().startswith("{"):
+                    got.append(json.loads(text))
+                else:
+                    LAST_ERROR["text"] = f"{url.rsplit('/', 1)[-1]}: HTTP {status} {text[:120]!r}"
+                    log.info("Target stock (browser) %s", LAST_ERROR["text"])
+            except Exception as e:
+                LAST_ERROR["text"] = f"browser: {type(e).__name__}: {e}"[:200]
+                log.info("Target stock (browser) %s: %s", tcin, e)
+        if got:
+            return parse_target_fulfillment(*got)
     for url, params in tries:
         try:
             r = session.get(url, params=params, timeout=timeout,
@@ -95,8 +118,10 @@ def target_stock(session, tcin, zip_code="", key="", timeout=15, miles=30, store
             if r.status_code < 400:
                 got.append(r.json())
             else:
-                log.info("Target stock %s: HTTP %s", url.rsplit("/", 1)[-1], r.status_code)
+                LAST_ERROR["text"] = f"{url.rsplit('/', 1)[-1]}: HTTP {r.status_code} {r.text[:120]!r}"
+                log.info("Target stock %s", LAST_ERROR["text"])
         except Exception as e:          # network / not JSON
+            LAST_ERROR["text"] = f"{type(e).__name__}: {e}"[:200]
             log.info("Target stock %s: %s", tcin, e)
     return parse_target_fulfillment(*got) if got else None
 

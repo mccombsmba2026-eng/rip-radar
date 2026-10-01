@@ -98,6 +98,10 @@ captchas, and never automates purchases. Keep it that way.
   `settings["zip"]` (77007) via fiats_v1. `_store_restocks`: a store going 0 -> N (or +5) = restock -> post to
   `instore` channel (else #target), @everyone for ETB/UPC; logged in `state["restock_log"]`; #in-store board
   (`_render_restocks`) shows each store's usual restock days/time learned from the log. First look = baseline.
+- Target stock requests (1.0.32) go through `app.TargetStockBrowser`: a hidden window parked on target.com runs a
+  synchronous XHR to redsky with the page's own apiKey + visitorId cookie (plain Python requests were turned away).
+  `stock.target_stock(browser_json=...)`; `stock.LAST_ERROR` says why it failed; the startup message reports
+  "🏬 Target store counts: ✅/❌" (`engine.stock_health`).
 - Channel names in the app: `instore` = "Mat local" (the restock tracker above), `lookup` = "In store look up".
   Look-up (1.0.26): the Discord BOT watches the channel its `lookup` webhook posts to (`ChatBot.lookup_channel_id`
   GETs the webhook for channel_id). A message that is a ZIP ("33175" or "33175 15" for miles) -> `engine.zip_lookup`:
