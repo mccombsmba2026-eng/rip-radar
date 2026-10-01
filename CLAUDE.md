@@ -120,7 +120,8 @@ captchas, and never automates purchases. Keep it that way.
 - Queue has its OWN hidden browser window ("Rip Radar queue watch", `BrowserFetcher(scroll=False, settle=2,
   challenge_wait=12)`) and its own thread (`Engine._queue_loop`): never waits behind store pages; the main loop skips
   `track_duration` sources while that thread runs. DROP MODE (`settings["drop_mode_until"]`; app top-bar button = 3 h;
-  Discord "drop mode on" / "drop mode 5" / "drop mode off" from any channel the bot sees): queue every 30 s and the
+  Discord "drop mode on" / "drop mode 5" / "drop mode off" ONLY in the urgent-only channel = the channel of
+  `discord_webhook_urgent`, or a channel named *urgent* if that webhook isn't set; ignored elsewhere): queue every 30 s and the
   Pokémon Center product scanners are skipped (less PC traffic = fewer bot walls). The ONLY exception to the 60 s rule.
 - Bot-check watch (1.0.29): `parsing.wall_kind` names the wall (Imperva, hCaptcha, reCAPTCHA, PerimeterX, Cloudflare,
   DataDome, Akamai...). `_watch_bot_check` posts to the queue channel (no @everyone) when Pokémon Center's bot check

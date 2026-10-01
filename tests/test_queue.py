@@ -101,3 +101,16 @@ def test_bot_check_heads_up_on_and_off(engine):
     engine._watch_bot_check(t, st, "", now)
     engine._watch_bot_check(t, st, "", now)
     assert sent[-1].startswith("🛡️ Pokémon Center bot check is off again")
+
+
+def test_drop_mode_only_from_urgent_channel(monkeypatch):
+    from rip_radar import notify
+    bot = notify.ChatBot(lambda: "", lambda: {"discord_webhook_urgent": "https://discord.com/api/webhooks/9/u"})
+
+    class R:
+        def json(self):
+            return {"channel_id": "555"}
+    monkeypatch.setattr(notify.requests, "get", lambda url, timeout=None: R())
+    assert bot.drop_mode_allowed("urgent-only", 555) and not bot.drop_mode_allowed("alerts", 777)
+    bot2 = notify.ChatBot(lambda: "", lambda: {})
+    assert bot2.drop_mode_allowed("urgent-only", 1) and not bot2.drop_mode_allowed("app-status", 2)

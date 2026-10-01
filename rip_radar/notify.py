@@ -299,8 +299,18 @@ class ChatBot:
 
     def lookup_channel_id(self):
         """The 'In store look up' channel = the channel its webhook posts to (the webhook knows its channel)."""
-        hook = (self.get_settings().get("webhooks") or {}).get("lookup") or ""
-        if not hook.startswith("http"):
+        return self.channel_id_of((self.get_settings().get("webhooks") or {}).get("lookup") or "")
+
+    def drop_mode_allowed(self, channel_name, channel_id):
+        """Drop mode only from the urgent-only channel: the channel of the urgent webhook (Settings), or a channel
+        whose name contains 'urgent'."""
+        urgent_id = self.channel_id_of(self.get_settings().get("discord_webhook_urgent") or "")
+        if urgent_id:
+            return str(channel_id) == urgent_id
+        return "urgent" in str(channel_name or "").lower()
+
+    def channel_id_of(self, hook):
+        if not str(hook).startswith("http"):
             return None
         if hook not in self._lookup_channel:
             try:
@@ -340,6 +350,8 @@ class ChatBot:
                 return
             s = bot.get_settings()
             where = "#" + str(getattr(msg.channel, "name", "") or "DM")
+            import asyncio as _aio0
+            loop_ = _aio0.get_running_loop()
             # In store look up: someone types a ZIP (optionally "33175 15" for 15 miles)
             if bot.zip_lookup and msg.content:
                 import asyncio as _aio
@@ -369,6 +381,10 @@ class ChatBot:
                 return
             dm = drop_mode_command(msg.content)
             if dm is not None and bot.drop_mode:
+                allowed = await loop_.run_in_executor(None, bot.drop_mode_allowed, getattr(msg.channel, "name", ""),
+                                                      getattr(msg.channel, "id", ""))
+                if not allowed:
+                    return                      # drop mode only from #urgent-only
                 left = bot.drop_mode(dm)
                 await msg.channel.send(
                     f"🚨 **Drop mode ON** for {round(left / 3600, 1)} h: Pokémon Center queue checked every 30 s, "
