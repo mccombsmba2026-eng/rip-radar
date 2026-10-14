@@ -152,12 +152,14 @@ def test_tcg_filter():
            "/product/10-10372-109/pokemon-tcg-mega-evolution-pitch-black-3-booster-blister",
            "Pokémon TCG: 30th Celebration Poster Collection"]
     yes += ["Pokémon TCG: Pikachu Playmat", "Pokémon TCG: Eevee Binder",          # accessories: kept (M's call)
-            "Pokemon Charizard ex 199/165 Special Illustration Rare Holo Card"]    # single cards: kept
+            "Pokémon Collector's Chest + Pokeball + Premier Ball + 3 Eevee Promo Cards"]   # sealed with promos: kept
     no = ["Pikachu Pokémon Center 30th Celebration Hat", "Pokémon Center 30th Celebration Lanyard",
           "Pikachu Sitting Cuties Plush", "Eevee Pin", "Umbreon Ceramic Mug", "Pokémon Center 30th Celebration Hoodie",
           "Gengar Figure", "Pokémon TCG: Mega Lucario ex Battle Deck",                   # deck, no packs: cut
           "Pokemon Charizard ex 199/165 PSA 10 Gem Mint", "Pokémon TCG Umbreon VMAX BGS 9.5 Graded Card",
           "Lot of 50 Pokemon Cards Holo Guaranteed", "100 Pokemon Cards Random Bulk", "Pokemon Mystery Booster Repack Box"]
+    no += ["Pokemon Charizard ex 199/165 Special Illustration Rare Holo Card",      # single cards: cut (M, 10/14)
+           "Pokémon TCG Umbreon VMAX Alternate Art Secret Rare Single Card"]
     assert [x for x in yes if not is_tcg_product(x)] == []
     assert [x for x in no if is_tcg_product(x)] == []
 
@@ -168,6 +170,9 @@ def test_sports_graded_and_lots_cut():
     assert is_sports_card_product("2026 Topps NFL Flagship Football Trading Card Mega Box")
     assert not is_sports_card_product("2024 Topps Chrome Shohei Ohtani #1 PSA 10 Gem Mint Baseball Card")
     assert not is_sports_card_product("Lot of 100 Football Trading Cards Topps Panini Random")
+    assert not is_sports_card_product("2024 Topps Chrome Shohei Ohtani #1 Baseball Trading Card")      # single
+    assert not is_sports_card_product("2025 Topps NOW Basketball Card Cooper Flagg Rookie Card")        # single
+    assert is_sports_card_product("2025-26 Topps Chrome Basketball Hobby Box")
 
 
 def test_stock_hints():

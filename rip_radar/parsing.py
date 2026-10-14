@@ -431,9 +431,10 @@ MERCH = ("hat", "cap", "beanie", "lanyard", "plush", "pin", "shirt", "tee", "hoo
          "clock", "tote", "lunch box", "funko", "pop!", "video game", "nintendo switch", "switch 2", "game boy",
          "costume", "mask", "candy", "cereal", "snack", "toy", "squishy", "trainer's toolkit pins")
 # a merch word only loses to these - "Pin Collection" or "Booster Bag" are still card products
-SEALED_RESCUE = ("elite trainer box", "booster", "pack", "bundle", "blister", "tin", "display", "collection",
+SEALED_RESCUE = ("elite trainer box", "booster", "pack", "bundle", "blister", "tin", "display", "collection", "chest",
                  "build & battle", "build and battle", "ultra premium", "ultra-premium")
 TCG_SEALED = ("elite trainer box", "booster", "collection", "tin", "bundle", "deck", "pack", "box", "display",
+              "chest", "collector's chest", "premium box", "gift set", "kit",
               "trading card")      # Ace: "Pokemon Chaos Rising Trading Cards" (a pack)
 
 
@@ -447,9 +448,28 @@ RE_SINGLE = re.compile(r"\b\d{1,3}/\d{2,3}\b|\bholo\b|full\s+art|\bpromo\b|illus
                        r"\bsingle\s+card\b|\b(?:ex|gx|v|vmax|vstar)\s+#?\d{1,3}\b", re.I)
 
 
-def is_excluded_listing(text):
-    """Graded slabs (PSA 10...), card lots / repacks / mystery boxes, and booster-less battle / theme decks."""
+# single cards (pulled from packs and relisted, almost always by marketplace resellers) - never wanted
+RE_SINGLE_CARD = re.compile(
+    r"\b\d{1,3}/\d{2,3}\b|\bsingle\s+card\b|\bholo(?:foil)?\s+rare\b|full\s+art|illustration\s+rare|secret\s+rare|"
+    r"\bhyper\s+rare\b|\bpromo\s+card\b(?!s)|\btopps\s+now\b|\brookie\s+card\b|\b(?:rc|auto|autograph|patch|refractor|"
+    r"parallel|\d+/\d+\s*serial)\b|#\s?\d{1,4}\b", re.I)
+RE_SEALED_WORDS = re.compile(r"\b(?:pack|packs|box|boxes|bundle|blister|tin|collection|case|display|elite trainer|etb|"
+                             r"upc|hanger|blaster|mega|hobby|jumbo|cello|kit|chest|binder collection)\b", re.I)
+
+
+def is_single_card(text):
+    """'Charizard ex 199/165 Special Illustration Rare', 'Topps Chrome Ohtani #1 RC', 'Topps NOW Card #593' -
+    one card on its own. A sealed product that merely includes promo cards ('... + 3 promo cards') doesn't count."""
     t = text or ""
+    return bool(RE_SINGLE_CARD.search(t)) and not RE_SEALED_WORDS.search(t)
+
+
+def is_excluded_listing(text):
+    """Graded slabs (PSA 10...), card lots / repacks / mystery boxes, booster-less battle / theme decks, and
+    single cards."""
+    t = text or ""
+    if is_single_card(t):
+        return True
     if RE_DECK_ONLY.search(t) and not re.search(r"booster|pack|bundle|collection|box", RE_DECK_ONLY.sub("", t), re.I):
         return True
     return bool(RE_GRADED.search(t) or RE_LOT.search(t))
@@ -472,8 +492,6 @@ def is_tcg_product(text):
         return poke                        # Pokémon sleeves / binders / playmats: kept (M's call)
     if strong:
         return True
-    if poke and RE_SINGLE.search(text or ""):
-        return True                        # single cards: kept
     if has(MERCH):
         return False
     return has(TCG_SEALED) and ("pokémon" in t or "pokemon" in t)

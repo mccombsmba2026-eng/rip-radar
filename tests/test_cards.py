@@ -690,7 +690,7 @@ def test_general_stores_are_cards_only(engine):
     from rip_radar.parsing import is_card_only
     assert not is_card_only("Ultra Pro Pokemon TCG Deck Protector Sleeves 65-Count", "pokemon")
     assert not is_card_only("Pokémon TCG: Eevee Binder", "pokemon")
-    assert is_card_only("Pokemon Charizard ex 199/165 Special Illustration Rare", "pokemon")
+    assert not is_card_only("Pokemon Charizard ex 199/165 Special Illustration Rare", "pokemon")   # single
     assert is_card_only("Pokémon TCG: Phantasmal Flames Elite Trainer Box", "pokemon")
     assert is_card_only("2025 Topps Chrome Football Hobby Box", "sports")
     stores = {}
