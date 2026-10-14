@@ -15,7 +15,7 @@ targets:
     channel: [topps_calendar, topps]
     type: topps_calendar
     url: https://www.topps.com/release-calendar
-    interval_seconds: 120
+    interval_seconds: 90
     remind_minutes_before: 15
 
   # Every product topps.com loads (its product sitemaps list them the moment they're added): sealed formats of
@@ -28,7 +28,7 @@ targets:
     interval_seconds: 90
     sitemaps: 2
     max_pages_per_run: 4
-    hot_seconds: 120
+    hot_seconds: 60
     idle_minutes: 30
 
   # Opens each calendar product's Topps page to read the exact announced time ("Available Sep 30 at 12pm ET",
@@ -194,7 +194,7 @@ targets:
     type: retail_search
     store: amazon
     products: sports
-    url: https://www.amazon.com/s?k=sports+trading+cards+box&rh=p_6%3AATVPDKIKX0DER&s=date-desc-rank
+    url: https://www.amazon.com/s?k=topps+trading+cards&rh=p_6%3AATVPDKIKX0DER&s=date-desc-rank
     browser: true
     channel: amazon
     live_if_price: true
@@ -284,7 +284,7 @@ targets:
     type: retail_search
     store: barnes
     products: pokemon
-    url: https://www.barnesandnoble.com/b/collectible-card-games/pokemon-collectable-card-game/_/N-1z141wbZ2tb0
+    url: https://www.barnesandnoble.com/b/pokemon/_/N-2jle
     browser: true
     channel: barnes
     verify_pages: 1
@@ -307,7 +307,7 @@ targets:
     url: https://www.gamestop.com/search/?q=pokemon%20trading%20card%20game
     browser: true
     channel: gamestop
-    verify_pages: 1
+    verify_pages: 3
     interval_seconds: 300
 
   - name: GameStop · sports cards
@@ -317,14 +317,14 @@ targets:
     url: https://www.gamestop.com/search/?q=sports%20trading%20cards
     browser: true
     channel: gamestop
-    verify_pages: 1
+    verify_pages: 3
     interval_seconds: 420
 
   - name: Hot Topic · trading cards
     type: retail_search
     store: hottopic
     products: cards
-    url: https://www.hottopic.com/toys-collectibles/games/trading-cards/
+    url: https://www.hottopic.com/search?q=trading%20cards
     browser: true
     channel: hottopic
     verify_pages: 1
@@ -334,7 +334,7 @@ targets:
     type: retail_search
     store: hottopic
     products: pokemon
-    url: https://www.hottopic.com/search?q=pokemon%20trading%20card%20game
+    url: https://www.hottopic.com/search?q=pokemon%20tcg
     browser: true
     channel: hottopic
     verify_pages: 1

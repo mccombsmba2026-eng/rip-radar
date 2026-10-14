@@ -276,6 +276,9 @@ details summary{cursor:pointer;font-weight:600}
         <textarea id="sFocusSets" rows="6"></textarea></label>
       <label>@everyone products <small>one per line · any product whose name has these words (in order) gets @everyone. Any 2025-26 Topps / Bowman basketball product is always included (Cooper Flagg rookie year).</small>
         <textarea id="sEveryone" rows="7"></textarea></label>
+      <div class="row"><button class="btn" id="sFocusCheck">Check focus lists</button>
+        <span class="hint">Shows how many products each line matches right now. ⚠️ 0 = check the spelling, or it just isn't in stores at the moment.</span></div>
+      <pre id="sFocusOut" class="hint" style="white-space:pre-wrap;max-height:320px;overflow:auto" hidden></pre>
       <label class="switch"><input type="checkbox" id="sToppsAll"> Topps: every product line (Disney, Star Wars, F1, soccer…), not just these sports</label>
 
       <h2>This computer</h2>
@@ -559,7 +562,7 @@ const NAME_HINTS = {drawings:["drawing","drawings","draw","raffle","raffles","lo
   target:["target"],dicks:["dick","dicks","dsg"],amazon:["amazon"],bestbuy:["best buy","bestbuy","bby"],
   costco:["costco"],samsclub:["sam's club","sams club","sams","sam's","samsclub"],
   pharmacy:["cvs","walgreens","cvs walgreens","cvs & walgreens","pharmacy","drugstore"],ace:["ace","ace hardware"],
-  barnes:["barnes","barnes & noble","barnes and noble","b&n","bn","barnes noble"],gamestop:["gamestop","game stop","gme"],hottopic:["hot topic","hottopic","ht"],
+  barnes:["barnes","barnes & noble","barnes and noble","b&n","bn","barnes noble"],gamestop:["gamestop","game stop","gme"],hottopic:["hot topic","hottopic","ht"],watch:["watch","watch by name","watchlist","watch list"],
   lookup:["in store look up","in-store look up","in store lookup","instore lookup","store lookup","look up","lookup","zip lookup"],
   instore:["mat local","mat-local","local","in-store","in store","instore","restock","restocks","in-store restocks"],main:["main","general","alerts","all","ping"]};
 $("#sBulkFill").onclick = () => {
@@ -573,6 +576,11 @@ $("#sBulkFill").onclick = () => {
     if(input){ input.value = m[0]; filled.push(key==="main" ? "Main" : S.channels[key]); }
   }
   msg($("#sBulkMsg"), filled.length ? `Filled: ${filled.join(", ")}${missed?` · ${missed} line(s) had no store name I recognised`:""}. Now click "Save and test every channel".` : "I couldn't match any lines. Put the store name before each link.", filled.length?"good":"bad");
+};
+$("#sFocusCheck").onclick = async () => {
+  await saveSettings(true);
+  const r = await api.focus_report();
+  $("#sFocusOut").hidden = false; $("#sFocusOut").textContent = r.text;
 };
 $("#qTest").onclick = async () => {
   msg($("#qTestMsg"),"Sending…");

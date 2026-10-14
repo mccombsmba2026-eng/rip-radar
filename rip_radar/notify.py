@@ -24,6 +24,7 @@ CHANNELS = {"topps": "Topps products (formats, in stock)", "topps_calendar": "To
             "barnes": "Barnes & Noble", "gamestop": "GameStop", "hottopic": "Hot Topic",
             "instore": "Mat local (in-store restocks near your ZIP)",
             "lookup": "In store look up (type a ZIP)",
+            "watch": "Watch by name (@everyone · type watch / test / watching)",
             "drawings": "Drawings & raffles (all stores)", "calendar": "Drop calendar (all announced dates)",
             "status": "App status"}
 STORE_NAMES = {"topps": "Topps", "pokemon": "Pokémon Center", "walmart": "Walmart", "target": "Target",
@@ -287,12 +288,13 @@ class ChatBot:
     Needs a bot token. Wording changes apply right away - it reads settings on every message."""
     TRIGGERS = {"still running", "running", "status", "you up", "alive"}
 
-    def __init__(self, status_text, get_settings=None, reply_text=None, zip_lookup=None, drop_mode=None):
+    def __init__(self, status_text, get_settings=None, reply_text=None, zip_lookup=None, drop_mode=None, watch=None):
         self.status_text = status_text
         self.get_settings = get_settings or (lambda: {})
         self.reply_text = reply_text or (lambda: status_text())
         self.zip_lookup = zip_lookup          # (zip, miles) -> [message chunks]
         self.drop_mode = drop_mode            # (hours) -> seconds left; "drop mode on" / "drop mode off" in Discord
+        self.watch = watch                    # (text) -> [replies]: commands typed in the #watch channel
         self._lookup_channel = {}             # webhook url -> channel id
         self.token = None
         self.state = "off"   # off | connecting | online | error: ...
@@ -380,6 +382,14 @@ class ChatBot:
                 bot.state = (f"online · heard a message in {where} but can't read it: turn on Message Content Intent "
                              "(discord.com/developers → your app → Bot) and save")
                 return
+            if bot.watch and msg.content:
+                watch_id = await loop_.run_in_executor(None, bot.channel_id_of,
+                                                       (s.get("webhooks") or {}).get("watch") or "")
+                if watch_id and str(getattr(msg.channel, "id", "")) == watch_id:
+                    for c in await loop_.run_in_executor(None, bot.watch, msg.content):
+                        await msg.channel.send(c[:1990])
+                    bot.state = f"online · last #watch command: {msg.content[:40]}"
+                    return
             dm = drop_mode_command(msg.content)
             if dm is not None and bot.drop_mode:
                 allowed = await loop_.run_in_executor(None, bot.drop_mode_allowed, getattr(msg.channel, "name", ""),

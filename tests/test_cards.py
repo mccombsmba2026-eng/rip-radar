@@ -606,3 +606,81 @@ def test_live_drop_value_is_edited_into_the_post(engine):
                                                           "q": "Pokémon Prismatic Evolutions Booster Bundle"})
     (pid, bump, resale), = posted
     assert pid == "55500001" and not bump and resale.startswith("[$58 median of 9 sold]")   # edited, not re-pinged
+
+
+def _stock_catalog(engine):
+    engine.state.setdefault("targets", {})["Target · Pokémon cards"] = {"items": {
+        "1": {"name": "Pokémon TCG: Scarlet & Violet 151 Elite Trainer Box", "url": "https://t/1", "seen": time.time(),
+              "live": True, "price": "$49.99", "status": "In stock"},
+        "2": {"name": "Pokémon TCG: Prismatic Evolutions Booster Bundle", "url": "https://t/2", "seen": time.time(),
+              "live": False, "price": "$29.99", "status": "Out of stock"},
+        "3": {"name": "Pokemon 151 ETB Lot of 2", "url": "https://t/3", "seen": time.time(), "live": True,
+              "price": "$140", "status": "In stock"}}}
+
+
+def test_watch_channel_commands(engine):
+    _stock_catalog(engine)
+    (r,) = engine.handle_watch_command("test 151 etb -lot")
+    assert "would catch **1** (1 in stock)" in r and "151 Elite Trainer Box" in r and "Lot of 2" not in r
+    (r,) = engine.handle_watch_command("watch prismatic bundle")
+    assert r.startswith("✅ **Watching: prismatic bundle**") and "1 match (0 in stock)" in r
+    assert settings.load()["watch_terms"] == ["prismatic bundle"]
+    (r,) = engine.handle_watch_command("watching")
+    assert "`1` prismatic bundle" in r
+    (r,) = engine.handle_watch_command("unwatch 1")
+    assert "Stopped watching: prismatic bundle" in r and settings.load()["watch_terms"] == []
+    assert engine.handle_watch_command("hello")[0].startswith("**Watch by name**")
+
+
+def test_watch_alert_pings_once_in_watch_channel(engine):
+    sent = []
+    engine.notify.send = lambda level, title, url="", fields=None, desc="", **kw: sent.append((title, kw))
+    settings.update({"watch_terms": ["prismatic bundle", "151 etb @walmart"]})
+    x = {"id": "2", "name": "Pokémon TCG: Prismatic Evolutions Booster Bundle", "url": "https://t/2",
+         "price": "$29.99", "image": "https://i/2.jpg", "status": "In stock"}
+    engine._watch_alerts("target", x, {}, "🟢 BACK IN STOCK at Target")
+    engine._watch_alerts("target", x, {}, "🟢 BACK IN STOCK at Target")        # same news again: no repeat
+    (title, kw), = sent
+    assert title.startswith("👀 🟢 BACK IN STOCK at Target") and kw["channel"] == "watch" and kw["ping"] is True
+    engine._watch_alerts("target", {**x, "id": "1", "name": "Pokemon 151 Elite Trainer Box"}, {}, "🟢 NEW & IN STOCK at Target")
+    assert len(sent) == 1                                                       # @walmart only
+
+
+def test_focus_report_flags_sets_with_no_matches(engine):
+    _stock_catalog(engine)
+    settings.update({"focus_sets": ["151", "Evolving Skies"], "everyone_products": ["Cooper Flagg"]})
+    text = "".join(engine.focus_report())
+    assert "✅ **151** · 2" in text and "⚠️ **Evolving Skies** · 0" in text and "⚠️ **Cooper Flagg** · 0" in text
+
+
+def test_target_tripwire_rescans_target_when_a_hot_item_flips(engine, monkeypatch):
+    import rip_radar.engine as eng_mod
+    engine.stock_json = lambda url: (200, "{}")
+    engine.state.setdefault("targets", {})["Target · Pokémon cards"] = {"items": {
+        "11112222": {"name": "Pokémon TCG: Prismatic Evolutions Elite Trainer Box", "url": "u", "seen": time.time(),
+                     "live": False},
+        "33334444": {"name": "Pokémon TCG: Surging Sparks Booster Pack", "url": "u", "seen": time.time(), "live": False}}}
+    asked = []
+
+    def fake(session, tcin, zip_code="", key="", **kw):
+        asked.append(tcin)
+        return {"online": 12, "online_status": "IN_STOCK", "stores": [], "sold_out": False}
+    monkeypatch.setattr(eng_mod, "target_stock", fake)
+    engine.next_due = {"Target · Pokémon cards": time.time() + 999}
+    assert engine.target_tripwire_tick() == 1
+    assert asked == ["11112222"]                         # only the hot item (ETB), never the plain booster pack
+    assert engine.next_due["Target · Pokémon cards"] == 0
+    assert engine.target_tripwire_tick() == 0            # checked again only after ~90 s
+
+
+def test_site_budget_and_quiet_hours(engine):
+    t = {"name": "Walmart · Pokémon cards", "type": "retail_search", "url": "https://www.walmart.com/search?q=x"}
+    for _ in range(150):
+        engine._note_request("https://www.walmart.com/ip/123")
+    assert engine._over_budget(t) is True
+    assert engine._over_budget({**t, "type": "walmart_drawings"}) is False        # drawings never wait
+    assert engine._over_budget({**t, "url": "https://www.target.com/s?x"}) is False
+    settings.update({"quiet_hours": [0, 24]})
+    assert engine._slow_factor() == 2
+    settings.update({"quiet_hours": []})
+    assert engine._slow_factor() == 1

@@ -526,7 +526,8 @@ def is_card_product(text):
 RETAIL_STORES = {
     "target": {"label": "Target", "id": r"/A-(\d{6,10})"},
     "walmart": {"label": "Walmart", "id": r"/ip/(?:[^/?#]+/)?(\d{5,})"},
-    "bestbuy": {"label": "Best Buy", "id": r"/sku/(\d{6,8})|/(\d{7})\.p|[?&]skuId=(\d{6,8})"},
+    "bestbuy": {"label": "Best Buy", "id": r"/product/[^/?#]+/([A-Z0-9]{8,12})(?:[/?#]|$)|/sku/(\d{6,8})|/(\d{7})\.p|"
+                                          r"[?&]skuId=(\d{6,8})"},
     "amazon": {"label": "Amazon", "id": r"/(?:dp|gp/product)/([A-Z0-9]{10})"},
     "dicks": {"label": "Dick's", "id": r"/p/([a-z0-9-]*[a-z0-9]+)(?:/|$)"},
     "pokemon": {"label": "Pokémon Center", "id": r"/product/([0-9a-z-]+(?:/[0-9a-z-]+)?)"},
@@ -534,7 +535,7 @@ RETAIL_STORES = {
     "samsclub": {"label": "Sam's Club", "id": r"/(?:ip|p)/(?:[^/?#]+/)?((?:prod)?\d{5,})"},
     "cvs": {"label": "CVS", "id": r"prodid-(\d{5,})"},
     "walgreens": {"label": "Walgreens", "id": r"ID=((?:prod|\d)\d{4,})-product"},
-    "ace": {"label": "Ace Hardware", "id": r"/departments/[^?#]*?/(\d{6,8})(?:[/?#]|$)"},
+    "ace": {"label": "Ace Hardware", "id": r"/p/(\d{6,8})(?:[/?#]|$)|/departments/[^?#]*?/(\d{6,8})(?:[/?#]|$)"},
     "barnes": {"label": "Barnes & Noble", "id": r"/w/(?:[^/?#]+/)?(\d{6,})"},
     "gamestop": {"label": "GameStop", "id": r"/products/[^/?#]+/(\d{6,})\.html"},
     "hottopic": {"label": "Hot Topic", "id": r"/product/[^/?#]+/(\d{6,})\.html"},
@@ -579,7 +580,7 @@ def cart_links(store, pid):
                 f"https://affil.walmart.com/cart/buynow?items={pid}")
     if store == "amazon":
         return f"https://www.amazon.com/gp/aws/cart/add.html?ASIN.1={pid}&Quantity.1=1", ""
-    if store == "bestbuy":
+    if store == "bestbuy" and str(pid).isdigit():        # only Best Buy's numeric SKU works in a cart link
         return f"https://api.bestbuy.com/click/-/{pid}/cart", ""
     return "", ""
 
@@ -684,7 +685,11 @@ def parse_retail_tiles(html, base_url, store, live_if_price=False):
         if not name:
             continue
         status, live = tile_status(text, live_if_price)
-        add, buy = cart_links(store, pid)
+        cart_id = pid
+        if store == "bestbuy":                 # id = Best Buy's product code; the cart link needs its numeric SKU
+            sm = re.search(r"/sku/(\d{6,8})|[?&]skuId=(\d{6,8})", f["href"])
+            cart_id = next((g for g in sm.groups() if g), pid) if sm else pid
+        add, buy = cart_links(store, cart_id)
         stock, limit = stock_hint(text)
         tiles.append({"id": pid, "name": name[:200], "url": urljoin(base_url, f["href"].split("?")[0].split("#")[0]),
                       "image": image_in(node, base_url), "price": price_in(text),
@@ -692,6 +697,10 @@ def parse_retail_tiles(html, base_url, store, live_if_price=False):
                       "stock": stock, "limit": limit})
     if store in ("walmart", "samsclub"):          # same platform: product data embedded in the page
         tiles = _merge_walmart_json(tiles, html, base_url, live_if_price, store)
+    elif store == "bestbuy":
+        tiles = _merge_data_items(tiles, bestbuy_page_items(html))
+    elif store == "ace":
+        tiles = _merge_data_items(tiles, ace_page_items(html))
     if not tiles:
         tiles = title_tiles(soup, base_url, store, live_if_price)
     return tiles
@@ -709,7 +718,9 @@ RE_RATING = re.compile(r"\d(?:\.\d)?\s*out of\s*5\s*stars?.*?(?:reviews?|ratings
                        r"\(\d[\d,]*\)\s*$|\brated\s+\d(?:\.\d)?\s+out of\s+5\b.*$", re.I)
 NAME_NOISE = [re.compile(x, re.I) for x in (
     r"\b\d[\d.,]*k?\+?\s*bought in (?:the )?(?:last|past) (?:month|week|day)\b",
-    r"\bnew at [^™®]{1,40}[™®]",
+    r"\bnew at [^™®]{1,40}[™®]", r"^new at\s+",
+    r"\s+\d(?:\.\d)?\s+\d+\s+out of\s+5\s+stars.*$", r"\s+\d(?:\.\d)?\s+out of\s+5\s+stars.*$",
+    r"\s+(?:shipping|free shipping|ships|delivery|pickup|arrives|get it)\b.*$",
     r"^(?:sponsored|new|new arrival|best ?seller|only at target|only at walmart|deal|clearance|popular pick|"
     r"top rated|highly rated|rollback|reduced price|limited time|exclusive|pre-?order)\b[\s:·-]*",
     r"\bcurrent price\b.*$", r"\bwas \$.*$", r"\s*\bmfr\s*#?\s*[\w.-]+.*$", r"\boptions? available\b.*$", r"\b\d+ options?\b.*$")]
@@ -717,6 +728,9 @@ NAME_NOISE = [re.compile(x, re.I) for x in (
 
 def clean_name(text):
     t = " ".join((text or "").split())
+    t = RE_PRICE.sub(" ", t)                 # "$349.99 New at Pokemon TCG..." - price first, then the badges
+    t = re.sub(r"\bfor pros\b", " ", t, flags=re.I)
+    t = " ".join(t.split())
     t = RE_RATING.sub("", t)
     for _ in range(3):                  # badges can stack: "Sponsored New at Topps™ ..."
         before = t
@@ -731,6 +745,9 @@ def best_name(texts):
     """The real product title among a tile's link texts / image alts."""
     cands = []
     for x in texts:
+        if x and re.search(r"%\s*off|flash sale|sitewide|eligible items|free shipping on|add to cart|"
+                           r"out of 5\b|total reviews|\breviews?\b\s*\.?$", x, re.I):
+            continue                       # promo / button text, not the product's name
         if not x or RE_PRICE.fullmatch(x.strip()) or re.search(r"out of\s*5\s*stars", x, re.I) and \
                 len(RE_RATING.sub("", x).strip()) < 12:
             continue
@@ -1083,3 +1100,123 @@ def focus_match(name, sets=None, everyone=None):
                 kind = next((label for w, label in FOCUS_TYPES if w in t), "")
                 return {"focus": f"{sname.strip()}" + (f" {kind}" if kind else ""), "ping": bool(kind)}
     return {"focus": "", "ping": False}
+
+
+# ---------------------------------------------------------------- product data embedded in store pages
+def _merge_data_items(tiles, items):
+    """Items read from a page's own product data win over what the tiles' HTML showed (more reliable)."""
+    by_id = {x["id"]: x for x in tiles}
+    for it in items:
+        old = by_id.get(it["id"], {})
+        merged = {**old, **it}
+        for k in ("name", "image", "price", "stock", "limit"):     # keep what the tile showed if the data lacks it
+            if not it.get(k) and old.get(k):
+                merged[k] = old[k]
+        merged["text"] = (old.get("text", "") + " " + it.get("text", "")).strip()[:1200]
+        by_id[it["id"]] = merged
+    return list(by_id.values())
+
+
+BESTBUY_BUTTONS = {"ADD_TO_CART": ("In stock", True), "PRE_ORDER": ("Pre-order", True),
+                   "SOLD_OUT": ("Out of stock", False), "NOT_AVAILABLE": ("Out of stock", False),
+                   "COMING_SOON": ("Coming soon", False), "CHECK_STORES": ("Out of stock", False),
+                   "SEE_DETAILS": ("Marketplace sellers only", False)}
+
+
+def bestbuy_page_items(html):
+    """Best Buy search pages (2026 layout: /product/<name>/<BSIN>) carry each product's data in the page: name,
+    picture, price, the Add to cart / Pre-order / Sold out button state, and Best Buy's own (1P) SKU."""
+    h = (html or "").replace('\\"', '"')
+    out = []
+    for seg in h.split('"seoPdpUrl":"')[1:]:
+        seg = seg[:15000]
+        url = seg.split('"', 1)[0]
+        m = re.search(r"/product/[^/?#]+/([A-Z0-9]{8,12})", url)
+        if not m:
+            continue
+        name = re.search(r'"short":"((?:[^"\\]|\\.)+)"', seg)
+        try:
+            name = json.loads('"' + name.group(1) + '"') if name else ""
+        except ValueError:
+            name = name.group(1) if name else ""
+        btn = re.search(r'"buttonState":"([A-Z_]+)"', seg)
+        status, live = BESTBUY_BUTTONS.get(btn.group(1) if btn else "", ("Listed", False))
+        sku = re.search(r'"classification":"1P","__typename":"Seller"\},"skuId":"(\d+)"', seg)
+        price = re.search(r'"customerPrice":([\d.]+)', seg)
+        img = re.search(r'"(https://pisces\.bbystatic\.com/[^"]+\.(?:jpg|jpeg|png|webp))"', seg)
+        add, _ = cart_links("bestbuy", sku.group(1)) if sku else ("", "")
+        out.append({"id": m.group(1), "name": clean_name(name), "url": url.split("#")[0],
+                    "image": img.group(1) if img else "", "price": f"${float(price.group(1)):,.2f}" if price else "",
+                    "status": status, "live": live, "add_to_cart": add, "buy_now": "",
+                    "text": f"{name} {status}", "stock": "", "limit": ""})
+    return out
+
+
+def ace_page_items(html):
+    """Ace Hardware (Mozu) category pages: the product list is page data, including the ONLINE STOCK COUNT."""
+    m = re.search(r'id="data-mz-preload-PLPModel"[^>]*>(.*?)</script>', html or "", re.S)
+    if not m:
+        return []
+    try:
+        data = json.loads(m.group(1))
+    except ValueError:
+        return []
+    out = []
+    for d in _walk(data):
+        c = d.get("content")
+        if not (isinstance(c, dict) and d.get("productCode") and c.get("productName")):
+            continue
+        price = (d.get("price") or {}).get("salePrice") or (d.get("price") or {}).get("price")
+        inv = d.get("inventoryInfo") or {}
+        qty = inv.get("onlineStockAvailable")
+        buyable = (d.get("purchasableState") or {}).get("isPurchasable")
+        live = bool(buyable) and (qty is None or qty > 0)
+        img = ((d.get("mainImage") or {}).get("imageUrl") or "")
+        out.append({"id": str(d["productCode"]), "name": clean_name(c["productName"]),
+                    "url": urljoin("https://www.acehardware.com/", d.get("url") or f"/p/{d['productCode']}"),
+                    "image": ("https:" + img) if img.startswith("//") else img,
+                    "price": f"${float(price):,.2f}" if price else "", "status": "In stock" if live else "Out of stock",
+                    "live": live, "add_to_cart": "", "buy_now": "", "text": c["productName"],
+                    "stock": f"{qty} available online" if isinstance(qty, int) and qty > 0 else "", "limit": ""})
+    return out
+
+
+# ---------------------------------------------------------------- watch by name (#watch channel)
+WATCH_SYNONYMS = {"etb": "elite trainer box", "upc": "ultra premium collection", "bb": "booster bundle",
+                  "pc": "pokemon center", "hobby": "hobby", "pkmn": "pokemon"}
+
+
+def _fold(t):
+    t = (t or "").lower().replace("é", "e").replace("’", "'")
+    t = t.replace("ultra-premium", "ultra premium").replace("&", " and ")
+    return " " + " ".join(re.sub(r"[^a-z0-9'/.-]+", " ", t).split()) + " "
+
+
+def parse_watch(text):
+    """'151 etb -lot @target' -> {"words": [...], "exclude": [...], "store": "target", "q": original}"""
+    words, exclude, store = [], [], ""
+    for w in (text or "").split():
+        lw = w.lower().strip(",.")
+        if lw.startswith("@") and len(lw) > 1:
+            store = lw[1:]
+        elif lw.startswith("-") and len(lw) > 1:
+            exclude.append(lw[1:])
+        elif lw:
+            words.append(lw)
+    return {"words": words, "exclude": exclude, "store": store, "q": " ".join((text or "").split())}
+
+
+def watch_match(w, name, store=""):
+    """Every watch word appears in the product name (any order; 'etb' = Elite Trainer Box), none of the -words do,
+    and the @store matches if one was given."""
+    if not w.get("words"):
+        return False
+    t = _fold(name)
+    if w.get("store") and w["store"] not in (store or "") and w["store"] not in _fold(store):
+        return False
+
+    def has(word):
+        word = _fold(word).strip()
+        alts = [word] + ([_fold(WATCH_SYNONYMS[word]).strip()] if word in WATCH_SYNONYMS else [])
+        return any(re.search(r"(?<![a-z0-9])" + re.escape(a) + r"(?![a-z0-9])", t) for a in alts)
+    return all(has(x) for x in w["words"]) and not any(has(x) for x in w.get("exclude", []))

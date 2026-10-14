@@ -83,6 +83,22 @@ captchas, and never automates purchases. Keep it that way.
   market / 🔴 over market. NOTHING is skipped for being over market (M's call) - it's information only.
   Daily recap (`recap_tick`/`render_recap`, setting `recap_hour`, default 21 = 9 PM CT, -1 off): drops by store,
   fastest sellouts (`state["sellouts"]`: how long each product stayed in stock), 🔥 focus drops, PC queue times.
+- 1.0.39 (from M's 10/14 diagnostics): Best Buy 2026 links are /product/<slug>/<BSIN>; `bestbuy_page_items` reads
+  the page's Apollo data (name, image, customerPrice, buttonState ADD_TO_CART/PRE_ORDER/SOLD_OUT/SEE_DETAILS=3P only,
+  1P skuId -> real cart link; id = BSIN). Ace = Mozu JSON `data-mz-preload-PLPModel` (`ace_page_items`, incl.
+  onlineStockAvailable count; product urls /<slug>/p/<code>). `BrowserFetcher.READ_PAGE` also serializes shadow roots
+  (CVS renders its grid in web components). Queue browser waits 30 s for Imperva "Please stand by". Debug saves keep
+  head+tail of >3 MB pages. clean_name strips prices first ("$349.99 New at Pokemon…"), rating/review/shipping text;
+  promo text ("Flash Sale! …", "3.5 out of 5…") never becomes a name. Costco hides price/stock unless signed in.
+  #watch channel (`watch` webhook; bot routes messages there to `engine.handle_watch_command`): `watch <words>` /
+  `test <words>` / `watching` / `unwatch N` / `check focus`. `parsing.watch_match`: every word in the name (etb/upc
+  synonyms, -exclude, @store). `_watch_alerts`: @everyone in #watch once per (term, store, item, event).
+  `focus_report` (also Settings → Check focus lists) shows matches per focus set / @everyone product.
+  IP safety (NO proxies - M's home IP only): per-site hourly page budgets (`SITE_BUDGET`, `settings["site_budgets"]`,
+  drawings + queue exempt, "⏳ Easing off" notice), `_ease_off` 3-min breather when a site made the browser wait on a bot
+  check, quiet hours `settings["quiet_hours"]` (2-6 AM: store intervals x2). Target tripwire thread
+  (`target_tripwire_tick`): hot Target items not in stock (ETB/UPC, focus, #watch) get a product_fulfillment check
+  every 90 s (≤120/h); a flip to in stock re-scans Target immediately. Topps calendar 90 s, sitemap hot items 60 s.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

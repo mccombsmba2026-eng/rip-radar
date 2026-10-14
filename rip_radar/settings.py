@@ -11,7 +11,7 @@ DEFAULTS = {
     # one channel per store; empty = that store's alerts go to discord_webhook
     "webhooks": {"topps": "", "topps_calendar": "", "pokemon": "", "pokemon_queue": "", "walmart": "", "target": "",
                  "dicks": "", "amazon": "", "bestbuy": "", "costco": "", "samsclub": "", "pharmacy": "", "ace": "",
-                 "barnes": "", "gamestop": "", "hottopic": "", "instore": "", "drawings": "", "calendar": "", "status": ""},
+                 "barnes": "", "gamestop": "", "hottopic": "", "watch": "", "instore": "", "drawings": "", "calendar": "", "status": ""},
     "ntfy_topic": "",
     "twilio": {"account_sid": "", "auth_token": "", "from": "", "to": ""},
     "sms_for": ["urgent"],
@@ -34,7 +34,10 @@ DEFAULTS = {
                           "2025-26 NBA Hoops", "2025-26 Topps Hoops Basketball", "2025-26 Topps Finest Basketball",
                           "2025-26 Topps Signature Class Basketball", "Cooper Flagg"],
     "keep_awake": False,
-    "resale_check": True,            # eBay sold median on product posts
+    "resale_check": True,
+    "watch_terms": [],
+    "quiet_hours": [2, 6],           # store pages half as often 2-6 AM CT (queue + drawings stay full speed)
+    "site_budgets": {},              # override pages-per-hour per site, e.g. {"walmart.com": 120}               # #watch channel: product-name watches (typed in Discord)            # eBay sold median on product posts
     "recap_hour": 21,                # daily recap in #app-status at this hour (CT); -1 = off             # OFF unless M turns it on: ask Windows not to sleep while Rip Radar runs
     "topps_all_products": True,      # Topps: every product line (Disney, F1, soccer...) - not just your sports
     "start_with_windows": True,

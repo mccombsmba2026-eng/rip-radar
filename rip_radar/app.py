@@ -27,6 +27,15 @@ class BrowserFetcher:
     """Loads a page in a hidden window running the real Edge engine (WebView2), then reads its HTML.
     Sites with bot walls (Pokémon Center, Walmart...) treat it like a normal browser visit."""
 
+    # the page's HTML plus whatever sits inside web components' shadow roots (CVS draws its product grid there,
+    # and outerHTML alone can't see it)
+    READ_PAGE = r"""(function(){
+      var out = [];
+      (function walk(root){ root.querySelectorAll('*').forEach(function(el){
+        if (el.shadowRoot) { out.push(el.shadowRoot.innerHTML); walk(el.shadowRoot); } }); })(document);
+      return document.documentElement.outerHTML + (out.length ? '<div id="rr-shadow">' + out.join('') + '</div>' : '');
+    })()"""
+
     def __init__(self, scroll=True, settle=4, challenge_wait=25):
         self.window = None
         self._lock = threading.Lock()
@@ -59,11 +68,14 @@ class BrowserFetcher:
                 w.evaluate_js("window.scrollTo(0, 0); 0")
             except Exception:
                 pass
+            self.last_challenge = False
             while True:
                 try:
-                    html = w.evaluate_js("document.documentElement.outerHTML") or ""
+                    html = w.evaluate_js(self.READ_PAGE) or ""
                 except Exception:
                     html = ""  # mid-navigation (e.g. a "checking your browser" page redirecting)
+                if html and is_challenge(html):
+                    self.last_challenge = True   # the site made us wait on a bot check: the engine eases off it
                 if html and (not is_challenge(html) or time.time() > deadline):
                     break
                 if time.time() > deadline:
@@ -160,6 +172,10 @@ class Api:
     def test_queue_alert(self):
         """Posts exactly what a Pokémon Center queue alert looks like (marked TEST, no @everyone)."""
         return {"ok": bool(self._app.engine.test_queue_alert())}
+
+    def focus_report(self):
+        """Settings → Check focus lists: how many products each focus set / @everyone product matches right now."""
+        return {"text": "\n".join(self._app.engine.focus_report()).replace("**", "")}
 
     def set_drop_mode(self, hours):
         left = self._app.engine.set_drop_mode(hours)
@@ -287,7 +303,8 @@ class App:
         self.started_at = time.time()
         self.fetcher = BrowserFetcher()
         # the Pokémon Center queue gets its OWN hidden browser: it never waits behind a slow store page
-        self.queue_fetcher = BrowserFetcher(scroll=False, settle=2, challenge_wait=12)
+        # Pokémon Center's Imperva check ("Please stand by...") clears in ~10-25 s in a real browser: wait it out
+        self.queue_fetcher = BrowserFetcher(scroll=False, settle=3, challenge_wait=30)
         self.stock_browser = TargetStockBrowser()
         self.more_fetchers = [BrowserFetcher(), BrowserFetcher()]     # 3 store scanners side by side
         self.engine = Engine(browser_fetch=self.fetcher, queue_fetch=self.queue_fetcher,

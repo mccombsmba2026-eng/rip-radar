@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 from . import __version__, paths, settings as settings_mod
 from .msrp import msrp_text, price_check
 from .notify import CHANNELS, STORE_NAMES, ChatBot, LiveBoard, Notifier, StatusBoard, store_in
-from .parsing import (CT, focus_match, og_image, wall_kind, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
+from .parsing import (CT, focus_match, og_image, parse_watch, watch_match, wall_kind, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
                       topps_sitemap_numbers, LIVE_STATUSES, RETAIL_STORES, categorize, extract_when, fmt_when, gcal_link, is_card_product,
                       is_etb_or_upc, is_pokemon_product, is_sports_card_product, is_tcg_product, looks_blocked, parse_retail_tiles, parse_topps_calendar,
                       parse_topps_product_page, humanize_handle, tile_status, drawing_window, next_data, sport_of, stock_hint,
@@ -106,7 +106,7 @@ class Engine:
         self.sync_at = 0
         self.startup_sync = False
         self.bot = ChatBot(self.status_text, settings_mod.load, self.bot_reply, zip_lookup=self.zip_lookup,
-                           drop_mode=lambda hours: self.set_drop_mode(hours))
+                           drop_mode=lambda hours: self.set_drop_mode(hours), watch=self.handle_watch_command)
         self.started = datetime.now(CT)
         self.last_scan = None
         self.health = {}           # name -> {"health","code","at","type","url"}
@@ -132,6 +132,64 @@ class Engine:
         if self.queue_fetcher:
             self._queue_thread = threading.Thread(target=self._queue_loop, daemon=True, name="queue-watch")
             self._queue_thread.start()
+        if self.stock_json:
+            threading.Thread(target=self._target_tripwire_loop, daemon=True, name="target-tripwire").start()
+
+    # ------------------------------------------------------------ Target tripwire: hot items checked every 90 s
+    def _hot_target_items(self):
+        """Target products worth watching closely: ETB / UPC, 🔥 focus / @everyone list, or a #watch match - that
+        aren't in stock right now."""
+        terms = [parse_watch(q) for q in settings_mod.load().get("watch_terms") or []]
+        out, now = [], time.time()
+        for t in self.targets():
+            if t.get("type") != "retail_search" or t.get("store") != "target":
+                continue
+            for pid, r in (self.state.get("targets", {}).get(t["name"], {}).get("items") or {}).items():
+                if r.get("live") or not r.get("name") or now - r.get("seen", 0) > 86400:
+                    continue
+                n = r["name"]
+                if is_etb_or_upc(n) or self._focus(n)["ping"] or r.get("focus") or any(watch_match(w, n, "target")
+                                                                                       for w in terms):
+                    out.append((pid, r))
+        return out
+
+    def target_tripwire_tick(self, every=90, per_hour=120):
+        """A tiny stock check (one small request, no page load) on each hot Target item every ~90 s. When one flips
+        to in stock, Target's search pages are re-scanned right away - the normal pipeline does the ping."""
+        if settings_mod.load().get("paused"):
+            return 0
+        now = time.time()
+        recent = self.__dict__.setdefault("_trip_log", [])
+        recent[:] = [x for x in recent if now - x < 3600]
+        checked = self.__dict__.setdefault("_trip_checked", {})
+        tripped = 0
+        for pid, r in sorted(self._hot_target_items(), key=lambda pr: checked.get(pr[0], 0)):
+            if len(recent) >= per_hour or now - checked.get(pid, 0) < every:
+                continue
+            checked[pid] = now
+            recent.append(now)
+            info = target_stock(getattr(self.fetcher, "s", None) or requests.Session(), pid, "",
+                                self.state.get("target_key", ""), browser_json=self.stock_json)
+            if not info:
+                continue
+            status = (info.get("online_status") or "").upper()
+            if (info.get("online") or 0) > 0 or status in ("IN_STOCK", "LIMITED_STOCK", "PRE_ORDER_SELLABLE"):
+                tripped += 1
+                log.info("tripwire: Target %s looks in stock - rescanning Target now", r["name"][:60])
+                for t in self.targets():
+                    if t.get("store") == "target":
+                        self.next_due[t["name"]] = 0
+                self._wake.set()
+                break
+        return tripped
+
+    def _target_tripwire_loop(self):
+        while not self._stop.is_set():
+            try:
+                self.target_tripwire_tick()
+            except Exception as e:
+                log.warning("target tripwire: %s", e)
+            self._stop.wait(20)
 
     @property
     def fetcher(self):
@@ -268,7 +326,9 @@ class Engine:
                 due = [t for t in targets if (t["name"] in pending or t.get("track_duration"))
                        and now >= self.next_due.get(t["name"], 0)
                        and (t["type"] == "walmart_drawings" or t.get("track_duration")   # never paused
-                            or now >= self.host_backoff.get(self._host(t), (0, 0))[0])]
+                            or (now >= self.host_backoff.get(self._host(t), (0, 0))[0]
+                                and now >= self.host_backoff.get(self._site(t.get("url", "")), (0, 0))[0]
+                                and not self._over_budget(t)))]
                 if not due:
                     break
                 due.sort(key=lambda t: -(now - self.next_due.get(t["name"], 0)) / t.get("interval_seconds", default_iv))
@@ -285,6 +345,8 @@ class Engine:
                 self._clock_ticks()
                 for t in batch:
                     iv = t.get("interval_seconds", default_iv)
+                    if t["type"] not in ("walmart_drawings",) and not t.get("track_duration"):
+                        iv *= self._slow_factor()
                     self.next_due[t["name"]] = time.time() + iv * random.uniform(0.85, 1.15)
                 self._save_state()
                 time.sleep(random.uniform(1, 2.5))
@@ -372,12 +434,79 @@ class Engine:
         """Plain HTTP first. If a site turns that away, switch this source to the app's built-in
         browser (real Edge engine) from then on - it gets through most bot walls from a home connection."""
         use_browser = bool(t.get("browser") or st.get("auto_browser"))
+        self._note_request(t["url"])
         status, final, html = self.fetcher.get(t["url"], use_browser)
         if not use_browser and getattr(self.fetcher, "browser_fetch", None) and looks_blocked(status, html):
             log.info("%s blocked plain HTTP (%s) - switching to the built-in browser", t["name"], status)
             st["auto_browser"] = True
+            self._note_request(t["url"])
             status, final, html = self.fetcher.get(t["url"], True)
+        if getattr(getattr(self.fetcher, "browser_fetch", None), "last_challenge", False):
+            self._ease_off(t["url"], "made the scanner wait on a bot check")
         return status, final, html
+
+    # ------------------------------------------------------------ staying under the radar (one home IP, no proxies)
+    SITE_BUDGET = {"default": 150, "topps.com": 240, "target.com": 150, "walmart.com": 150,
+                   "pokemoncenter.com": 160, "amazon.com": 120}
+
+    @staticmethod
+    def _site(url):
+        from urllib.parse import urlparse
+        host = urlparse(url or "").netloc.lower().removeprefix("www.")
+        return ".".join(host.split(".")[-2:]) if host else ""
+
+    def _note_request(self, url):
+        from collections import deque
+        log_ = self.__dict__.setdefault("_req_log", {})
+        q = log_.setdefault(self._site(url), deque())
+        now = time.time()
+        q.append(now)
+        while q and now - q[0] > 3600:
+            q.popleft()
+
+    def _requests_last_hour(self, url_or_site):
+        site = url_or_site if "/" not in url_or_site else self._site(url_or_site)
+        q = self.__dict__.get("_req_log", {}).get(site)
+        now = time.time()
+        return sum(1 for x in (q or []) if now - x <= 3600)
+
+    def _budget(self, site):
+        b = dict(self.SITE_BUDGET)
+        b.update(settings_mod.load().get("site_budgets") or {})
+        return int(b.get(site, b["default"]))
+
+    def _over_budget(self, t):
+        """A site's hourly page budget is spent: hold its sources until the oldest page ages out (drawings exempt)."""
+        if t["type"] == "walmart_drawings" or t.get("track_duration"):
+            return False
+        site = self._site(t.get("url", ""))
+        if self._requests_last_hour(site) < self._budget(site):
+            return False
+        said = self.state.setdefault("budget_notice", {})
+        if time.time() - said.get(site, 0) > 6 * 3600:
+            said[site] = time.time()
+            self.notify.send("system", f"⏳ Easing off {site}: hit its hourly limit ({self._budget(site)} pages)",
+                             desc="To keep your home connection from getting flagged, Rip Radar slows that one site "
+                                  "down until the hour rolls over. Everything else keeps going.")
+        return True
+
+    def _ease_off(self, url, why):
+        """First sign of trouble (a bot check we had to wait through): give that site a 3-minute breather."""
+        site = self._site(url)
+        if not site or site == "pokemoncenter.com" and settings_mod.load().get("drop_mode_until", 0) > time.time():
+            return
+        resume, n = self.host_backoff.get(site, (0, 0))
+        self.host_backoff[site] = (max(resume, time.time() + 180), n)
+        log.info("%s %s - easing off for 3 min", site, why)
+
+    def _slow_factor(self):
+        """Quiet hours (Settings, default 2-6 AM CT): store pages come round half as often overnight."""
+        q = settings_mod.load().get("quiet_hours", [2, 6])
+        if not q or len(q) != 2:
+            return 1
+        h = datetime.now(CT).hour
+        a, b = int(q[0]), int(q[1])
+        return 2 if (a <= h < b if a <= b else (h >= a or h < b)) else 1
 
     # ------------------------------------------------------------ watchers
     def check_listing(self, t, st, first):
@@ -837,6 +966,8 @@ class Engine:
                 if x["status"].startswith("Drawing"):         # the store's card bumps AND #drawings gets it
                     self._product_alert("urgent", f"{event}: {x['name']}{warn}", x, label, extra,
                                         channel="drawings", store=store, ping=big, strict=True, record=False)
+            if event:
+                self._watch_alerts(store, x, rec, event)
             changed.append((x, rec, event, big and bool(event)))
         if store == "target":
             self._refresh_target_stock(html, [c for c in changed], st)
@@ -1091,6 +1222,142 @@ class Engine:
         if when and when[0] > datetime.now(CT):
             self._add_event(f"{label}: {x['name'][:120]}", x["url"], when[0], when[1], "release", store, product=True)
 
+    # ------------------------------------------------------------ #watch: watch by name, test, focus check
+    WATCH_HELP = ("**Watch by name** · every word must be in the product name (any order). `etb` = Elite Trainer Box, "
+                  "`upc` = Ultra-Premium Collection, `-word` leaves it out, `@target` = one store only.\n"
+                  "• `watch prismatic bundle` → @everyone here whenever any store has a match (loaded, in stock, "
+                  "back in stock, drawing)\n• `test 151 etb -lot` → what that would catch right now\n"
+                  "• `watching` → your list · `unwatch 2` or `unwatch prismatic bundle`\n"
+                  "• `check focus` → is each 🔥 focus set / @everyone product actually matching anything")
+
+    def _catalog(self, max_age_hours=72):
+        """Everything the scanners know about right now (all stores + Topps + Walmart drawings)."""
+        out, now = [], time.time()
+        for t in self.targets():
+            st = self.state.get("targets", {}).get(t["name"], {})
+            if t["type"] == "retail_search":
+                for pid, r in (st.get("items") or {}).items():
+                    if r.get("name") and now - r.get("seen", 0) < max_age_hours * 3600:
+                        out.append({**r, "store": t["store"], "id": pid})
+            elif t["type"] == "topps_sitemap":
+                for h, r in (st.get("products") or {}).items():
+                    if r.get("status"):
+                        out.append({**r, "store": "topps", "id": h})
+            elif t["type"] == "walmart_drawings":
+                for k, r in (st.get("drawings") or {}).items():
+                    if r.get("phase") != "closed":
+                        out.append({**r, "store": "walmart", "id": k, "status": "Drawing " + r.get("phase", ""),
+                                    "live": r.get("phase") == "open"})
+        uniq = {}
+        for r in out:
+            uniq.setdefault((r["store"], r["id"]), r)
+        return list(uniq.values())
+
+    def _match_lines(self, w, limit=12):
+        hits = [r for r in self._catalog() if watch_match(w, r["name"], r["store"])]
+        hits.sort(key=lambda r: (not r.get("live"), STORE_NAMES.get(r["store"], r["store"]), r["name"]))
+        lines = [f"{'🟢' if r.get('live') else '⚪'} **{STORE_NAMES.get(r['store'], r['store'])}** · "
+                 f"[{r['name'][:70]}]({r['url']}) · {r.get('price') or ''} · {r.get('status', '')}" for r in hits[:limit]]
+        if len(hits) > limit:
+            lines.append(f"…and {len(hits) - limit} more")
+        live = sum(1 for r in hits if r.get("live"))
+        return hits, live, lines
+
+    def handle_watch_command(self, text):
+        """Messages typed in #watch -> replies (each under 2000 characters)."""
+        msg = " ".join((text or "").split())
+        low = msg.lower()
+        terms = list(settings_mod.load().get("watch_terms") or [])
+        if low in ("help", "?", "commands"):
+            return [self.WATCH_HELP]
+        if low in ("watching", "list", "watchlist"):
+            if not terms:
+                return ["Not watching anything yet. Try `watch prismatic bundle`."]
+            return ["**Watching** (@everyone in this channel when any store has a match):\n" +
+                    "\n".join(f"`{i}` {q}" for i, q in enumerate(terms, 1))]
+        if low in ("check focus", "focus", "check focus list", "focus check"):
+            return self.focus_report()
+        cmd, _, rest = msg.partition(" ")
+        cmd = cmd.lower()
+        if cmd in ("watch", "add") and rest:
+            w = parse_watch(rest)
+            if not w["words"]:
+                return ["Give me some words to watch for, e.g. `watch 151 etb`."]
+            if rest.lower() not in [q.lower() for q in terms]:
+                terms.append(rest)
+                settings_mod.update({"watch_terms": terms})
+            hits, live, lines = self._match_lines(w, limit=6)
+            head = (f"✅ **Watching: {rest}** · you'll get @everyone here the moment any store has a match.\n"
+                    f"Right now: {len(hits)} match ({live} in stock)")
+            return [head + ("\n" + "\n".join(lines) if lines else "")]
+        if cmd in ("unwatch", "remove", "stop") and rest:
+            if rest.isdigit() and 1 <= int(rest) <= len(terms):
+                gone = terms.pop(int(rest) - 1)
+            elif rest.lower() in [q.lower() for q in terms]:
+                gone = next(q for q in terms if q.lower() == rest.lower())
+                terms.remove(gone)
+            else:
+                return [f"Not watching `{rest}`. Type `watching` to see the list."]
+            settings_mod.update({"watch_terms": terms})
+            return [f"🗑️ Stopped watching: {gone}"]
+        if cmd in ("test", "find", "check") and rest:
+            w = parse_watch(rest)
+            hits, live, lines = self._match_lines(w)
+            if not hits:
+                return [f"🔎 `{rest}` matches nothing the scanners have seen in the last 3 days. Check the spelling, "
+                        "use fewer words, or it may not be carried right now (a watch still catches it later)."]
+            return [f"🔎 `{rest}` would catch **{len(hits)}** ({live} in stock):\n" + "\n".join(lines)]
+        return [self.WATCH_HELP]
+
+    def _watch_alerts(self, store, x, rec, event):
+        """A product with news (loaded / in stock / back / drawing) that matches a #watch term -> @everyone there."""
+        terms = settings_mod.load().get("watch_terms") or []
+        if not terms:
+            return
+        sent = self.state.setdefault("watch_sent", {})
+        for q in terms:
+            if not watch_match(parse_watch(q), x["name"], store):
+                continue
+            key = f"{q.lower()}|{store}|{x['id']}|{event.split(' at ')[0]}"
+            if key in sent:
+                continue
+            sent[key] = time.time()
+            self.notify.send("urgent", f"👀 {event}: {x['name']}"[:250], x["url"],
+                             {"Watching": q, "Price": x.get("price"), "Stock": rec.get("stock") or x.get("status"),
+                              "💰 Deal": "", "Limit": x.get("limit")},
+                             image=x.get("image", ""), links=self._buy_links(x), channel="watch", strict=True,
+                             store=store, product=True, ping=True, record=False)
+        if len(sent) > 5000:
+            for k in sorted(sent, key=sent.get)[:1000]:
+                sent.pop(k)
+
+    def focus_report(self):
+        """Are the 🔥 focus sets and @everyone products set up right? How many products each matches right now."""
+        from .parsing import _norm, _phrase_in
+        s = settings_mod.load()
+        cat = self._catalog()
+        lines = ["**🔥 Focus sets** · products the scanners currently see from each set"]
+        for name in s.get("focus_sets") or []:
+            hits = [r for r in cat if ("pokemon" in _norm(r["name"]) or "tcg" in _norm(r["name"]))
+                    and _phrase_in(name, _norm(r["name"]))]
+            ex = "; ".join(r["name"][:45] for r in hits[:2])
+            lines.append(f"{'✅' if hits else '⚠️'} **{name}** · {len(hits)}" + (f" · e.g. {ex}" if ex else
+                         " · nothing right now (spelling, or simply not in stores at the moment)"))
+        lines.append("\n**@everyone products**")
+        for name in s.get("everyone_products") or []:
+            hits = [r for r in cat if _phrase_in(name, _norm(r["name"]))]
+            ex = "; ".join(r["name"][:45] for r in hits[:2])
+            lines.append(f"{'✅' if hits else '⚠️'} **{name}** · {len(hits)}" + (f" · e.g. {ex}" if ex else
+                         " · nothing right now"))
+        text, chunks = "", []
+        for ln in lines:
+            if len(text) + len(ln) > 1900:
+                chunks.append(text)
+                text = ""
+            text += ln + "\n"
+        chunks.append(text)
+        return chunks
+
     def _focus(self, name):
         """M's focus list from Settings: 🔥 focus Pokémon sets (box / bundle / ETB = @everyone) and the @everyone
         product list (2025-26 Topps basketball / Cooper Flagg...)."""
@@ -1277,7 +1544,10 @@ class Engine:
             d = paths.DATA_DIR / "debug"
             d.mkdir(parents=True, exist_ok=True)
             safe = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:60]
-            (d / f"{safe}.html").write_text((html or "")[:3_000_000], encoding="utf-8", errors="ignore")
+            h = html or ""
+            if len(h) > 3_000_000:      # big pages are mostly styling up top: keep the start AND the end
+                h = h[:1_200_000] + "\n<!-- … middle cut … -->\n" + h[-1_800_000:]
+            (d / f"{safe}.html").write_text(h, encoding="utf-8", errors="ignore")
         except OSError:
             pass
 

@@ -46,7 +46,9 @@ def test_walmart_amazon_bestbuy_links_and_drawing():
     assert a["add_to_cart"] == "https://www.amazon.com/gp/aws/cart/add.html?ASIN.1=B0DXYZ1234&Quantity.1=1"
     b = parse_retail_tiles(tile("/product/pokemon-tcg-etb/JJ8VPZ2K/sku/6612345", "Pokémon TCG ETB", "$49.99",
                                 "Sold Out") + PAD, "https://www.bestbuy.com/site/searchpage.jsp", "bestbuy")[0]
-    assert b["id"] == "6612345" and not b["live"] and cart_links("bestbuy", "6612345")[0].endswith("/6612345/cart")
+    # 2026 Best Buy links: the id is the product code; the add-to-cart link still uses the numeric SKU
+    assert b["id"] == "JJ8VPZ2K" and not b["live"] and b["add_to_cart"].endswith("/6612345/cart")
+    assert cart_links("bestbuy", "JJ8VPZ2K") == ("", "")      # no fake cart link without a real SKU
 
 
 def test_retail_watcher_pings_only_when_in_stock(engine):
