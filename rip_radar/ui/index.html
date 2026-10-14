@@ -265,6 +265,10 @@ details summary{cursor:pointer;font-weight:600}
         <label class="switch"><input type="checkbox" value="Football"> Football</label>
       </div>
       <label class="switch"><input type="checkbox" id="sOpenQueue"> When the Pokémon Center queue goes live, open it in Chrome on this PC</label>
+      <label class="switch"><input type="checkbox" id="sResale"> Show eBay sold prices on product posts (resale check)</label>
+      <label>Daily recap in #app-status at <select id="sRecap"><option value="-1">off</option>
+        <option value="18">6 PM</option><option value="20">8 PM</option><option value="21">9 PM</option>
+        <option value="22">10 PM</option><option value="23">11 PM</option></select></label>
       <label class="switch"><input type="checkbox" id="sAwake"> Keep this PC awake while Rip Radar runs</label>
       <p class="hint">Off by default. Asks Windows not to sleep while the app is open, like a video player does. Changes no Windows settings; the screen can still turn off and closing the lid still sleeps.</p>
       <h2>Focus</h2>
@@ -494,6 +498,7 @@ function renderSettings(){
   $("#sToppsAll").checked = s.topps_all_products !== false;
   $("#sFocusSets").value = (s.focus_sets||[]).join("\n"); $("#sEveryone").value = (s.everyone_products||[]).join("\n");
   $("#sOpenQueue").checked = s.open_browser_on_queue !== false; $("#sAwake").checked = !!s.keep_awake;
+  $("#sResale").checked = s.resale_check !== false; $("#sRecap").value = String(s.recap_hour ?? 21);
 }
 
 // ---------- actions
@@ -539,7 +544,7 @@ async function saveSettings(quiet){
     start_with_windows: $("#sAuto").checked, auto_update: $("#sAutoUpd").checked, keep_running_when_closed: $("#sKeep").checked, bot_token: $("#sBot").value.trim(), bot_triggers: $("#sBotTrig").value.split(",").map(x=>x.trim()).filter(Boolean), bot_channel: $("#sBotChan").value.trim(), bot_reply: $("#sBotReply").value, ntfy_topic: $("#sNtfy").value.trim(), zip: $("#sZip").value.trim(), restock_miles: parseInt($("#sMiles").value)||30,
     sports: sports.length ? sports : ["Baseball","Basketball","Football"], topps_all_products: $("#sToppsAll").checked,
     focus_sets: $("#sFocusSets").value.split("\n").map(x=>x.trim()).filter(Boolean),
-    everyone_products: $("#sEveryone").value.split("\n").map(x=>x.trim()).filter(Boolean), open_browser_on_queue: $("#sOpenQueue").checked, keep_awake: $("#sAwake").checked,
+    everyone_products: $("#sEveryone").value.split("\n").map(x=>x.trim()).filter(Boolean), open_browser_on_queue: $("#sOpenQueue").checked, keep_awake: $("#sAwake").checked, resale_check: $("#sResale").checked, recap_hour: parseInt($("#sRecap").value),
     twilio: {account_sid:$("#sTwSid").value.trim(), auth_token:$("#sTwTok").value.trim(), from:$("#sTwFrom").value.trim(), to:$("#sTwTo").value.trim()}
   });
   if(!quiet) msg($("#sSaveMsg"),"Saved.","good");

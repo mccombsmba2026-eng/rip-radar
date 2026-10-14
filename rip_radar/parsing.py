@@ -584,16 +584,52 @@ def cart_links(store, pid):
     return "", ""
 
 
+IMG_ATTRS = ("src", "data-src", "data-lazy-src", "data-original", "data-image", "data-img", "data-lazy",
+             "data-zoom-image", "srcset", "data-srcset")
+
+
+def _usable_img(v):
+    v = (v or "").strip().split(",")[0].strip().split(" ")[0]
+    if not v or v.startswith("data:") or v.endswith(".svg") or any(w in v.lower() for w in
+                                                                    ("sprite", "placeholder", "spacer", "pixel", "logo")):
+        return ""
+    return v
+
+
 def image_in(node, base_url):
-    for img in node.find_all("img"):
-        for attr in ("src", "data-src", "data-lazy-src", "srcset", "data-srcset"):
-            v = (img.get(attr) or "").strip()
-            if not v:
-                continue
-            v = v.split(",")[0].strip().split(" ")[0]
-            if v.startswith("data:") or v.endswith(".svg") or "sprite" in v or "placeholder" in v:
-                continue
-            return urljoin(base_url, v)
+    """The product picture in a tile: <img> (incl. lazy-load attributes), <picture><source srcset>, or a CSS
+    background-image."""
+    for img in node.find_all(["img", "source"]):
+        for attr in IMG_ATTRS:
+            v = _usable_img(img.get(attr))
+            if v:
+                return urljoin(base_url, v)
+    for el in node.find_all(style=True):
+        m = re.search(r"background(?:-image)?\s*:\s*url\(['\"]?([^'\")]+)", el["style"])
+        if m and _usable_img(m.group(1)):
+            return urljoin(base_url, _usable_img(m.group(1)))
+    return ""
+
+
+def og_image(html, base_url=""):
+    """A product page's main picture (og:image / twitter:image / JSON-LD image)."""
+    soup = BeautifulSoup(html or "", "html.parser")
+    for key in ("og:image", "og:image:secure_url", "twitter:image"):
+        m = soup.find("meta", attrs={"property": key}) or soup.find("meta", attrs={"name": key})
+        if m and _usable_img(m.get("content")):
+            return urljoin(base_url, _usable_img(m["content"]))
+    for sc in soup.find_all("script", type="application/ld+json"):
+        try:
+            data = json.loads(sc.string or "")
+        except ValueError:
+            continue
+        for d in _walk(data):
+            im = d.get("image")
+            im = im[0] if isinstance(im, list) and im else im
+            if isinstance(im, dict):
+                im = im.get("url")
+            if isinstance(im, str) and _usable_img(im):
+                return urljoin(base_url, im)
     return ""
 
 

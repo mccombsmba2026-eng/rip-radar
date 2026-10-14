@@ -70,7 +70,7 @@ def test_retail_watcher_pings_only_when_in_stock(engine):
                       "🟢 NEW & IN STOCK at Target: Pokémon TCG: Charizard Ultra-Premium Collection"]
     kw = sent[1][2]
     assert kw["image"] == "https://img.example.com/p.jpg"
-    assert kw["links"] == [("🛒 Open & add to cart", "https://www.target.com/p/upc/-/A-94300300")]  # Target: no direct cart link
+    assert kw["links"] == [("🔗 Product page (tap Add to cart there)", "https://www.target.com/p/upc/-/A-94300300")]  # Target: no direct cart link
     assert kw["store"] == "target" and kw["product"] is True
     sent.clear()
     engine.check_retail_search(t, st, False)                       # nothing changed -> no repeat pings

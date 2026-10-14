@@ -33,7 +33,9 @@ DEFAULTS = {
                           "2025-26 Topps Chrome Basketball", "2025-26 Topps Chrome Update Basketball",
                           "2025-26 NBA Hoops", "2025-26 Topps Hoops Basketball", "2025-26 Topps Finest Basketball",
                           "2025-26 Topps Signature Class Basketball", "Cooper Flagg"],
-    "keep_awake": False,             # OFF unless M turns it on: ask Windows not to sleep while Rip Radar runs
+    "keep_awake": False,
+    "resale_check": True,            # eBay sold median on product posts
+    "recap_hour": 21,                # daily recap in #app-status at this hour (CT); -1 = off             # OFF unless M turns it on: ask Windows not to sleep while Rip Radar runs
     "topps_all_products": True,      # Topps: every product line (Disney, F1, soccer...) - not just your sports
     "start_with_windows": True,
     "keep_running_when_closed": False,   # False: the X quits. True: closing hides to the tray and keeps scanning

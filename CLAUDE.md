@@ -69,6 +69,17 @@ captchas, and never automates purchases. Keep it that way.
   basketball product or "Flagg" = @everyone (Cooper Flagg rookie year). Applies to store cards, restocks, Walmart
   drawings, news. Merch (plush, pillows, video games, Squishmallows...) is cut even with "Pokémon TCG" in the name
   unless it's sealed (pack / bundle / tin / collection...).
+- 1.0.37: THREE store-scanner browsers ("Rip Radar scanner", "… 2", "… 3"; `Engine(extra_browsers=...)`): the main
+  loop runs a batch of up to 3 due sources at once, never two on the same site (`_run_batch`; `engine.fetcher` is a
+  thread-local property). retail_search intervals are halved (min 120 s) when >1 browser.
+  ATC: real add-to-cart links only for Walmart / Amazon / Best Buy / Topps; every other store's post says "No direct
+  add-to-cart link at this store" instead of a fake ATC button. Images: `image_in` (lazy attrs, <source>, CSS bg) then
+  `_fill_images` opens ≤2 product pages/run for og:image.
+  Resale (`resale.py` ResaleChecker, setting `resale_check`): eBay SOLD search per product (plain HTTP, ≤1 per 20 s,
+  cached 24 h), titles must match ~75% of the product words, lots/graded/empty/ranges skipped, median of the rest ->
+  "💸 Resale (eBay sold)" field with the margin vs the store price.
+  Daily recap (`recap_tick`/`render_recap`, setting `recap_hour`, default 21 = 9 PM CT, -1 off): drops by store,
+  fastest sellouts (`state["sellouts"]`: how long each product stayed in stock), 🔥 focus drops, PC queue times.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

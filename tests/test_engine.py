@@ -15,6 +15,7 @@ def engine(tmp_path, monkeypatch):
         monkeypatch.setattr(paths, name, tmp_path / fn)
     from rip_radar.engine import Engine
     e = Engine()
+    e.resale._start = lambda: None          # tests never search eBay
     e.sent = []
     e.notify.send = lambda level, title, url="", fields=None, desc="", **kw: e.sent.append((level, title))
     return e

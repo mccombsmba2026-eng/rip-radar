@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 from . import __version__, paths, settings as settings_mod
 from .msrp import msrp_text, price_check
 from .notify import CHANNELS, STORE_NAMES, ChatBot, LiveBoard, Notifier, StatusBoard, store_in
-from .parsing import (CT, focus_match, wall_kind, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
+from .parsing import (CT, focus_match, og_image, wall_kind, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
                       topps_sitemap_numbers, LIVE_STATUSES, RETAIL_STORES, categorize, extract_when, fmt_when, gcal_link, is_card_product,
                       is_etb_or_upc, is_pokemon_product, is_sports_card_product, is_tcg_product, looks_blocked, parse_retail_tiles, parse_topps_calendar,
                       parse_topps_product_page, humanize_handle, tile_status, drawing_window, next_data, sport_of, stock_hint,
@@ -68,14 +68,18 @@ class Fetcher:
 
 
 class Engine:
-    def __init__(self, browser_fetch=None, queue_fetch=None, stock_json=None):
+    def __init__(self, browser_fetch=None, queue_fetch=None, stock_json=None, extra_browsers=None):
         paths.ensure_dirs()
         self.builtin = load_builtin()
         self.state = self._load_state()
         self.state.setdefault("alerts", [])
-        self.fetcher = Fetcher(browser_fetch)
+        # several hidden browsers scan different sites at the same time (1 + extra_browsers)
+        self._fetchers = [Fetcher(browser_fetch)] + [Fetcher(b) for b in (extra_browsers or [])]
+        self._tl = threading.local()
         self.queue_fetcher = Fetcher(queue_fetch) if queue_fetch else None   # own browser for the PC queue
         self.stock_json = stock_json          # Target stock asked from inside a browser on target.com
+        from .resale import ResaleChecker
+        self.resale = ResaleChecker(self.state, settings_mod.load)
         self._queue_thread = None
         self.notify = Notifier(settings_mod.load, on_alert=self._record_alert)
         self.board = StatusBoard(settings_mod.load, self.status_text, self.state)
@@ -127,6 +131,36 @@ class Engine:
         if self.queue_fetcher:
             self._queue_thread = threading.Thread(target=self._queue_loop, daemon=True, name="queue-watch")
             self._queue_thread.start()
+
+    @property
+    def fetcher(self):
+        """The browser this thread scans with (each parallel scanner thread gets its own)."""
+        return getattr(self._tl, "fetcher", None) or self._fetchers[0]
+
+    @fetcher.setter
+    def fetcher(self, value):          # (tests swap in a fake; all scanner slots then use it)
+        self._fetchers = [value]
+
+    def _run_batch(self, batch, report):
+        """Run up to len(browsers) sources at once - each on its own hidden browser, never two on the same site."""
+        if len(batch) == 1:
+            self._run_target(batch[0], report)
+            return
+
+        def work(t, f):
+            self._tl.fetcher = f
+            try:
+                self._run_target(t, report)
+            except Exception as e:
+                log.warning("%s: %s", t["name"], e)
+            finally:
+                self._tl.fetcher = None
+        threads = [threading.Thread(target=work, args=(t, self._fetchers[i]), daemon=True, name=f"scan-{i}")
+                   for i, t in enumerate(batch)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(240)
 
     # ------------------------------------------------------------ Pokémon Center queue: its own loop + browser
     def drop_mode(self):
@@ -199,6 +233,9 @@ class Engine:
                         "alert_title": f"{pre.get('alert', '🚨 PAGE LIVE')}: {p['name']}", "user": True,
                         "channel": pre.get("channel") or store_in(p["url"])})
         for t in out:
+            if t["type"] == "retail_search" and len(getattr(self, "_fetchers", [])) > 1:
+                # 3 browsers in parallel: store pages come round about twice as often (never under 2 min)
+                t["interval_seconds"] = max(120, int(t.get("interval_seconds", 300) * 0.5))
             if t["type"] == "topps_calendar":
                 t["sports"] = s.get("sports") or ["Baseball", "Basketball", "Football"]
                 t["all_products"] = s.get("topps_all_products", True)
@@ -233,13 +270,21 @@ class Engine:
                             or now >= self.host_backoff.get(self._host(t), (0, 0))[0])]
                 if not due:
                     break
-                t = max(due, key=lambda t: (now - self.next_due.get(t["name"], 0))
-                        / t.get("interval_seconds", default_iv))
-                pending.discard(t["name"])
-                self._run_target(t, report)
+                due.sort(key=lambda t: -(now - self.next_due.get(t["name"], 0)) / t.get("interval_seconds", default_iv))
+                batch, hosts = [], set()
+                for t in due:                      # most overdue first, one per site, as many as there are browsers
+                    if len(batch) >= len(self._fetchers):
+                        break
+                    if self._host(t) not in hosts:
+                        batch.append(t)
+                        hosts.add(self._host(t))
+                for t in batch:
+                    pending.discard(t["name"])
+                self._run_batch(batch, report)
                 self._clock_ticks()
-                iv = t.get("interval_seconds", default_iv)
-                self.next_due[t["name"]] = time.time() + iv * random.uniform(0.85, 1.15)
+                for t in batch:
+                    iv = t.get("interval_seconds", default_iv)
+                    self.next_due[t["name"]] = time.time() + iv * random.uniform(0.85, 1.15)
                 self._save_state()
                 time.sleep(random.uniform(1, 2.5))
             if self._stop.is_set():
@@ -264,6 +309,10 @@ class Engine:
                 self.notify.send("system", f"Rip Radar {__version__} started · source check",
                                  desc="\n".join(lines)[:4000])
             self._clock_ticks()
+            try:
+                self.recap_tick()
+            except Exception as e:
+                log.warning("recap: %s", e)
             try:
                 self.board.tick()
                 self.calendar_tick()
@@ -752,6 +801,16 @@ class Engine:
                 rec["first_seen"], rec["baseline"] = now, bool(first)
                 rec["loaded_before_stock"] = not first and not x["live"]
             if x["status"] != "Listed" or "live" not in rec:
+                if rec.get("live") and not x["live"] and rec.get("live_since"):
+                    # sold out: remember how long it lasted, for the daily recap
+                    self.state.setdefault("sellouts", []).append({
+                        "store": store, "name": x["name"], "url": x["url"], "at": now,
+                        "minutes": int((now - rec["live_since"]) / 60), "focus": rec.get("focus", ""),
+                        "price": x.get("price", "")})
+                    del self.state["sellouts"][:-2000]
+                    rec.pop("live_since", None)
+                if x["live"] and not rec.get("live"):
+                    rec["live_since"] = now
                 rec["live"] = x["live"]
             if rec["live"]:
                 rec["loaded_before_stock"] = False
@@ -782,6 +841,8 @@ class Engine:
             self._refresh_target_stock(html, [c for c in changed], st)
         elif t.get("stock_pages", 2):
             self._refresh_page_stock(t, st, changed)
+        self._fill_images(t, st, changed)
+        self._attach_resale(changed)
         if use_cards:
             # listings the filters no longer want (graded slabs, lots...): take their posts down now
             kept = {x["id"] for x in cards}
@@ -954,6 +1015,33 @@ class Engine:
         s = settings_mod.load()
         return self._section(f"🏬 In-store restocks · within {s.get('restock_miles', 30)} mi of {s.get('zip', '')}", rows)
 
+    def _fill_images(self, t, st, changed, per_run=2, retry_hours=6):
+        """Tiles without a picture: open the product page and take its main image (og:image), a couple per run,
+        new / just-changed products first, so every post has a big product picture."""
+        now = time.time()
+        todo = [c for c in changed if not c[1].get("image") and now - c[1].get("img_tried", 0) > retry_hours * 3600]
+        todo.sort(key=lambda c: (not c[2], -c[1].get("first_seen", 0)))
+        for x, rec, event, _ in todo[:per_run]:
+            rec["img_tried"] = now
+            try:
+                ps, pf, ph = self._fetch({"name": t["name"], "url": x["url"], "browser": t.get("browser")}, st)
+            except Exception as e:
+                log.info("image page %s: %s", x["url"], e)
+                continue
+            if not looks_blocked(ps, ph) and ps < 400:
+                img = og_image(ph, pf)
+                if img:
+                    rec["image"] = x["image"] = img
+
+    def _attach_resale(self, changed):
+        """eBay sold price on each post (filled in by the resale checker in the background)."""
+        if not getattr(self, "resale", None):
+            return
+        for x, rec, event, _ in changed:
+            r = self.resale.lookup(rec.get("name", ""), urgent=bool(event))
+            if r:
+                rec["resale"] = self.resale.text(r, rec.get("price"))
+
     def _refresh_page_stock(self, t, st, changed, every=1800):
         """Other stores: open a couple of in-stock product pages per run and read 'Only N left' / page data."""
         now = time.time()
@@ -1015,7 +1103,7 @@ class Engine:
         """🛒 ADD TO CART / ⚡ BUY NOW where the store has direct links; otherwise the product page is the cart button."""
         if x.get("add_to_cart") or x.get("buy_now"):
             return [("🛒 Add to cart", x.get("add_to_cart")), ("⚡ Buy now", x.get("buy_now")), ("🔗 Product page", x["url"])]
-        return [("🛒 Open & add to cart", x["url"])]
+        return [("🔗 Product page (tap Add to cart there)", x["url"])]
 
     DRAW_OPEN_WORDS = ("enter drawing", "enter the drawing", "enter now", "entry open", "entries open",
                        "drawing open", "drawing is open", "drawing ends", "drawing closes", "enter for a chance")
@@ -1580,6 +1668,47 @@ class Engine:
             lines += [f"*now* · {self._icon(e)} [{self._short(e['title'])[:70]}]({e['url']}){extra(e)}" for e in undated]
         return (f"🃏 Topps release calendar · {len(self.topps)} products",
                 "\n".join(lines).strip() + "\n\n-# ⚾🏀🏈🃏 sport · times Central · *time TBA* = Topps gave the day, not the time yet")
+
+    def recap_tick(self):
+        """Once a day (Settings recap_hour, 9 PM CT by default): what dropped today, how fast it sold out, by store."""
+        hour = int(settings_mod.load().get("recap_hour", 21))
+        now = datetime.now(CT)
+        if hour < 0 or now.hour < hour or self.state.get("recap_day") == now.date().isoformat():
+            return
+        self.state["recap_day"] = now.date().isoformat()
+        title, desc = self.render_recap(now)
+        self.notify.send("system", title, desc=desc, channel="status")
+
+    def render_recap(self, now=None):
+        from collections import Counter
+        now = now or datetime.now(CT)
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        alerts = [a for a in self.state.get("alerts", []) if a.get("level") == "urgent"
+                  and datetime.fromisoformat(a["at"]).timestamp() >= start]
+        drops = [a for a in alerts if any(w in a["title"] for w in ("IN STOCK", "DRAWING", "INVITE", "LIVE", "just got"))]
+        sold = [s for s in self.state.get("sellouts", []) if s["at"] >= start]
+        by_store = Counter(STORE_NAMES.get(s, s) for s in (a.get("channel", "") for a in drops) if s)
+        lines = [f"**{len(drops)} drops** today · **{len(sold)} sold out**"]
+        if by_store:
+            lines.append("By store: " + " · ".join(f"{k} {v}" for k, v in by_store.most_common()))
+        fast = sorted(sold, key=lambda s: s["minutes"])[:8]
+        if fast:
+            lines.append("\n**⚡ Fastest sellouts**")
+            lines += [f"• {'🔥 ' if s.get('focus') else ''}[{s['name'][:60]}]({s['url']}) · {STORE_NAMES.get(s['store'], s['store'])}"
+                      f" · gone in **{self._dur(timedelta(minutes=s['minutes']))}**" for s in fast]
+        hot = [a for a in drops if a["title"].startswith("🔥") or "Focus" in str(a.get("fields", {}))][:8]
+        if hot:
+            lines.append("\n**🔥 Focus-list drops**")
+            lines += [f"• [{a['title'][:80]}]({a['url']})" for a in hot]
+        q = [h for h in self.state.get("queue_history", [])
+             if datetime.fromisoformat(h["start"]).timestamp() >= start]
+        if q:
+            lines.append("\n**Pokémon Center queue**: " + " · ".join(
+                f"{self._clock(datetime.fromisoformat(h['start']))} for {self._dur(timedelta(minutes=h['minutes']))}"
+                for h in q))
+        if not drops and not sold and not q:
+            lines.append("Quiet day: nothing came in stock.")
+        return f"📊 Daily recap · {now:%a %b} {now.day}", "\n".join(lines)[:4000]
 
     def calendar_tick(self):
         """Every loop: post newly found dates to #drop-calendar, remind 15 min before news-announced drops,

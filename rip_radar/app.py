@@ -142,6 +142,7 @@ class Api:
         allowed = {"discord_webhook", "discord_webhook_urgent", "webhooks", "ntfy_topic", "auto_update", "keep_running_when_closed", "twilio", "sms_for", "bot_token",
                    "status_every_minutes", "sports", "start_with_windows", "zip", "restock_miles", "topps_all_products",
                    "open_browser_on_queue", "keep_awake", "focus_sets", "everyone_products",
+                   "resale_check", "recap_hour",
                    "bot_triggers", "bot_reply", "bot_channel"}
         s = settings.update({k: v for k, v in (changes or {}).items() if k in allowed})
         winsys.set_autostart(bool(s.get("start_with_windows")))
@@ -288,8 +289,9 @@ class App:
         # the Pokémon Center queue gets its OWN hidden browser: it never waits behind a slow store page
         self.queue_fetcher = BrowserFetcher(scroll=False, settle=2, challenge_wait=12)
         self.stock_browser = TargetStockBrowser()
+        self.more_fetchers = [BrowserFetcher(), BrowserFetcher()]     # 3 store scanners side by side
         self.engine = Engine(browser_fetch=self.fetcher, queue_fetch=self.queue_fetcher,
-                             stock_json=self.stock_browser.get_json)
+                             stock_json=self.stock_browser.get_json, extra_browsers=self.more_fetchers)
         base_alert = self.engine.notify.on_alert
 
         def on_alert(a):
@@ -311,6 +313,8 @@ class App:
         self.fetcher.window = webview.create_window("Rip Radar scanner", url="about:blank", hidden=True)
         self.queue_fetcher.window = webview.create_window("Rip Radar queue watch", url="about:blank", hidden=True)
         self.stock_browser.window = webview.create_window("Rip Radar Target stock", url="about:blank", hidden=True)
+        for i, f in enumerate(self.more_fetchers, 2):
+            f.window = webview.create_window(f"Rip Radar scanner {i}", url="about:blank", hidden=True)
 
     # --- window / tray
     def _on_closing(self):

@@ -52,7 +52,7 @@ def test_card_has_links_picture_price_retail_and_stock():
     body = build_card("target", rec, "🟢 BACK IN STOCK at Target")
     e = body["embeds"][0]
     assert e["title"].startswith("🟢 BACK IN STOCK at Target · Pokémon TCG: Delta Reign")
-    assert e["image"]["url"] == "https://t/1.jpg" and "OPEN & ADD TO CART" in e["description"]
+    assert e["image"]["url"] == "https://t/1.jpg" and "No direct add-to-cart link" in e["description"]
     f = {x["name"]: x["value"] for x in e["fields"]}
     assert f["Price"] == "$49.99" and f["Retail (MSRP)"] == "~$49.99 · ✅ at retail"
     assert f["Stock"] == "143 available online" and "Meyerland" in f["Stores"] and f["Limit"] == "Limit 2 per order"
@@ -527,3 +527,55 @@ def test_focus_product_pings_everyone_with_fire_tag(engine):
     engine.check_retail_search(t, st, False)
     assert ("10990001", True, "2025-26 Topps Chrome Basketball") in queued
     assert ("10980001", False, "") in queued
+
+
+def test_resale_parses_ebay_sold_listings_and_skips_junk():
+    from rip_radar.resale import clean_query, parse_sold, summarize, ResaleChecker
+    q = clean_query("Pokémon TCG: Prismatic Evolutions Booster Bundle (6 Packs)")
+    assert q == "Pokémon Prismatic Evolutions Booster Bundle"
+
+    def li(title, price, cls="s-item"):
+        return (f'<li class="{cls}"><div class="{cls}__title"><span>{title}</span></div>'
+                f'<span class="{cls}__price">{price}</span></li>')
+    html = "<ul>" + "".join([
+        li("Shop on eBay", "$20.00"),
+        li("Pokemon Prismatic Evolutions Booster Bundle Sealed", "$58.00"),
+        li("Pokémon TCG Prismatic Evolutions Booster Bundle NEW", "$61.50"),
+        li("Prismatic Evolutions Booster Bundle Pokemon", "$55.00", cls="s-card"),
+        li("Prismatic Evolutions Booster Bundle LOT of 3", "$170.00"),          # lot: skipped
+        li("Prismatic Evolutions Booster Bundle EMPTY box", "$5.00"),          # empty: skipped
+        li("Surging Sparks Booster Bundle", "$40.00"),                         # other set: skipped
+        li("Prismatic Evolutions Booster Bundle", "$50.00 to $70.00")]) + "</ul>"   # range: skipped
+    prices = parse_sold(html, q)
+    assert sorted(prices) == [55.0, 58.0, 61.5]
+    r = summarize(prices)
+    assert r == {"median": 58.0, "n": 3, "low": 55.0, "high": 61.5}
+    rc = ResaleChecker({}, lambda: {})
+    txt = rc.text({**r, "q": q}, "$49.99")
+    assert txt.startswith("[$58 median of 3 sold](https://www.ebay.com/sch/i.html?_nkw=") and "🟢 +$8 (+16%)" in txt
+
+
+def test_daily_recap_and_sellout_timing(engine):
+    from datetime import timezone as _tz
+    settings.update({"webhooks": {"target": "https://t"}})
+    engine.cards.request = lambda *a, **k: None
+    t = next(x for x in engine.targets() if x["name"] == "Target · Pokémon cards")
+
+    def tile(button):
+        return ('<div><a href="/p/x/-/A-55500001"><img alt="Pokémon TCG: Prismatic Evolutions Booster Bundle" '
+                f'src="https://t/1.jpg"></a><span>$29.99</span><button>{button}</button></div>' + PAD)
+    st = {}
+    engine.fetcher = FakeFetch(PAD, t["url"])
+    engine.check_retail_search(t, st, True)
+    engine.fetcher = FakeFetch(tile("Add to cart"), t["url"])
+    engine.check_retail_search(t, st, False)
+    st["items"]["55500001"]["live_since"] -= 600            # 10 minutes later...
+    engine.fetcher = FakeFetch(tile("Out of stock"), t["url"])
+    engine.check_retail_search(t, st, False)
+    (sold,) = engine.state["sellouts"]
+    assert sold["minutes"] == 10 and sold["focus"] == "Prismatic Evolutions Booster Bundle"
+    engine.state["alerts"].insert(0, {"level": "urgent", "title": "🟢 NEW & IN STOCK at Target: x", "url": "u",
+                                      "channel": "target", "at": datetime.now(_tz.utc).isoformat()})
+    title, desc = engine.render_recap()
+    assert title.startswith("📊 Daily recap") and "1 sold out" in desc and "gone in **10 min**" in desc
+    assert "Target 2" in desc                     # the real in-stock alert + the one added above

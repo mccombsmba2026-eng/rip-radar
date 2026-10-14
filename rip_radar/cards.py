@@ -40,8 +40,11 @@ def build_card(store, rec, headline=""):
         links.append(("🛒 ADD TO CART", rec["add_to_cart"]))
     if rec.get("buy_now"):
         links.append(("⚡ BUY NOW", rec["buy_now"]))
-    links.append(("🔗 PRODUCT PAGE" if links else "🛒 OPEN & ADD TO CART", rec.get("url", "")))
+    links.append(("🔗 PRODUCT PAGE", rec.get("url", "")))
     desc = "   ".join(f"**[{a}]({u})**" for a, u in links if u)
+    if not rec.get("add_to_cart"):
+        # Target, GameStop, Hot Topic, Costco... have no link that adds to cart: say so instead of faking one
+        desc += "\n-# No direct add-to-cart link at this store: open the page and tap Add to cart"
     if headline and headline != label:
         desc = f"Now: **{label}**\n\n" + desc
     fields = []
@@ -64,6 +67,7 @@ def build_card(store, rec, headline=""):
     add("Stock", rec.get("stock") or ("in stock (count not shown by this store)" if rec.get("live") else
                                       rec.get("status", "")))
     add("🔥 Focus", rec.get("focus"))
+    add("💸 Resale (eBay sold)", rec.get("resale"), inline=False)
     add("Limit", rec.get("limit"))
     if rec.get("when"):
         from .parsing import fmt_when
