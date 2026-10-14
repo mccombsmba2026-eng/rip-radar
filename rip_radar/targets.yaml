@@ -145,6 +145,7 @@ targets:
   - name: Dick's · Pokémon cards
     type: retail_search
     store: dicks
+    cards_only: true
     products: pokemon
     url: https://www.dickssportinggoods.com/search/SearchDisplay?searchTerm=pokemon+cards
     browser: true
@@ -155,6 +156,7 @@ targets:
   - name: Dick's · sports cards
     type: retail_search
     store: dicks
+    cards_only: true
     products: sports
     url: https://www.dickssportinggoods.com/search/SearchDisplay?searchTerm=trading+cards
     browser: true
@@ -183,6 +185,7 @@ targets:
   - name: Amazon · Pokémon cards
     type: retail_search
     store: amazon
+    cards_only: true
     products: pokemon
     url: https://www.amazon.com/s?k=pokemon+trading+cards&rh=p_6%3AATVPDKIKX0DER&s=date-desc-rank
     browser: true
@@ -193,6 +196,7 @@ targets:
   - name: Amazon · sports cards
     type: retail_search
     store: amazon
+    cards_only: true
     products: sports
     url: https://www.amazon.com/s?k=topps+trading+cards&rh=p_6%3AATVPDKIKX0DER&s=date-desc-rank
     browser: true
@@ -205,6 +209,7 @@ targets:
   - name: Costco · Pokémon cards
     type: retail_search
     store: costco
+    cards_only: true
     products: pokemon
     url: https://www.costco.com/CatalogSearch?dept=All&keyword=pokemon%20cards
     browser: true
@@ -215,6 +220,7 @@ targets:
   - name: Costco · sports cards
     type: retail_search
     store: costco
+    cards_only: true
     products: sports
     url: https://www.costco.com/CatalogSearch?dept=All&keyword=trading%20cards
     browser: true
@@ -283,6 +289,7 @@ targets:
   - name: Barnes & Noble · Pokémon cards
     type: retail_search
     store: barnes
+    cards_only: true
     products: pokemon
     url: https://www.barnesandnoble.com/b/pokemon/_/N-2jle
     browser: true
@@ -293,6 +300,7 @@ targets:
   - name: Barnes & Noble · sports cards
     type: retail_search
     store: barnes
+    cards_only: true
     products: sports
     url: https://www.barnesandnoble.com/collections/toys-games/games/collectible-card-games-1
     browser: true
@@ -303,6 +311,7 @@ targets:
   - name: GameStop · Pokémon cards
     type: retail_search
     store: gamestop
+    cards_only: true
     products: pokemon
     url: https://www.gamestop.com/search/?q=pokemon%20trading%20card%20game
     browser: true
@@ -313,6 +322,7 @@ targets:
   - name: GameStop · sports cards
     type: retail_search
     store: gamestop
+    cards_only: true
     products: sports
     url: https://www.gamestop.com/search/?q=sports%20trading%20cards
     browser: true
@@ -320,10 +330,11 @@ targets:
     verify_pages: 3
     interval_seconds: 420
 
-  - name: Hot Topic · trading cards
+  - name: Hot Topic · sports cards
     type: retail_search
     store: hottopic
-    products: cards
+    cards_only: true
+    products: sports
     url: https://www.hottopic.com/search?q=trading%20cards
     browser: true
     channel: hottopic
@@ -333,8 +344,9 @@ targets:
   - name: Hot Topic · Pokémon cards
     type: retail_search
     store: hottopic
+    cards_only: true
     products: pokemon
-    url: https://www.hottopic.com/search?q=pokemon%20tcg
+    url: https://www.hottopic.com/search?q=pokemon%20trading%20card%20game
     browser: true
     channel: hottopic
     verify_pages: 1

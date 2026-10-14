@@ -99,6 +99,9 @@ captchas, and never automates purchases. Keep it that way.
   check, quiet hours `settings["quiet_hours"]` (2-6 AM: store intervals x2). Target tripwire thread
   (`target_tripwire_tick`): hot Target items not in stock (ETB/UPC, focus, #watch) get a product_fulfillment check
   every 90 s (≤120/h); a flip to in stock re-scans Target immediately. Topps calendar 90 s, sitemap hot items 60 s.
+- `cards_only: true` (1.0.40) on Barnes & Noble, Hot Topic, Amazon, GameStop, Dick's, Costco: each has exactly one
+  Pokémon-cards scan + one sports-cards scan, and keeps CARDS only (`parsing.is_card_only`: sealed or singles; no
+  accessories / merch). Other stores keep M's broader rule (sealed + singles + Pokémon accessories).
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

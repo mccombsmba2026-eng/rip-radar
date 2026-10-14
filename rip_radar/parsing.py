@@ -1220,3 +1220,24 @@ def watch_match(w, name, store=""):
         alts = [word] + ([_fold(WATCH_SYNONYMS[word]).strip()] if word in WATCH_SYNONYMS else [])
         return any(re.search(r"(?<![a-z0-9])" + re.escape(a) + r"(?![a-z0-9])", t) for a in alts)
     return all(has(x) for x in w["words"]) and not any(has(x) for x in w.get("exclude", []))
+
+
+
+def is_accessory_only(text):
+    """Sleeves, binders, playmats, deck boxes, toploaders... with no cards in them."""
+    t = " " + re.sub(r"[-_/]+", " ", (text or "").lower()) + " "
+    has = lambda words: any(re.search(r"\b" + re.escape(w) + r"s?\b", t) for w in words)
+    acc = has(TCG_ACCESSORY) or any(w in t for w in CARD_ACCESSORY if w.strip() not in ("psa", "bgs", "sgc"))
+    return acc and not has(SEALED_RESCUE)
+
+
+def is_card_only(text, kind="cards"):
+    """Strict 'cards only' (per-source `cards_only: true`): Pokémon / sports card product - sealed or singles - never
+    accessories or merch."""
+    if is_accessory_only(text):
+        return False
+    if kind == "pokemon":
+        return is_pokemon_product(text)
+    if kind == "sports":
+        return is_sports_card_product(text)
+    return is_pokemon_product(text) or is_sports_card_product(text)

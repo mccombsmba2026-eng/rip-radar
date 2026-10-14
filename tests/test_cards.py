@@ -684,3 +684,18 @@ def test_site_budget_and_quiet_hours(engine):
     assert engine._slow_factor() == 2
     settings.update({"quiet_hours": []})
     assert engine._slow_factor() == 1
+
+
+def test_general_stores_are_cards_only(engine):
+    from rip_radar.parsing import is_card_only
+    assert not is_card_only("Ultra Pro Pokemon TCG Deck Protector Sleeves 65-Count", "pokemon")
+    assert not is_card_only("Pokémon TCG: Eevee Binder", "pokemon")
+    assert is_card_only("Pokemon Charizard ex 199/165 Special Illustration Rare", "pokemon")
+    assert is_card_only("Pokémon TCG: Phantasmal Flames Elite Trainer Box", "pokemon")
+    assert is_card_only("2025 Topps Chrome Football Hobby Box", "sports")
+    stores = {}
+    for t in engine.targets():
+        if t.get("store") in ("barnes", "hottopic", "amazon", "gamestop", "dicks", "costco"):
+            assert t.get("cards_only"), t["name"]
+            stores.setdefault(t["store"], set()).add(t.get("products"))
+    assert all(v == {"pokemon", "sports"} for v in stores.values()), stores     # one Pokémon + one sports scan each

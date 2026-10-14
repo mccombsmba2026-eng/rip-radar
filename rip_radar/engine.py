@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 from . import __version__, paths, settings as settings_mod
 from .msrp import msrp_text, price_check
 from .notify import CHANNELS, STORE_NAMES, ChatBot, LiveBoard, Notifier, StatusBoard, store_in
-from .parsing import (CT, focus_match, og_image, parse_watch, watch_match, wall_kind, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
+from .parsing import (CT, focus_match, is_card_only, og_image, parse_watch, watch_match, wall_kind, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
                       topps_sitemap_numbers, LIVE_STATUSES, RETAIL_STORES, categorize, extract_when, fmt_when, gcal_link, is_card_product,
                       is_etb_or_upc, is_pokemon_product, is_sports_card_product, is_tcg_product, looks_blocked, parse_retail_tiles, parse_topps_calendar,
                       parse_topps_product_page, humanize_handle, tile_status, drawing_window, next_data, sport_of, stock_hint,
@@ -864,6 +864,9 @@ class Engine:
                                                                                        self._wanted_card)
         if store == "pokemon":
             keep = is_tcg_product       # everything at Pokémon Center is Pokémon, names don't always say so
+        if t.get("cards_only"):         # general-merch stores: Pokémon / sports CARDS only, no binders or plush
+            base_keep, kind = keep, t.get("products", "cards")
+            keep = lambda text, b=base_keep, k=kind: b(text) and is_card_only(text, k)
         cap = float(t.get("max_price", 0) or 0)
         cards = [x for x in tiles if keep(f"{x['name']} {x['url']}")
                  and not (cap and x["price"] and float(x["price"].strip("$").replace(",", "")) > cap)]
