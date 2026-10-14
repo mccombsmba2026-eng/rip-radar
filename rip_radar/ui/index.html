@@ -265,7 +265,6 @@ details summary{cursor:pointer;font-weight:600}
         <label class="switch"><input type="checkbox" value="Football"> Football</label>
       </div>
       <label class="switch"><input type="checkbox" id="sOpenQueue"> When the Pokémon Center queue goes live, open it in Chrome on this PC</label>
-      <label class="switch"><input type="checkbox" id="sAwake"> Keep this PC awake while Rip Radar runs (the screen can still turn off)</label>
       <label class="switch"><input type="checkbox" id="sToppsAll"> Topps: every product line (Disney, Star Wars, F1, soccer…), not just these sports</label>
 
       <h2>This computer</h2>
@@ -486,7 +485,7 @@ function renderSettings(){
   $("#sTwSid").value = tw.account_sid||""; $("#sTwTok").value = tw.auth_token||""; $("#sTwFrom").value = tw.from||""; $("#sTwTo").value = tw.to||"";
   document.querySelectorAll("#sSports input").forEach(i => i.checked = (s.sports||[]).includes(i.value));
   $("#sToppsAll").checked = s.topps_all_products !== false;
-  $("#sOpenQueue").checked = s.open_browser_on_queue !== false; $("#sAwake").checked = s.keep_awake !== false;
+  $("#sOpenQueue").checked = s.open_browser_on_queue !== false;
 }
 
 // ---------- actions
@@ -530,7 +529,7 @@ async function saveSettings(quiet){
     discord_webhook: $("#sHook").value.trim(), discord_webhook_urgent: $("#sHookUrgent").value.trim(),
     webhooks: Object.fromEntries([...document.querySelectorAll("[data-hook]")].map(i => [i.dataset.hook, i.value.trim()])),
     start_with_windows: $("#sAuto").checked, auto_update: $("#sAutoUpd").checked, keep_running_when_closed: $("#sKeep").checked, bot_token: $("#sBot").value.trim(), bot_triggers: $("#sBotTrig").value.split(",").map(x=>x.trim()).filter(Boolean), bot_channel: $("#sBotChan").value.trim(), bot_reply: $("#sBotReply").value, ntfy_topic: $("#sNtfy").value.trim(), zip: $("#sZip").value.trim(), restock_miles: parseInt($("#sMiles").value)||30,
-    sports: sports.length ? sports : ["Baseball","Basketball","Football"], topps_all_products: $("#sToppsAll").checked, open_browser_on_queue: $("#sOpenQueue").checked, keep_awake: $("#sAwake").checked,
+    sports: sports.length ? sports : ["Baseball","Basketball","Football"], topps_all_products: $("#sToppsAll").checked, open_browser_on_queue: $("#sOpenQueue").checked,
     twilio: {account_sid:$("#sTwSid").value.trim(), auth_token:$("#sTwTok").value.trim(), from:$("#sTwFrom").value.trim(), to:$("#sTwTo").value.trim()}
   });
   if(!quiet) msg($("#sSaveMsg"),"Saved.","good");

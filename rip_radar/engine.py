@@ -198,9 +198,6 @@ class Engine:
     # ------------------------------------------------------------ main loop
     def _loop(self):
         s = settings_mod.load()
-        if s.get("keep_awake", True):
-            from .winsys import keep_awake
-            keep_awake(True)          # this thread lives as long as the app: Windows won't sleep while it scans
         if s.get("bot_token"):
             self.bot.start(s["bot_token"])
         default_iv = self.builtin.get("default_interval_seconds", 90)
