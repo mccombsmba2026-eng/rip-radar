@@ -999,3 +999,28 @@ def test_post_shows_resale_state(engine):
     engine._resale_ready(engine.resale.key(rec["name"]), {"ok": True, "median": 75.0, "n": 9, "low": 60, "high": 90,
                                                           "q": "x", "at": 0})
     assert "$75 median of 9 sold" in rec["resale"]
+
+
+def test_price_list(engine, monkeypatch):
+    from rip_radar import settings as settings_mod
+    from datetime import datetime, timedelta
+    from rip_radar.parsing import CT
+    base = settings_mod.load()
+    s = dict(base, focus_sets=["Prismatic Evolutions"], everyone_products=[
+        "2025-26 Topps Chrome Basketball", "2025-26 NBA Hoops", "2025-26 Topps Hoops Basketball", "Cooper Flagg"])
+    monkeypatch.setattr(settings_mod, "load", lambda: s)
+    items = engine.price_list_items()
+    labels = {(sec, lab) for sec, lab, *_ in items}
+    assert labels == {("pokemon", "Prismatic Evolutions"), ("sports", "2025-26 Topps Chrome"),
+                      ("sports", "2025-26 NBA Hoops")}                   # Hoops once, Cooper Flagg (a name) left out
+    queued = []
+    monkeypatch.setattr(engine.resale, "lookup", lambda q, urgent=False, priority=None: queued.append((q, priority)))
+    assert engine.price_list_tick(force=True) == len(items) and all(p == 1 for _, p in queued)
+    etb = engine.resale.key("Pokemon Prismatic Evolutions Elite Trainer Box")
+    yday = (datetime.now(CT) - timedelta(days=1)).date().isoformat()
+    engine.state.setdefault("price_history", {})[etb] = {yday: {"median": 80.0, "n": 10}}
+    engine._resale_ready(etb, {"ok": True, "median": 92.0, "n": 12, "low": 80, "high": 110, "q": "x", "at": 0})
+    text = "\n".join(d for _, d in engine._render_prices())
+    assert "🔥 **Prismatic Evolutions**" in text and "ETB **$92** ▲15% (1.3× retail)" in text
+    assert "🟢 **2025-26 Topps Chrome**" in text and "⏳" in text
+    assert engine.handle_watch_command("prices")[0].startswith("**💸 Price list")

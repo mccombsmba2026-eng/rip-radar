@@ -26,6 +26,7 @@ CHANNELS = {"topps": "Topps products (formats, in stock)", "topps_calendar": "To
             "instore": "Mat local (in-store restocks near your ZIP)",
             "lookup": "In store look up (type a ZIP)",
             "watch": "Watch by name (@everyone · type watch / test / watching)",
+            "prices": "Price list (daily eBay resale · 🔥 sets + @everyone products)",
             "drawings": "Drawings & raffles (all stores)", "calendar": "Drop calendar (all announced dates)",
             "status": "App status"}
 STORE_NAMES = {"topps": "Topps", "pokemon": "Pokémon Center", "walmart": "Walmart", "target": "Target",
@@ -187,7 +188,9 @@ class LiveBoard:
         self.last_body = None
 
     def hook(self):
-        return ((self.get_settings().get("webhooks") or {}).get(self.channel) or "")
+        hooks = self.get_settings().get("webhooks") or {}
+        chans = self.channel if isinstance(self.channel, (list, tuple)) else [self.channel]
+        return next((hooks[c] for c in chans if str(hooks.get(c) or "").startswith("http")), "")
 
     def _body(self, render):
         parts = render()

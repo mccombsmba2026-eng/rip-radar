@@ -102,6 +102,9 @@ class Engine:
         self.drawings_board = LiveBoard(settings_mod.load, "drawings", self.state, "board_drawings", every_minutes=5)
         self.restock_board = LiveBoard(settings_mod.load, "instore", self.state, "board_instore", every_minutes=15)
         self._restock_board_dirty = False
+        # 💸 daily eBay price list: own channel if set, else #watch
+        self.prices_board = LiveBoard(settings_mod.load, ("prices", "watch"), self.state, "board_prices",
+                                      every_minutes=30, color=0x2ECC71)
         self.formats_board = LiveBoard(settings_mod.load, "topps", self.state, "board_topps", every_minutes=5,
                                        color=STORE_COLORS.get("topps"))
         self.sync_at = 0
@@ -578,6 +581,10 @@ class Engine:
                 self.recap_tick()
             except Exception as e:
                 log.warning("recap: %s", e)
+            try:
+                self.price_list_tick()
+            except Exception as e:
+                log.warning("price list: %s", e)
             try:
                 self.board.tick()
                 self.calendar_tick()
@@ -1436,6 +1443,8 @@ class Engine:
         """A lookup finished: write the value (or why there isn't one) on every waiting post and edit those posts
         now (no new ping)."""
         waiting = self._resale_posts.pop(key, {})
+        if result and key in self._price_keys():
+            self._record_price(key, result)
         if not result:
             return
         for (store, pid), rec in waiting.items():
@@ -1493,6 +1502,7 @@ class Engine:
                   "at other stores too) · tap ✅ → kept (`kept` lists them)\n"
                   "• `block funko` → block by words · `blocked` → the list · `unblock 3` → undo\n"
                   "• `value prismatic etb` → what it sells for on eBay right now · `resale` → is eBay answering\n"
+                  "• `prices` → the 💸 daily price list (🔥 sets + @everyone products) · `prices refresh` → update now\n"
                   "• `watch tcin 94681234` or paste a Target link → that exact Target product ID, checked every ~90 s: "
                   "@everyone when it gets LOADED, a DRAWING is set up, or it's IN STOCK · `unwatch tcin 94681234`")
 
@@ -1724,6 +1734,15 @@ class Engine:
                 return [f"💸 **{q}** · eBay answered, but no recent sold listings match all of those words. Try "
                         "fewer / different words."]
             return [f"💸 eBay didn't answer. {self.resale.health()}"]
+        if low in ("prices", "price list", "pricelist"):
+            out = []
+            for title, desc in self._render_prices():
+                out.append(f"**{title}**\n{desc}"[:1990])
+            return out
+        if low in ("prices refresh", "refresh prices", "update prices"):
+            n = self.price_list_tick(force=True)
+            return [f"💸 Refreshing the price list: {n} eBay lookups queued (one every ~15 s, about "
+                    f"{max(1, n * 15 // 60)} min). The board fills in as they come back."]
         if low in ("resale", "resale status", "ebay"):
             return [self.resale.health()]
         if cmd == "block" and rest:
@@ -2423,6 +2442,120 @@ class Engine:
         return (f"🃏 Topps release calendar · {len(self.topps)} products",
                 "\n".join(lines).strip() + "\n\n-# ⚾🏀🏈🃏 sport · times Central · *time TBA* = Topps gave the day, not the time yet")
 
+    # ------------------------------------------------------------ 💸 daily price list (🔥 sets + @everyone products)
+    POKEMON_FORMATS = (("Booster Box", "Box"), ("Booster Bundle", "Bundle"), ("Elite Trainer Box", "ETB"))
+    SPORTS_FORMATS = (("Hobby Box", "Hobby"), ("Mega Box", "Mega"), ("Blaster Box", "Blaster"))
+
+    def price_list_items(self):
+        """-> [(section, row label, column label, eBay query, retail)] for every 🔥 focus set and @everyone product.
+        Near-duplicate @everyone phrases ("NBA Hoops" / "Topps Hoops Basketball") become one row; names without a
+        product line (Cooper Flagg) are left out - they're singles, which the app doesn't track."""
+        from .msrp import typical_price
+        from .parsing import DEFAULT_EVERYONE_PRODUCTS, DEFAULT_FOCUS_SETS
+        s = settings_mod.load()
+        sets = s.get("focus_sets")
+        sets = DEFAULT_FOCUS_SETS if sets is None else sets
+        everyone = s.get("everyone_products")
+        everyone = DEFAULT_EVERYONE_PRODUCTS if everyone is None else everyone
+        out = []
+        for name in [x.strip() for x in sets if x.strip()]:
+            for fmt, col in self.POKEMON_FORMATS:
+                q = f"Pokemon {name} {fmt}"
+                tp = typical_price(q.lower(), "pokemon")
+                out.append(("pokemon", name, col, q, tp[0] if tp else None))
+        seen = set()
+        for phrase in [x.strip() for x in everyone if x.strip()]:
+            if not re.search(r"\b(?:19|20)\d{2}\b", phrase):
+                continue                              # a player name, not a product line
+            words = re.sub(r"\bupdates\b", "update", phrase.lower())
+            key = " ".join(w for w in words.split() if w not in ("topps", "nba", "basketball", "the"))
+            if key in seen:
+                continue
+            seen.add(key)
+            label = re.sub(r"\s+basketball$", "", phrase, flags=re.I)
+            for fmt, col in self.SPORTS_FORMATS:
+                q = f"{phrase} {fmt}"
+                if "basketball" not in q.lower():
+                    q = f"{phrase} Basketball {fmt}"
+                tp = typical_price(q.lower(), "sports")
+                out.append(("sports", label, col, q, tp[0] if tp else None))
+        return out
+
+    def _price_keys(self):
+        return {self.resale.key(q) for *_, q, _ in self.price_list_items()}
+
+    def _record_price(self, key, result):
+        hist = self.state.setdefault("price_history", {}).setdefault(key, {})
+        day = datetime.now(CT).date().isoformat()
+        if result.get("median"):
+            hist[day] = {"median": result["median"], "n": result.get("n", 0)}
+        for d in sorted(hist)[:-30]:                  # keep a month
+            hist.pop(d, None)
+        self._prices_dirty = True
+
+    def price_list_tick(self, force=False):
+        """Once a day (Settings price_list_hour, 8 AM CT): look every item up on eBay again (one every ~15 s, in
+        the background) - the board fills in as answers come back, with the change since the day before."""
+        hour = int(settings_mod.load().get("price_list_hour", 8))
+        now = datetime.now(CT)
+        if not force and (hour < 0 or now.hour < hour or self.state.get("price_list_day") == now.date().isoformat()):
+            if getattr(self, "_prices_dirty", False):
+                self._prices_dirty = False
+                self.prices_board.tick(self._render_prices, force=True)
+            return 0
+        self.state["price_list_day"] = now.date().isoformat()
+        n = 0
+        for *_, q, _ in self.price_list_items():
+            k = self.resale.key(q)
+            hit = self.resale.cache.get(k)
+            if hit and hit.get("at", 0) > time.time() - 6 * 3600:
+                self._record_price(k, hit)            # looked up in the last 6 h: good enough for today
+                continue
+            self.resale.cache.pop(k, None)
+            self.resale.lookup(q, priority=1)       # ahead of background valuing, behind live drops
+            n += 1
+        self._prices_dirty = True
+        return n
+
+    def _price_cell(self, key, retail=None):
+        hist = self.state.get("price_history", {}).get(key) or {}
+        days = sorted(hist)
+        if not days:
+            hit = self.resale.cache.get(key) or {}
+            return "—" if hit.get("ok") else "⏳"
+        cur = hist[days[-1]]["median"]
+        cell = f"**${cur:,.0f}**"
+        prev = next((hist[d]["median"] for d in reversed(days[:-1])), None)
+        if prev:
+            pct = (cur - prev) / prev * 100
+            if abs(pct) >= 1:
+                cell += f" {'▲' if pct > 0 else '▼'}{abs(pct):.0f}%"
+        if retail:
+            cell += f" ({cur / retail:.1f}× retail)"
+        return cell
+
+    def _render_prices(self):
+        items = self.price_list_items()
+        rows = {}
+        for section, label, col, q, retail in items:
+            rows.setdefault((section, label), []).append(f"{col} {self._price_cell(self.resale.key(q), retail)}")
+        poke = [f"🔥 **{label}** · " + " · ".join(cells) for (sec, label), cells in rows.items() if sec == "pokemon"]
+        hoops = [f"🟢 **{label}** · " + " · ".join(cells) for (sec, label), cells in rows.items() if sec == "sports"]
+        day = self.state.get("price_list_day") or "not run yet"
+        foot = (f"\n-# eBay SOLD listings, median of recent sales (lots / graded / empty boxes left out) · refreshed "
+                f"daily at {int(settings_mod.load().get('price_list_hour', 8)) % 12 or 12} "
+                f"{'AM' if int(settings_mod.load().get('price_list_hour', 8)) < 12 else 'PM'} CT · last: {day} · "
+                f"▲▼ = change since the previous day · — = no recent sales found · ⏳ = looking it up")
+        out = []
+        if poke:
+            out.append(("💸 Price list · 🔥 Pokémon focus sets", "\n".join(poke)))
+        if hoops:
+            out.append(("💸 Price list · 🟢 @everyone basketball", "\n".join(hoops)))
+        if not out:
+            out.append(("💸 Price list", "Add focus sets / @everyone products in Settings → Focus."))
+        title, desc = out[-1]
+        out[-1] = (title, desc + foot)
+        return out
     def recap_tick(self):
         """Once a day (Settings recap_hour, 9 PM CT by default): what dropped today, how fast it sold out, by store."""
         hour = int(settings_mod.load().get("recap_hour", 21))
@@ -2489,7 +2622,8 @@ class Engine:
     # ------------------------------------------------------------ channel boards (current state of each channel)
     def _all_boards(self):
         out = [(self.cal_board, self._render_calendar), (self.topps_board, self._render_topps_board),
-               (self.drawings_board, self._render_drawings), (self.restock_board, self._render_restocks)]
+               (self.drawings_board, self._render_drawings), (self.restock_board, self._render_restocks),
+               (self.prices_board, self._render_prices)]
         return out
 
     def _retire_store_boards(self):

@@ -152,6 +152,13 @@ captchas, and never automates purchases. Keep it that way.
   value, or "No recent eBay sales match this product", or "⚠️ eBay didn't answer · retrying in 30 min"
   (`Engine.RESALE_*`). `resale.health()` line in the startup message; `_resale_watchdog` posts to #app-status once
   after 15 failures in a row (and once when it works again). #watch: `value <product>` (live eBay lookup) and `resale`.
+- 1.0.50 💸 PRICE LIST: `prices` channel (webhook "prices", else falls back to #watch - `LiveBoard` channel may be a
+  preference tuple). `price_list_items()`: every focus set x (Booster Box, Booster Bundle, ETB) and every @everyone
+  phrase that names a product line (has a year; near-duplicates like NBA Hoops / Topps Hoops collapse; names like
+  Cooper Flagg skipped) x (Hobby, Mega, Blaster). `price_list_tick` once a day at `price_list_hour` (8 AM CT, -1 off):
+  re-looks each up on eBay at resale priority 1 (0 = live drops, 2 = background); results -> `state["price_history"]`
+  (30 days) via `_resale_ready` -> self-editing board: median, ▲▼ % vs the previous day, × retail (msrp). #watch:
+  `prices`, `prices refresh`.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

@@ -11,7 +11,7 @@ DEFAULTS = {
     # one channel per store; empty = that store's alerts go to discord_webhook
     "webhooks": {"topps": "", "topps_calendar": "", "pokemon": "", "pokemon_queue": "", "walmart": "", "target": "",
                  "dicks": "", "amazon": "", "bestbuy": "", "costco": "", "samsclub": "", "pharmacy": "", "ace": "",
-                 "barnes": "", "gamestop": "", "hottopic": "", "watch": "", "instore": "", "drawings": "", "calendar": "", "status": ""},
+                 "barnes": "", "gamestop": "", "hottopic": "", "watch": "", "prices": "", "instore": "", "drawings": "", "calendar": "", "status": ""},
     "ntfy_topic": "",
     "twilio": {"account_sid": "", "auth_token": "", "from": "", "to": ""},
     "sms_for": ["urgent"],
@@ -36,6 +36,7 @@ DEFAULTS = {
     "keep_awake": False,
     "resale_check": True,
     "watch_terms": [],
+    "price_list_hour": 8,        # daily eBay price list refresh (CT hour); -1 = off
     "watch_tcins": [],           # Target product IDs watched from #watch (`watch tcin 94681234`)
     "blocked_products": [],      # ❌ in Discord / `block <words>` in #watch: never posted
     "quiet_hours": [2, 6],           # store pages half as often 2-6 AM CT (queue + drawings stay full speed)

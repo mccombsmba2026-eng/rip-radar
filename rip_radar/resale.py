@@ -101,7 +101,7 @@ class ResaleChecker:
     def enabled(self):
         return self.get_settings().get("resale_check", True)
 
-    def lookup(self, name, urgent=False):
+    def lookup(self, name, urgent=False, priority=None):
         """Cached result (or None) - and queue a fresh search when there isn't one."""
         if not self.enabled() or not name:
             return None
@@ -113,7 +113,8 @@ class ResaleChecker:
         with self._lock:
             if key not in self.queued or urgent:
                 self.queued.add(key)
-                self.q.put((0 if urgent else 1, time.time(), q))
+                # 0 = live drop (no wait) · 1 = daily price list · 2 = background valuing
+                self.q.put((0 if urgent else (priority if priority is not None else 2), time.time(), q))
         self._start()
         return hit if hit and hit.get("median") else None
 
