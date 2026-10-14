@@ -172,3 +172,40 @@ def reveal(path):
             open_path(os.path.dirname(str(path)))
     except OSError as e:
         log.warning("reveal failed: %s", e)
+
+
+def open_in_chrome(url):
+    """Open a page in the person's own Chrome (their sign-ins), else their default browser. Windows only;
+    elsewhere it does nothing. Used when the Pokémon Center queue goes live, so the page is already open."""
+    if sys.platform != "win32":
+        return False
+    candidates = [os.path.join(os.environ.get(v, ""), r"Google\Chrome\Application\chrome.exe")
+                  for v in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA")]
+    for exe in candidates:
+        if exe and os.path.isfile(exe):
+            try:
+                subprocess.Popen([exe, "--new-window", url], close_fds=True)
+                return True
+            except OSError as e:
+                log.warning("couldn't start Chrome: %s", e)
+    try:
+        os.startfile(url)          # default browser
+        return True
+    except OSError as e:
+        log.warning("couldn't open browser: %s", e)
+        return False
+
+
+def keep_awake(on=True):
+    """Stop Windows from going to sleep while Rip Radar runs (the screen may still turn off). Must be called from
+    a thread that stays alive - the setting lasts as long as that thread. Closing the laptop lid is separate
+    (Power Options -> 'When I close the lid: Do nothing')."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+    try:
+        return bool(ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if on else 0)))
+    except Exception as e:
+        log.warning("keep awake: %s", e)
+        return False

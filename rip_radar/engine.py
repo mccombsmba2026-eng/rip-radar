@@ -198,6 +198,9 @@ class Engine:
     # ------------------------------------------------------------ main loop
     def _loop(self):
         s = settings_mod.load()
+        if s.get("keep_awake", True):
+            from .winsys import keep_awake
+            keep_awake(True)          # this thread lives as long as the app: Windows won't sleep while it scans
         if s.get("bot_token"):
             self.bot.start(s["bot_token"])
         default_iv = self.builtin.get("default_interval_seconds", 90)
@@ -527,6 +530,14 @@ class Engine:
             self.notify.send("urgent", t.get("alert_title", "🚨 POKÉMON CENTER QUEUE IS LIVE"), t["url"],
                              {"Went up (CT)": self._clock(now), "Detected": detected},
                              links=[("Join the queue", t["url"])], ping=True)
+            if settings_mod.load().get("open_browser_on_queue", True):
+                # open Pokémon Center in M's own Chrome right away, so the line is already up on screen when he
+                # gets to the PC - he joins it himself (the app never enters queues)
+                try:
+                    from .winsys import open_in_chrome
+                    open_in_chrome(t["url"])
+                except Exception as e:
+                    log.warning("open browser on queue: %s", e)
         if not active:
             # one self-editing line so you can see it's watching; nothing new is posted until a queue goes up
             left = self.drop_mode()

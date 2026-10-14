@@ -466,3 +466,22 @@ def test_amazon_invite_request_pings_everyone_in_amazon_and_drawings(engine):
     engine.check_retail_search(t, st, False)
     assert queued == [("B0DELTA123", True, "🎟️ INVITE REQUEST OPEN at Amazon")]          # #amazon card, @everyone
     assert sent and sent[0][1] == "drawings" and sent[0][2] is True                        # + #drawings, @everyone
+
+
+def test_hot_topic_and_queue_opens_chrome(engine, monkeypatch):
+    from rip_radar import winsys
+    from rip_radar.parsing import parse_retail_tiles
+    html = ('<div><a href="/product/pokemon-tcg-mega-evolution-phantasmal-flames-elite-trainer-box/35621193.html">'
+            '<img alt="Pokémon TCG: Mega Evolution Phantasmal Flames Elite Trainer Box" src="https://i/1.jpg"></a>'
+            '<span>$59.99</span><button>Add to Bag</button></div>' + PAD)
+    (x,) = parse_retail_tiles(html, "https://www.hottopic.com/toys-collectibles/games/trading-cards/", "hottopic")
+    assert x["id"] == "35621193" and x["live"]
+    opened = []
+    monkeypatch.setattr(winsys, "open_in_chrome", lambda url: opened.append(url) or True)
+    engine.notify.send = lambda *a, **k: True
+    t = next(x for x in engine.targets() if x.get("track_duration"))
+    engine._track_queue(t, {}, True, False, "test")
+    assert opened == ["https://www.pokemoncenter.com/"]
+    settings.update({"open_browser_on_queue": False})
+    engine._track_queue(t, {}, True, False, "test")
+    assert len(opened) == 1

@@ -11,7 +11,7 @@ DEFAULTS = {
     # one channel per store; empty = that store's alerts go to discord_webhook
     "webhooks": {"topps": "", "topps_calendar": "", "pokemon": "", "pokemon_queue": "", "walmart": "", "target": "",
                  "dicks": "", "amazon": "", "bestbuy": "", "costco": "", "samsclub": "", "pharmacy": "", "ace": "",
-                 "barnes": "", "gamestop": "", "instore": "", "drawings": "", "calendar": "", "status": ""},
+                 "barnes": "", "gamestop": "", "hottopic": "", "instore": "", "drawings": "", "calendar": "", "status": ""},
     "ntfy_topic": "",
     "twilio": {"account_sid": "", "auth_token": "", "from": "", "to": ""},
     "sms_for": ["urgent"],
@@ -25,7 +25,9 @@ DEFAULTS = {
     "sports": ["Baseball", "Basketball", "Football"],
     "zip": "77007",                  # Target stock counts + in-store restock tracker for stores near this ZIP
     "restock_miles": 30,
-    "drop_mode_until": 0,            # Pokémon Center drop mode: queue every 30 s until this time
+    "drop_mode_until": 0,
+    "open_browser_on_queue": True,   # queue goes live -> open pokemoncenter.com in Chrome on this PC
+    "keep_awake": True,              # stop Windows from sleeping while Rip Radar runs            # Pokémon Center drop mode: queue every 30 s until this time
     "topps_all_products": True,      # Topps: every product line (Disney, F1, soccer...) - not just your sports                  # Target stock counts for stores near this ZIP
     "start_with_windows": True,
     "keep_running_when_closed": False,   # False: the X quits. True: closing hides to the tray and keeps scanning

@@ -320,6 +320,26 @@ targets:
     verify_pages: 1
     interval_seconds: 420
 
+  - name: Hot Topic · trading cards
+    type: retail_search
+    store: hottopic
+    products: cards
+    url: https://www.hottopic.com/toys-collectibles/games/trading-cards/
+    browser: true
+    channel: hottopic
+    verify_pages: 1
+    interval_seconds: 300
+
+  - name: Hot Topic · Pokémon cards
+    type: retail_search
+    store: hottopic
+    products: pokemon
+    url: https://www.hottopic.com/search?q=pokemon%20trading%20card%20game
+    browser: true
+    channel: hottopic
+    verify_pages: 1
+    interval_seconds: 360
+
   # ===== NEWS + REDDIT (raffle announcements and drop times anywhere) =====
   - name: News · Walmart Pokémon drawings
     type: feed

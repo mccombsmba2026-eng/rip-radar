@@ -116,6 +116,9 @@ def test_calendar_reads_machine_timestamp():
     assert p["has_time"] and p["when"].startswith("2026-09-30T11:00")
 
 
+SOON_DAY = datetime.now(CT).replace(hour=0, minute=0, second=0, microsecond=0) + __import__("datetime").timedelta(days=5)
+
+
 def test_product_page_formats():
     html = ('<div class="grid">'
             '<div class="card"><a href="/products/2026-bowman-football-hobby-box"><img alt="2026 Bowman Football Hobby Box" '
@@ -126,7 +129,7 @@ def test_product_page_formats():
             '<span>$59.99</span><button>Sold out</button></div>'
             '<div class="card"><a href="/products/2026-bowman-football-blaster-box?variant=1"></a>'
             '<span>$29.99</span><button>Notify me</button></div></div>'
-            '<p>Available September 30 at 12pm ET</p>')
+            f'<p>Available {SOON_DAY:%B} {SOON_DAY.day} at 12pm ET</p>')
     formats, when = parse_topps_product_page(html, "https://www.topps.com/pages/bowman-football")
     f = {x["handle"]: x for x in formats}
     assert f["2026-bowman-football-hobby-box"] == {"handle": "2026-bowman-football-hobby-box",
@@ -137,7 +140,7 @@ def test_product_page_formats():
         "buy_now": "https://www.topps.com/cart/4455667788:1"}
     assert f["2026-bowman-football-mega-box"]["status"] == "Sold out"
     assert f["2026-bowman-football-blaster-box"]["name"] == "2026 Bowman Football Blaster Box"   # from the link
-    assert when and fmt_when(when[0]) == "Wed Sep 30, 11:00 AM"
+    assert when and fmt_when(when[0]) == fmt_when(SOON_DAY.replace(hour=11, minute=0))
 
 
 def test_tcg_filter():

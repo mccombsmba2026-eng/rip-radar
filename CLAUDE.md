@@ -92,6 +92,11 @@ captchas, and never automates purchases. Keep it that way.
   Costco: CatalogSearch?dept=All&keyword=... (the /s? search returned unrelated items).
   Ace: /pokemon-cards and /trading-card-games category pages (search is robots-blocked); names end in "Mfr# ..."
   (stripped); "Pokemon X Trading Cards" (a pack) counts as sealed.
+- Hot Topic (1.0.33): store key/channel `hottopic`, ids /product/<slug>/<id>.html, trading-cards category + search.
+- Queue live -> `winsys.open_in_chrome` opens pokemoncenter.com in M's own Chrome (setting `open_browser_on_queue`,
+  default on). He joins the line himself; the app never clicks anything there.
+- `settings["keep_awake"]` (default on): `winsys.keep_awake` (SetThreadExecutionState) from the engine thread so
+  Windows doesn't sleep while scanning. Lid-close sleep is a Windows power setting, not ours.
 - GameStop (1.0.25): store key/channel `gamestop`, product ids from /products/<slug>/<id>.html, search pages.
 - In-store restock tracker (1.0.25, Target only - the one store publishing per-store counts): `_refresh_target_stock`
   checks EVERY Target card product (incl. sold out online) - stores within `settings["restock_miles"]` (30) of

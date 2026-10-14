@@ -529,6 +529,7 @@ RETAIL_STORES = {
     "ace": {"label": "Ace Hardware", "id": r"/departments/[^?#]*?/(\d{6,8})(?:[/?#]|$)"},
     "barnes": {"label": "Barnes & Noble", "id": r"/w/(?:[^/?#]+/)?(\d{6,})"},
     "gamestop": {"label": "GameStop", "id": r"/products/[^/?#]+/(\d{6,})\.html"},
+    "hottopic": {"label": "Hot Topic", "id": r"/product/[^/?#]+/(\d{6,})\.html"},
 }
 LIVE_WORDS = ("add to cart", "add to bag", "add for shipping", "add for pickup", "add for delivery", "buy now",
               "ship it", "pick it up", "deliver it", "add to basket")
