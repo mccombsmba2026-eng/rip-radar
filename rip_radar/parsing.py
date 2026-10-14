@@ -426,7 +426,13 @@ TCG_ACCESSORY = ("card sleeves", "sleeves", "deck box", "playmat", "play mat", "
 MERCH = ("hat", "cap", "beanie", "lanyard", "plush", "pin", "shirt", "tee", "hoodie", "sweatshirt", "jacket",
          "mug", "cup", "tumbler", "bottle", "sticker", "keychain", "key chain", "backpack", "bag", "pouch",
          "figure", "figurine", "poster", "blanket", "pillow", "socks", "wallet", "towel", "ornament", "puzzle",
-         "lamp", "watch", "costume", "slippers", "necklace", "earrings", "bracelet", "lego", "pajama")
+         "lamp", "watch", "costume", "slippers", "necklace", "earrings", "bracelet", "lego", "pajama",
+         "plushie", "squishmallow", "cushion", "throw", "bedding", "sheet set", "comforter", "rug", "night light",
+         "clock", "tote", "lunch box", "funko", "pop!", "video game", "nintendo switch", "switch 2", "game boy",
+         "costume", "mask", "candy", "cereal", "snack", "toy", "squishy", "trainer's toolkit pins")
+# a merch word only loses to these - "Pin Collection" or "Booster Bag" are still card products
+SEALED_RESCUE = ("elite trainer box", "booster", "pack", "bundle", "blister", "tin", "display", "collection",
+                 "build & battle", "build and battle", "ultra premium", "ultra-premium")
 TCG_SEALED = ("elite trainer box", "booster", "collection", "tin", "bundle", "deck", "pack", "box", "display",
               "trading card")      # Ace: "Pokemon Chaos Rising Trading Cards" (a pack)
 
@@ -460,6 +466,8 @@ def is_tcg_product(text):
     has = lambda words: any(re.search(r"\b" + re.escape(w) + r"s?\b", t) for w in words)
     strong = has(TCG_STRONG) or "pokémon tcg" in t
     poke = "pokémon" in t or "pokemon" in t
+    if has(MERCH) and not has(SEALED_RESCUE):
+        return False                       # plush, pillows, figures, video games... even with "Pokémon TCG" in the name
     if has(TCG_ACCESSORY) and not has(("elite trainer box", "booster", "collection", "tin", "bundle", "deck")):
         return poke                        # Pokémon sleeves / binders / playmats: kept (M's call)
     if strong:
@@ -985,3 +993,57 @@ def parse_topps_item_page(html, url, now=None):
             "live": status in ("On sale", "Pre-order", "Drawing open"), "stock": stock, "limit": limit,
             "add_to_cart": f"{host}/cart/add?id={variant}&quantity=1" if variant else "",
             "buy_now": f"{host}/cart/{variant}:1" if variant else "", "when": when, "has_time": has_time}
+
+
+# ---------------------------------------------------------------- M's focus list (Settings → Focus)
+DEFAULT_FOCUS_SETS = ["Ascended Heroes", "151", "Prismatic Evolutions", "Crown Zenith", "Destined Rivals",
+                      "Paldea Evolved", "Evolving Skies", "Team Up"]
+DEFAULT_EVERYONE_PRODUCTS = ["2025-26 Topps Flagship Basketball", "2025-26 Topps Basketball",
+                             "2025-26 Topps Chrome Basketball", "2025-26 Topps Chrome Update Basketball",
+                             "2025-26 Topps Chrome Updates Basketball", "2025-26 NBA Hoops",
+                             "2025-26 Topps Hoops Basketball", "2025-26 Topps Finest Basketball",
+                             "2025-26 Topps Signature Class Basketball", "Cooper Flagg"]
+FOCUS_TYPES = (("booster box", "Booster Box"), ("booster display", "Booster Box"), ("36 packs", "Booster Box"),
+               ("booster bundle", "Booster Bundle"), ("elite trainer box", "ETB"), (" etb", "ETB"))
+
+
+def _norm(text):
+    t = (text or "").lower().replace("é", "e").replace("‑", "-").replace("–", "-").replace("—", "-")
+    t = re.sub(r"[®™:,()]", " ", t)
+    return " " + " ".join(t.split()) + " "
+
+
+def _phrase_in(phrase, t):
+    p = _norm(phrase).strip()
+    if not p:
+        return False
+    if p == "151":
+        return bool(re.search(r"(?<![\d/])151(?![\d/])", t)) and "pokemon" in t
+    season = lambda x: re.sub(r"(?<!\d)(?:20)?(\d\d)[- ](\d\d)(?!\d)", r"20\1-\2", x.replace("updates", "update"))
+    words = season(p).split()
+    tt = season(t)
+    # every word of the phrase, in order, allowing words in between ("2025-26 Topps Chrome Basketball Hobby Box")
+    return bool(re.search(r"(?<![a-z0-9])" + r"(?:.*?\s)?".join(re.escape(w) for w in words) + r"(?![a-z0-9])", tt))
+
+
+def focus_match(name, sets=None, everyone=None):
+    """M's focus list. -> {"focus": label or "", "ping": bool}
+    Pokémon from a focus set gets a 🔥 tag; a focus-set Booster Box / Booster Bundle / ETB gets @everyone.
+    Anything on the @everyone list gets @everyone - including any 2025-26 Topps / Bowman basketball product,
+    since those carry Cooper Flagg rookie cards."""
+    t = _norm(name)
+    sets = DEFAULT_FOCUS_SETS if sets is None else sets
+    everyone = DEFAULT_EVERYONE_PRODUCTS if everyone is None else everyone
+    hits = [p.strip() for p in everyone if p.strip() and _phrase_in(p, t)]
+    if hits:
+        return {"focus": max(hits, key=len), "ping": True}      # the most specific entry names it
+    if "basketball" in t and re.search(r"2025-26|2025 26|25-26", t) and re.search(r"topps|bowman", t):
+        return {"focus": "2025-26 basketball (Cooper Flagg rookie year)", "ping": True}
+    if "flagg" in t:
+        return {"focus": "Cooper Flagg", "ping": True}
+    if "pokemon" in t or "tcg" in t:
+        for sname in sets:
+            if sname.strip() and _phrase_in(sname, t):
+                kind = next((label for w, label in FOCUS_TYPES if w in t), "")
+                return {"focus": f"{sname.strip()}" + (f" {kind}" if kind else ""), "ping": bool(kind)}
+    return {"focus": "", "ping": False}

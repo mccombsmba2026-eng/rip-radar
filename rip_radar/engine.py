@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 from . import __version__, paths, settings as settings_mod
 from .msrp import msrp_text, price_check
 from .notify import CHANNELS, STORE_NAMES, ChatBot, LiveBoard, Notifier, StatusBoard, store_in
-from .parsing import (CT, wall_kind, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
+from .parsing import (CT, focus_match, wall_kind, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
                       topps_sitemap_numbers, LIVE_STATUSES, RETAIL_STORES, categorize, extract_when, fmt_when, gcal_link, is_card_product,
                       is_etb_or_upc, is_pokemon_product, is_sports_card_product, is_tcg_product, looks_blocked, parse_retail_tiles, parse_topps_calendar,
                       parse_topps_product_page, humanize_handle, tile_status, drawing_window, next_data, sport_of, stock_hint,
@@ -650,11 +650,13 @@ class Engine:
             if is_raffle:
                 # a store's raffle: that store's channel AND #drawings (any store: Walmart, Dick's, Target...)
                 self.notify.send(level, "🎟️ " + title[:240], link, fields, desc=summary[:300],
-                                 channel=store or "drawings", copy_to=["drawings"], ping=is_etb_or_upc(title))
+                                 channel=store or "drawings", copy_to=["drawings"],
+                                 ping=is_etb_or_upc(title) or self._focus(title)["ping"])
             else:
                 # a product announcement: main alerts channel, keeping store channels products-only
                 self.notify.send(level, "📣 " + title[:240], link, fields, desc=summary[:300], channel="main",
-                                 ping=is_etb_or_upc(title) and any(w in blob for w in ("restock", "drop", "live", "in stock",
+                                 ping=(is_etb_or_upc(title) or self._focus(title)["ping"]) and any(
+                                     w in blob for w in ("restock", "drop", "live", "in stock",
                                                                                          "pre-order", "preorder")))
             sent += 1
             if sent >= t.get("max_per_run", 8):
@@ -726,7 +728,8 @@ class Engine:
                     rec["carded"] = False
                 continue
             warn = f" · ⚠️ {int((info['ratio'] - 1) * 100)}% above retail" if verdict == "over" else ""
-            big = is_etb_or_upc(x["name"])                      # ETB / UPC: @everyone in any channel
+            focus = self._focus(x["name"])
+            big = is_etb_or_upc(x["name"]) or focus["ping"]     # ETB / UPC / M's @everyone list: @everyone
             if store == "amazon" and x["status"].startswith("Drawing"):
                 big = True                                      # Amazon invite requests: always @everyone
             listed_at = (prev or {}).get("first_seen")
@@ -753,6 +756,7 @@ class Engine:
             if rec["live"]:
                 rec["loaded_before_stock"] = False
             rec.update(details)
+            rec["focus"] = focus["focus"]
             if event and x["live"] and up_before:
                 rec["up_before"] = up_before
             elif not rec["live"]:
@@ -857,7 +861,8 @@ class Engine:
         fields = {"Restocked": " · ".join(f"**{n}** {prev.get(n, 0)} → **{q}**" for n, q in got[:8]),
                   "Other stores": " · ".join(others), "Price": x.get("price"), "Online": rec.get("stock")}
         self.notify.send("urgent", title[:250], x["url"], fields, image=x.get("image", ""), links=self._buy_links(x),
-                         channel=["instore", store], store=store, product=True, ping=is_etb_or_upc(x["name"]))
+                         channel=["instore", store], store=store, product=True,
+                         ping=is_etb_or_upc(x["name"]) or self._focus(x["name"])["ping"])
         self._restock_board_dirty = True
 
     def stock_health(self):
@@ -982,6 +987,12 @@ class Engine:
         when = extract_when(text)
         if when and when[0] > datetime.now(CT):
             self._add_event(f"{label}: {x['name'][:120]}", x["url"], when[0], when[1], "release", store, product=True)
+
+    def _focus(self, name):
+        """M's focus list from Settings: 🔥 focus Pokémon sets (box / bundle / ETB = @everyone) and the @everyone
+        product list (2025-26 Topps basketball / Cooper Flagg...)."""
+        s = settings_mod.load()
+        return focus_match(name, s.get("focus_sets"), s.get("everyone_products"))
 
     def _wanted_sports_card(self, text):
         """Sealed sports cards in your sports only (Settings: baseball / basketball / football) - no soccer, WWE, F1."""
@@ -1120,7 +1131,8 @@ class Engine:
             fields["Calendar"] = (f"[Add to Google Calendar]({gcal_link('Walmart drawing: ' + rec['name'], start, rec['page'])})")
         links = [("🎟️ ENTER THE DRAWING", rec["url"]), ("All Walmart drawings", rec.get("page", ""))]
         self.notify.send("urgent", title, rec["url"], fields, image=rec.get("image", ""), links=links, channel="walmart",
-                         copy_to=["drawings"], store="walmart", product=True, ping=is_etb_or_upc(rec["name"]))
+                         copy_to=["drawings"], store="walmart", product=True,
+                         ping=is_etb_or_upc(rec["name"]) or self._focus(rec["name"])["ping"])
 
     def drawings_tick(self):
         """Clock-driven drawing reminders, checked every few seconds from stored open/close times, so the
@@ -1400,6 +1412,7 @@ class Engine:
             prev_status, was_live, new = rec.get("status"), rec.get("live"), not rec.get("status")
             rec.update({k: v for k, v in item.items() if v not in ("", None) or k in ("live",)})
             rec["retail"], rec["ratio"] = "Topps' own price", None
+            rec["focus"] = self._focus(rec.get("name", ""))["focus"]
             event = ""
             if new and not rec.get("baseline"):
                 rec["loaded_before_stock"] = not rec["live"]

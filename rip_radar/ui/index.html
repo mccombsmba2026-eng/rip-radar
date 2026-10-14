@@ -267,6 +267,11 @@ details summary{cursor:pointer;font-weight:600}
       <label class="switch"><input type="checkbox" id="sOpenQueue"> When the Pokémon Center queue goes live, open it in Chrome on this PC</label>
       <label class="switch"><input type="checkbox" id="sAwake"> Keep this PC awake while Rip Radar runs</label>
       <p class="hint">Off by default. Asks Windows not to sleep while the app is open, like a video player does. Changes no Windows settings; the screen can still turn off and closing the lid still sleeps.</p>
+      <h2>Focus</h2>
+      <label>🔥 Focus Pokémon sets <small>one per line · posts get a 🔥 tag; their Booster Boxes, Booster Bundles and ETBs get @everyone</small>
+        <textarea id="sFocusSets" rows="6"></textarea></label>
+      <label>@everyone products <small>one per line · any product whose name has these words (in order) gets @everyone. Any 2025-26 Topps / Bowman basketball product is always included (Cooper Flagg rookie year).</small>
+        <textarea id="sEveryone" rows="7"></textarea></label>
       <label class="switch"><input type="checkbox" id="sToppsAll"> Topps: every product line (Disney, Star Wars, F1, soccer…), not just these sports</label>
 
       <h2>This computer</h2>
@@ -487,6 +492,7 @@ function renderSettings(){
   $("#sTwSid").value = tw.account_sid||""; $("#sTwTok").value = tw.auth_token||""; $("#sTwFrom").value = tw.from||""; $("#sTwTo").value = tw.to||"";
   document.querySelectorAll("#sSports input").forEach(i => i.checked = (s.sports||[]).includes(i.value));
   $("#sToppsAll").checked = s.topps_all_products !== false;
+  $("#sFocusSets").value = (s.focus_sets||[]).join("\n"); $("#sEveryone").value = (s.everyone_products||[]).join("\n");
   $("#sOpenQueue").checked = s.open_browser_on_queue !== false; $("#sAwake").checked = !!s.keep_awake;
 }
 
@@ -531,7 +537,9 @@ async function saveSettings(quiet){
     discord_webhook: $("#sHook").value.trim(), discord_webhook_urgent: $("#sHookUrgent").value.trim(),
     webhooks: Object.fromEntries([...document.querySelectorAll("[data-hook]")].map(i => [i.dataset.hook, i.value.trim()])),
     start_with_windows: $("#sAuto").checked, auto_update: $("#sAutoUpd").checked, keep_running_when_closed: $("#sKeep").checked, bot_token: $("#sBot").value.trim(), bot_triggers: $("#sBotTrig").value.split(",").map(x=>x.trim()).filter(Boolean), bot_channel: $("#sBotChan").value.trim(), bot_reply: $("#sBotReply").value, ntfy_topic: $("#sNtfy").value.trim(), zip: $("#sZip").value.trim(), restock_miles: parseInt($("#sMiles").value)||30,
-    sports: sports.length ? sports : ["Baseball","Basketball","Football"], topps_all_products: $("#sToppsAll").checked, open_browser_on_queue: $("#sOpenQueue").checked, keep_awake: $("#sAwake").checked,
+    sports: sports.length ? sports : ["Baseball","Basketball","Football"], topps_all_products: $("#sToppsAll").checked,
+    focus_sets: $("#sFocusSets").value.split("\n").map(x=>x.trim()).filter(Boolean),
+    everyone_products: $("#sEveryone").value.split("\n").map(x=>x.trim()).filter(Boolean), open_browser_on_queue: $("#sOpenQueue").checked, keep_awake: $("#sAwake").checked,
     twilio: {account_sid:$("#sTwSid").value.trim(), auth_token:$("#sTwTok").value.trim(), from:$("#sTwFrom").value.trim(), to:$("#sTwTo").value.trim()}
   });
   if(!quiet) msg($("#sSaveMsg"),"Saved.","good");

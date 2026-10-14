@@ -485,3 +485,45 @@ def test_hot_topic_and_queue_opens_chrome(engine, monkeypatch):
     settings.update({"open_browser_on_queue": False})
     engine._track_queue(t, {}, True, False, "test")
     assert len(opened) == 1
+
+
+def test_focus_list_and_everyone_list():
+    from rip_radar.parsing import focus_match, is_pokemon_product
+    f = focus_match
+    assert f("2025-26 Topps Chrome Basketball Hobby Box") == {"focus": "2025-26 Topps Chrome Basketball", "ping": True}
+    assert f("25-26 Topps Chrome Updates Basketball Mega Box")["focus"].startswith("2025-26 Topps Chrome Update")
+    assert f("2025-26 Bowman Basketball Blaster")["ping"]                       # any 2025-26 Topps/Bowman hoops
+    assert f("Cooper Flagg 2025 Bowman U Chrome Box")["ping"]
+    assert not f("2024-25 Panini Prizm Basketball Blaster")["ping"] and not f("2026 Topps Midnight Football")["ping"]
+    assert f("Pokémon TCG: Prismatic Evolutions Booster Bundle") == {"focus": "Prismatic Evolutions Booster Bundle",
+                                                                     "ping": True}
+    assert f("Pokemon Scarlet & Violet 151 Elite Trainer Box")["ping"]
+    assert f("Pokémon TCG: Prismatic Evolutions Mini Tin") == {"focus": "Prismatic Evolutions", "ping": False}
+    assert f("Pokemon Mew 151/165 holo")["focus"] == ""                           # a card number isn't the set
+    assert f("Pokémon TCG: Surging Sparks Booster Bundle") == {"focus": "", "ping": False}
+    # junk that used to slip through on "Pokémon" alone
+    for junk in ["Pokemon Trading Card Game Pikachu Pillow", "Pokémon Snorlax Plush 24 inch",
+                 "Pokemon Legends Z-A Nintendo Switch", "Pokemon Squishmallow Gengar 14in"]:
+        assert not is_pokemon_product(junk), junk
+    assert is_pokemon_product("Pokémon TCG: 30th Celebration Pin Collection")
+
+
+def test_focus_product_pings_everyone_with_fire_tag(engine):
+    settings.update({"webhooks": {"target": "https://t"}})
+    queued = []
+    engine.cards.request = lambda store, pid, rec, bump=False, ping=False, headline="": queued.append(
+        (pid, ping, rec.get("focus")))
+    engine.notify.send = lambda *a, **k: None
+    t = next(x for x in engine.targets() if x["name"] == "Target · sports cards")
+
+    def tile(tcin, name, price):
+        return (f'<div><a href="/p/x/-/A-{tcin}"><img alt="{name}" src="https://t/{tcin}.jpg"></a>'
+                f'<span>{price}</span><button>Add to cart</button></div>')
+    st = {}
+    engine.fetcher = FakeFetch(PAD, t["url"])
+    engine.check_retail_search(t, st, True)
+    engine.fetcher = FakeFetch(tile("10990001", "2025-26 Topps Chrome Basketball Value Box", "$29.99") +
+                               tile("10980001", "2026 Topps NFL Flagship Football Value Box", "$24.99") + PAD, t["url"])
+    engine.check_retail_search(t, st, False)
+    assert ("10990001", True, "2025-26 Topps Chrome Basketball") in queued
+    assert ("10980001", False, "") in queued

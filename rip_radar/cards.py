@@ -34,7 +34,7 @@ def build_card(store, rec, headline=""):
     """The product message: title, links (ATC / Buy now / page), big picture, price vs retail, stock, limit."""
     label, kind = card_status(rec)
     name = rec.get("name", "")
-    title = f"{headline or label} · {name}"[:250]
+    title = f"{'🔥 ' if rec.get('focus') else ''}{headline or label} · {name}"[:250]
     links = []
     if rec.get("add_to_cart"):
         links.append(("🛒 ADD TO CART", rec["add_to_cart"]))
@@ -63,6 +63,7 @@ def build_card(store, rec, headline=""):
     add("Retail (MSRP)", retail or "unknown for this item")
     add("Stock", rec.get("stock") or ("in stock (count not shown by this store)" if rec.get("live") else
                                       rec.get("status", "")))
+    add("🔥 Focus", rec.get("focus"))
     add("Limit", rec.get("limit"))
     if rec.get("when"):
         from .parsing import fmt_when

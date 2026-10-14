@@ -27,6 +27,12 @@ DEFAULTS = {
     "restock_miles": 30,
     "drop_mode_until": 0,            # Pokémon Center drop mode: queue every 30 s until this time
     "open_browser_on_queue": True,   # queue goes live -> open pokemoncenter.com in Chrome on this PC
+    "focus_sets": ["Ascended Heroes", "151", "Prismatic Evolutions", "Crown Zenith", "Destined Rivals",
+                   "Paldea Evolved", "Evolving Skies", "Team Up"],
+    "everyone_products": ["2025-26 Topps Flagship Basketball", "2025-26 Topps Basketball",
+                          "2025-26 Topps Chrome Basketball", "2025-26 Topps Chrome Update Basketball",
+                          "2025-26 NBA Hoops", "2025-26 Topps Hoops Basketball", "2025-26 Topps Finest Basketball",
+                          "2025-26 Topps Signature Class Basketball", "Cooper Flagg"],
     "keep_awake": False,             # OFF unless M turns it on: ask Windows not to sleep while Rip Radar runs
     "topps_all_products": True,      # Topps: every product line (Disney, F1, soccer...) - not just your sports
     "start_with_windows": True,
