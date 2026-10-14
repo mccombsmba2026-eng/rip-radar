@@ -1125,7 +1125,10 @@ class Engine:
             details = {"name": x["name"], "url": x["url"], "price": x["price"], "status": x["status"],
                        "add_to_cart": x.get("add_to_cart", ""), "buy_now": x.get("buy_now", ""),
                        "image": x.get("image", ""), "over": verdict, "seen": now, "limit": x.get("limit", ""),
-                       "retail": msrp_text(info), "ratio": info.get("ratio")}
+                       "retail": msrp_text(info), "ratio": info.get("ratio"), "seller": x.get("seller", ""),
+                       "price_seen": now, "stale": False}
+            if (prev or {}).get("price") != x["price"] or not (prev or {}).get("price_since"):
+                details["price_since"] = now          # when this price was first seen (shown on the post)
             if x.get("stock") or not (prev or {}).get("stock_at"):
                 details["stock"] = x.get("stock", "")
             if x["live"] and verdict == "way_over":
@@ -1228,6 +1231,11 @@ class Engine:
             for x, rec, event, ping in changed:
                 self.cards.request(store, x["id"], rec, bump=bool(event), ping=ping, headline=event or "")
                 rec["carded"] = True
+            # a post whose product hasn't been on the store page for 30+ min: say its price may be out of date
+            for pid, rec in known.items():
+                if rec.get("carded") and not rec.get("stale") and now - rec.get("seen", now) > 1800:
+                    rec["stale"] = True
+                    self.cards.request(store, pid, rec)
             # products that dropped off the store's listings for a day: remove their message
             for pid, rec in known.items():
                 if rec.get("carded") and now - rec.get("seen", 0) > 86400:

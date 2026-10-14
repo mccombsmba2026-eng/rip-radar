@@ -172,6 +172,13 @@ captchas, and never automates purchases. Keep it that way.
   `parsing.shopify_collection_items`, used by parse_retail_tiles for `shopify: True` stores or any products.json:
   real cart link /cart/<variant>:1). Walmart drawing button now reads "OPEN PRODUCT → tap ENTER DRAWING": Walmart
   has no direct entry link - the Enter drawing button is on the product page (and the app never enters for M).
+- 1.0.54 PRICE ACCURACY (M: "Walmart prices are off"): audit of the 10/14 pages = every app price matched Walmart's own
+  data / tile ("Price Now $X"), BUT nearly every Walmart search listing is a MARKETPLACE RESELLER (all 40 Pokémon
+  listings by "Mascot"; 5 of 50 sports by Walmart.com) - the price is the reseller's. Now: `walmart_json_items` keeps
+  `sellerName` -> post field "Sold by: ✅ Walmart itself" / "⚠️ <seller> (3rd-party reseller - NOT Walmart's own
+  price)" (`parsing.first_party`); Price shows "· since 3:10 PM" (`price_since`, set when the price changes); a carded
+  product not seen on the store page for 30+ min gets "⚠️ Price check: may have changed" (`rec["stale"]`, cleared the
+  next time it's seen).
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

@@ -1078,3 +1078,28 @@ def test_collectorstore_shopify_collection():
 def test_collectorstore_posts_in_presale_channel():
     from rip_radar.notify import channel_of
     assert channel_of("collectorstore") == "presale"
+
+
+def test_walmart_seller_and_price_freshness_on_post():
+    import time
+    from rip_radar.cards import build_card
+    rec = {"name": "Pokémon TCG: Prismatic Evolutions ETB", "url": "https://www.walmart.com/ip/1", "price": "$89.99",
+           "price_since": time.time(), "seller": "Mascot", "live": True, "status": "In stock"}
+    f = {x["name"]: x["value"] for x in build_card("walmart", rec)["embeds"][0]["fields"]}
+    assert "3rd-party reseller - NOT Walmart's own price" in f["Sold by"] and "since" in f["Price"]
+    rec.update(seller="Walmart.com", stale=True)
+    f = {x["name"]: x["value"] for x in build_card("walmart", rec)["embeds"][0]["fields"]}
+    assert f["Sold by"].startswith("✅ Walmart") and "may have changed" in f["⚠️ Price check"]
+
+
+def test_walmart_page_prices_match_what_walmart_shows():
+    """Real Walmart search tile (10/14): Walmart shows 'Price Now $49.99 Was $57.45' -> the post says $49.99."""
+    import json
+    from rip_radar.parsing import walmart_json_items
+    nd = {"props": {"pageProps": {"initialData": {"searchResult": {"itemStacks": [{"items": [
+        {"usItemId": "5001", "name": "Collectible 2025 Topps Chrome Football - Factory Sealed - Value Box",
+         "price": 49.99, "priceInfo": {"linePrice": "", "wasPrice": ""}, "sellerName": "Walmart.com",
+         "canonicalUrl": "/ip/x/5001"}]}]}}}}}
+    html = f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(nd)}</script>'
+    j = walmart_json_items(html)[0]
+    assert j["price"] == "$49.99" and j["seller"] == "Walmart.com"

@@ -902,7 +902,7 @@ def walmart_json_items(html, base_url="https://www.walmart.com/", host="https://
         items[pid] = {"id": pid, "name": clean_name(name), "url": url, "image": img.split("?")[0] if img else "",
                       "price": price, "avail": avail.upper(), "text": text[:800],
                       "max_qty": d.get("maxOrderQuantity") or d.get("orderLimit") or "",
-                      "start": start, "end": end}
+                      "start": start, "end": end, "seller": str(d.get("sellerName") or "").strip()}
     return list(items.values())
 
 
@@ -957,7 +957,7 @@ def _merge_walmart_json(tiles, html, base_url, live_if_price=False, store="walma
                   "image": j["image"] or (x or {}).get("image", ""), "price": j["price"] or (x or {}).get("price", ""),
                   "status": status, "live": live, "add_to_cart": add, "buy_now": buy, "text": text[:1200],
                   "stock": stock or (x or {}).get("stock", ""), "limit": limit or (x or {}).get("limit", ""),
-                  "start": j["start"], "end": j["end"]}
+                  "start": j["start"], "end": j["end"], "seller": j.get("seller", "")}
         by_id[j["id"]] = merged
     return list(by_id.values())
 
@@ -1449,3 +1449,12 @@ def shopify_collection_items(text, base_url):
                     "add_to_cart": f"{host}/cart/{v['id']}:1" if avail and v.get("id") else "", "buy_now": "",
                     "presale": presale, "tags": [str(x).strip() for x in tags][:20]})
     return out
+
+
+def first_party(seller, store="walmart"):
+    """True when the store itself sells it (Walmart.com / Sam's Club), False for a marketplace reseller,
+    None when the page didn't say."""
+    s = (seller or "").strip().lower()
+    if not s:
+        return None
+    return s in ("walmart.com", "walmart", "sam's club", "samsclub", "sams club", "samsclub.com")

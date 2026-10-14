@@ -83,7 +83,18 @@ def build_card(store, rec, headline=""):
         if pct < -5:
             verdict = f"✅ {-pct}% below retail"
         retail = f"{retail} · {verdict}"
+    if rec.get("price") and rec.get("price_since"):
+        from .parsing import CT
+        d = datetime.fromtimestamp(rec["price_since"], CT)
+        price += f" · since {d:%I:%M %p}".replace(" 0", " ", 1) + ("" if d.date() == datetime.now(CT).date()
+                                                                   else f" {d:%b} {d.day}")
     add("Price", price)
+    seller = (rec.get("seller") or "").strip()
+    if seller:
+        from .parsing import first_party
+        fp = first_party(seller, store)
+        add("Sold by", f"✅ {STORE_NAMES.get(store, store)} itself" if fp else
+            f"⚠️ {seller} (3rd-party reseller - NOT {STORE_NAMES.get(store, store)}'s own price)")
     add("Retail (MSRP)", retail or "unknown for this item")
     add("Stock", rec.get("stock") or ("in stock (count not shown by this store)" if rec.get("live") else
                                       rec.get("status", "")))
@@ -97,6 +108,9 @@ def build_card(store, rec, headline=""):
         if not rec.get("live") and d > datetime.now(d.tzinfo):
             add("Drops (CT)", fmt_when(d, rec.get("has_time", False)))
     add("Stores", rec.get("stores"), inline=False)
+    if rec.get("stale"):
+        add("⚠️ Price check", "Not seen on the store's page for 30+ min - the price may have changed. Tap the link to "
+                             "check.", inline=False)
     add("Link was up", rec.get("up_before"))
     color = {"live": STORE_COLORS.get(store), "drawing": PURPLE, "loaded": AMBER}.get(kind) or GREY
     embed = {"title": title, "url": rec.get("url", ""), "color": color, "description": desc[:4000],
