@@ -30,6 +30,27 @@ def card_status(rec):
     return "⚪ OUT OF STOCK", "oos"
 
 
+def deal_verdict(rec):
+    """Price vs retail AND vs what it sells for: ✅ at retail · 🟡 above retail but still profitable · 🔴 over market."""
+    import re as _re
+    try:
+        price = float(str(rec.get("price", "")).replace("$", "").replace(",", ""))
+    except ValueError:
+        return ""
+    m = _re.search(r"\$([\d,]+(?:\.\d+)?) median", rec.get("resale") or "")
+    market = float(m.group(1).replace(",", "")) if m else None
+    ratio = rec.get("ratio")
+    at_retail = ratio is not None and ratio <= 1.05
+    if market is None:
+        return "✅ At retail" if at_retail else ""
+    margin = market - price
+    if at_retail:
+        return f"✅ At retail · sells for ${market:,.0f} ({'+' if margin >= 0 else '−'}${abs(margin):,.0f})"
+    if margin > 0:
+        return f"🟡 Above retail, still +${margin:,.0f} vs what it sells for"
+    return f"🔴 Over market: ${-margin:,.0f} more than it sells for"
+
+
 def build_card(store, rec, headline=""):
     """The product message: title, links (ATC / Buy now / page), big picture, price vs retail, stock, limit."""
     label, kind = card_status(rec)
@@ -67,6 +88,7 @@ def build_card(store, rec, headline=""):
     add("Stock", rec.get("stock") or ("in stock (count not shown by this store)" if rec.get("live") else
                                       rec.get("status", "")))
     add("🔥 Focus", rec.get("focus"))
+    add("💰 Deal", deal_verdict(rec), inline=False)
     add("💸 Resale (eBay sold)", rec.get("resale"), inline=False)
     add("Limit", rec.get("limit"))
     if rec.get("when"):

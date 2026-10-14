@@ -81,10 +81,11 @@ def summarize(prices):
 
 
 class ResaleChecker:
-    def __init__(self, state, get_settings, pace=20, ttl_hours=24):
+    def __init__(self, state, get_settings, pace=8, ttl_hours=24, on_result=None):
         self.state, self.get_settings, self.pace, self.ttl = state, get_settings, pace, ttl_hours * 3600
         self.cache = state.setdefault("resale", {})
-        self.q = queue.Queue()
+        self.q = queue.PriorityQueue()       # live drops (priority 0) jump ahead of background valuing (1)
+        self.on_result = on_result or (lambda key, result: None)
         self.queued = set()
         self.s = requests.Session()
         self.s.headers.update({"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"})
@@ -104,7 +105,7 @@ class ResaleChecker:
         if hit and time.time() - hit.get("at", 0) < self.ttl:
             return hit if hit.get("median") else None
         with self._lock:
-            if key not in self.queued:
+            if key not in self.queued or urgent:
                 self.queued.add(key)
                 self.q.put((0 if urgent else 1, time.time(), q))
         self._start()
@@ -131,6 +132,12 @@ class ResaleChecker:
         while True:
             pri, _, q = self.q.get()
             key = q.lower()
+            fresh = self.cache.get(key)
+            if fresh and fresh.get("median") and time.time() - fresh.get("at", 0) < self.ttl:
+                with self._lock:
+                    self.queued.discard(key)
+                self.on_result(key, fresh)          # already known (a duplicate urgent request): just use it
+                continue
             try:
                 self.cache[key] = self.check(q)
             except Exception as e:
@@ -139,7 +146,16 @@ class ResaleChecker:
             finally:
                 with self._lock:
                     self.queued.discard(key)
-            time.sleep(self.pace)
+            try:
+                self.on_result(key, self.cache[key])  # put the value on the post right away
+            except Exception as e:
+                log.info("resale callback: %s", e)
+            if pri:                                   # live drops (priority 0) go one after another, no pause
+                time.sleep(self.pace)
+
+    @staticmethod
+    def key(name):
+        return clean_query(name).lower()
 
     def check(self, q):
         r = self.s.get(search_url(q), timeout=20)

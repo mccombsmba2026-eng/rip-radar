@@ -79,7 +79,8 @@ class Engine:
         self.queue_fetcher = Fetcher(queue_fetch) if queue_fetch else None   # own browser for the PC queue
         self.stock_json = stock_json          # Target stock asked from inside a browser on target.com
         from .resale import ResaleChecker
-        self.resale = ResaleChecker(self.state, settings_mod.load)
+        self._resale_posts = {}               # resale key -> {(store, pid): rec} waiting for a value
+        self.resale = ResaleChecker(self.state, settings_mod.load, on_result=self._resale_ready)
         self._queue_thread = None
         self.notify = Notifier(settings_mod.load, on_alert=self._record_alert)
         self.board = StatusBoard(settings_mod.load, self.status_text, self.state)
@@ -842,7 +843,7 @@ class Engine:
         elif t.get("stock_pages", 2):
             self._refresh_page_stock(t, st, changed)
         self._fill_images(t, st, changed)
-        self._attach_resale(changed)
+        self._attach_resale(changed, store)
         if use_cards:
             # listings the filters no longer want (graded slabs, lots...): take their posts down now
             kept = {x["id"] for x in cards}
@@ -1033,14 +1034,28 @@ class Engine:
                 if img:
                     rec["image"] = x["image"] = img
 
-    def _attach_resale(self, changed):
-        """eBay sold price on each post (filled in by the resale checker in the background)."""
+    def _attach_resale(self, changed, store=None):
+        """eBay sold price on each post. Known values go on straight away; unknown ones are looked up - live drops
+        first and immediately - and edited into the post the moment the answer comes back (_resale_ready)."""
         if not getattr(self, "resale", None):
             return
         for x, rec, event, _ in changed:
-            r = self.resale.lookup(rec.get("name", ""), urgent=bool(event))
+            name = rec.get("name", "")
+            r = self.resale.lookup(name, urgent=bool(event) and bool(rec.get("live")))
             if r:
                 rec["resale"] = self.resale.text(r, rec.get("price"))
+            elif store and rec.get("carded", True):
+                self._resale_posts.setdefault(self.resale.key(name), {})[(store, x["id"])] = rec
+
+    def _resale_ready(self, key, result):
+        """A value came back: write it on every waiting post and edit those posts now (no new ping)."""
+        waiting = self._resale_posts.pop(key, {})
+        if not result or not result.get("median"):
+            return
+        for (store, pid), rec in waiting.items():
+            rec["resale"] = self.resale.text(result, rec.get("price"))
+            if self.cards.enabled(store) and rec.get("carded"):
+                self.cards.request(store, pid, rec)
 
     def _refresh_page_stock(self, t, st, changed, every=1800):
         """Other stores: open a couple of in-stock product pages per run and read 'Only N left' / page data."""

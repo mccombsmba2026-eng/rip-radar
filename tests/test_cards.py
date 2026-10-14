@@ -579,3 +579,30 @@ def test_daily_recap_and_sellout_timing(engine):
     title, desc = engine.render_recap()
     assert title.startswith("📊 Daily recap") and "1 sold out" in desc and "gone in **10 min**" in desc
     assert "Target 2" in desc                     # the real in-stock alert + the one added above
+
+
+def test_deal_verdicts():
+    from rip_radar.cards import deal_verdict
+    sells = "[$85 median of 12 sold](u) · range $70–$95"
+    assert deal_verdict({"price": "$49.99", "ratio": 1.0, "resale": sells}) == "✅ At retail · sells for $85 (+$35)"
+    assert deal_verdict({"price": "$65.00", "ratio": 1.3, "resale": sells}) == "🟡 Above retail, still +$20 vs what it sells for"
+    assert deal_verdict({"price": "$95.00", "ratio": 1.9, "resale": sells}) == "🔴 Over market: $10 more than it sells for"
+    assert deal_verdict({"price": "$49.99", "ratio": 1.0}) == "✅ At retail"
+    assert deal_verdict({"price": "", "resale": sells}) == ""
+
+
+def test_live_drop_value_is_edited_into_the_post(engine):
+    settings.update({"webhooks": {"target": "https://t"}})
+    posted = []
+    engine.cards.request = lambda store, pid, rec, bump=False, ping=False, headline="": posted.append(
+        (pid, bump, rec.get("resale", "")))
+    rec = {"name": "Pokémon TCG: Prismatic Evolutions Booster Bundle", "price": "$29.99", "live": True, "carded": True}
+    x = {"id": "55500001", "name": rec["name"]}
+    queued = []
+    engine.resale.q.put = lambda item: queued.append(item)
+    engine._attach_resale([(x, rec, "🟢 BACK IN STOCK at Target", True)], "target")
+    assert queued and queued[0][0] == 0                                   # live drop: front of the line
+    engine._resale_ready(engine.resale.key(rec["name"]), {"median": 58.0, "n": 9, "low": 50, "high": 66,
+                                                          "q": "Pokémon Prismatic Evolutions Booster Bundle"})
+    (pid, bump, resale), = posted
+    assert pid == "55500001" and not bump and resale.startswith("[$58 median of 9 sold]")   # edited, not re-pinged

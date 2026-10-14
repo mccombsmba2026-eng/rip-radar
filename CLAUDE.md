@@ -75,9 +75,12 @@ captchas, and never automates purchases. Keep it that way.
   ATC: real add-to-cart links only for Walmart / Amazon / Best Buy / Topps; every other store's post says "No direct
   add-to-cart link at this store" instead of a fake ATC button. Images: `image_in` (lazy attrs, <source>, CSS bg) then
   `_fill_images` opens ≤2 product pages/run for og:image.
-  Resale (`resale.py` ResaleChecker, setting `resale_check`): eBay SOLD search per product (plain HTTP, ≤1 per 20 s,
-  cached 24 h), titles must match ~75% of the product words, lots/graded/empty/ranges skipped, median of the rest ->
-  "💸 Resale (eBay sold)" field with the margin vs the store price.
+  Resale (`resale.py` ResaleChecker, setting `resale_check`): eBay SOLD search per product (plain HTTP, cached 24 h),
+  titles must match ~75% of the product words, lots/graded/empty/ranges skipped, median of the rest -> "💸 Resale"
+  field. PriorityQueue: live drops (priority 0) are searched IMMEDIATELY (~1-2 s) and `_resale_ready` edits the value
+  into the existing post (no re-ping); everything else is valued in the background, 1 search / 8 s, so values are
+  usually known before a drop. "💰 Deal" field (`cards.deal_verdict`): ✅ at retail / 🟡 above retail but under
+  market / 🔴 over market. NOTHING is skipped for being over market (M's call) - it's information only.
   Daily recap (`recap_tick`/`render_recap`, setting `recap_hour`, default 21 = 9 PM CT, -1 off): drops by store,
   fastest sellouts (`state["sellouts"]`: how long each product stayed in stock), 🔥 focus drops, PC queue times.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
