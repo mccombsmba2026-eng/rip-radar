@@ -1950,7 +1950,8 @@ class Engine:
                         "end": end.isoformat() if end else ""})
             known[key] = rec
             if start and start > now:
-                self._add_event(f"Walmart drawing: {x['name']}", t["url"], start, True, "drawing", "walmart")
+                self._add_event(f"Walmart drawing: {x['name']}", x.get("url") or t["url"], start, True, "drawing",
+                                "walmart")
             if fresh and phase != "closed":
                 if phase == "upcoming":
                     self._draw_ping(rec, f"🎟️ WALMART DRAWING · opens {fmt_when(start)} CT: {x['name']}")
@@ -1989,7 +1990,10 @@ class Engine:
         if start and start > datetime.now(CT):
             fields["Calendar"] = (f"[Add to Google Calendar]({gcal_link('Walmart drawing: ' + rec['name'], start, rec['page'])})")
         # Walmart has no separate entry link: the "Enter drawing" button is ON the product page (signed in)
-        links = [("🎟️ OPEN PRODUCT → tap ENTER DRAWING", rec["url"]), ("All Walmart drawings", rec.get("page", ""))]
+        if "/ip/" in rec["url"]:
+            links = [("🎟️ OPEN PRODUCT → tap ENTER DRAWING", rec["url"]), ("All Walmart drawings", rec.get("page", ""))]
+        else:     # Walmart's page didn't give this item its own link: the drawings page is where its Enter button is
+            links = [("🎟️ OPEN WALMART DRAWINGS → tap ENTER on this item", rec["url"])]
         self.notify.send("urgent", title, rec["url"], fields, image=rec.get("image", ""), links=links, channel="walmart",
                          copy_to=["drawings"], store="walmart", product=True,
                          ping=is_etb_or_upc(rec["name"]) or self._focus(rec["name"])["ping"])
