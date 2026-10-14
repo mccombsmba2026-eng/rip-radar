@@ -20,7 +20,7 @@ def test_etb_upc_detection():
 def test_everyone_only_when_asked(monkeypatch):
     from rip_radar import notify as notify_mod
     payloads = []
-    monkeypatch.setattr(notify_mod.Notifier, "_post_discord", staticmethod(lambda h, p: payloads.append(p) or True))
+    monkeypatch.setattr(notify_mod.Notifier, "_post_discord", staticmethod(lambda h, p, *_: payloads.append(p) or True))
     monkeypatch.setattr(settings, "load", lambda: {"discord_webhook": "https://main", "webhooks": {}})
     n = notify_mod.Notifier(settings.load)
     n.send("urgent", "In stock: booster bundle")

@@ -218,7 +218,7 @@ def test_pokemon_channel_routing(engine, monkeypatch):
     from rip_radar import notify as notify_mod
     from rip_radar.notify import Notifier
     posted = []
-    monkeypatch.setattr(notify_mod.Notifier, "_post_discord", staticmethod(lambda hook, payload: posted.append(hook) or True))
+    monkeypatch.setattr(notify_mod.Notifier, "_post_discord", staticmethod(lambda hook, payload, *_: posted.append(hook) or True))
     settings.update({"discord_webhook": "https://main", "discord_webhook_urgent": "https://urgent",
                      "webhooks": {"pokemon": "https://poke"}})
     n = Notifier(settings.load)

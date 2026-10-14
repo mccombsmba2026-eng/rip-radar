@@ -848,3 +848,41 @@ def test_pokemon_center_scans_sealed_only_and_slow(engine):
     pc = [t for t in engine.targets() if t.get("store") == "pokemon" and t["type"] == "retail_search"]
     assert pc and all("tcg-cards" not in t["url"] for t in pc)
     assert all(t["interval_seconds"] >= 420 for t in pc)
+
+
+def test_bot_puts_check_and_x_on_new_product_posts(monkeypatch):
+    from rip_radar import notify
+    from rip_radar.cards import ProductCards
+
+    class R:
+        def __init__(self, code, data=None): self.status_code, self._d = code, data or {}
+        def json(self): return self._d
+    added = []
+    monkeypatch.setattr(notify.REACTIONS, "add", lambda tok, ch, mid: added.append((tok, ch, mid)))
+    settings = {"bot_token": "TKN", "webhooks": {"target": "https://discord.com/api/webhooks/1/x"}}
+    pc = ProductCards(lambda: settings, {}, pace=0)
+
+    class H:
+        def request(self, method, url, **kw): return R(200, {"id": "55", "channel_id": "77"})
+    pc.http = H()
+    pc.process("target:1", "target", {"name": "Pokémon TCG: Prismatic Evolutions ETB", "url": "https://t.co/1"},
+               True, False, "")
+    assert added == [("TKN", "77", "55")] and pc.saved()["target:1"]["reacted"]
+
+
+def test_reactions_worker_puts_both(monkeypatch):
+    import time
+    from rip_radar.notify import Reactions
+    calls = []
+
+    class R:
+        status_code = 204
+    rx = Reactions()
+    rx.http = type("H", (), {"put": lambda self, url, **kw: calls.append(url) or R()})()
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+    rx.add("TKN", "77", "55")
+    for _ in range(100):
+        if len(calls) == 2:
+            break
+        time.sleep(0) or __import__("threading").Event().wait(0.01)
+    assert [c.rsplit("/reactions/", 1)[1] for c in calls] == ["%E2%9C%85/@me", "%E2%9D%8C/@me"]

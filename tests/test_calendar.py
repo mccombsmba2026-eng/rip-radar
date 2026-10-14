@@ -14,7 +14,7 @@ def capture(engine):
 def test_calendar_channels_never_spill_into_main(engine, monkeypatch):
     from rip_radar import notify as notify_mod
     posted = []
-    monkeypatch.setattr(notify_mod.Notifier, "_post_discord", staticmethod(lambda hook, payload: posted.append(hook) or True))
+    monkeypatch.setattr(notify_mod.Notifier, "_post_discord", staticmethod(lambda hook, payload, *_: posted.append(hook) or True))
     settings.update({"discord_webhook": "https://main"})
     n = notify_mod.Notifier(settings.load)
     assert n.send("normal", "📅 added", channel="calendar", strict=True) is False

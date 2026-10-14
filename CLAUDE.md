@@ -128,6 +128,11 @@ captchas, and never automates purchases. Keep it that way.
   3-browser halving) - /category/tcg-cards is all sleeves/binders/playmats. Queue protection: queue blocked 2+ checks
   in a row -> Pokémon Center product scans pause; 3+ -> queue every 120 s (8+ -> 180 s, drop mode 60 s) until it
   gets through. Barnes & Noble = ONE scan (collectible-card-games, products: cards): its Pokémon pages are books/toys.
+- 1.0.47: ✅ ❌ come pre-placed under every product post: `notify.REACTIONS` (own thread) PUTs both reactions with the
+  bot token (REST, paced, 429-aware) after `ProductCards` posts (`saved[key]["reacted"]`) and after product
+  `notify.send` posts (`?wait=true` -> channel_id/id). `ProductCards.react_existing()` adds them once to older posts.
+  M tapping ❌ (2nd reaction) -> block; ✅ -> `engine.keep_product` (state["kept_products"], `kept` in #watch, undoes
+  a matching ❌ block). The bot ignores its own reactions. Needs Add Reactions + Read Message History.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

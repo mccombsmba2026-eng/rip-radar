@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 import requests
 
-from .notify import STORE_COLORS, STORE_NAMES, channel_of
+from .notify import REACTIONS, STORE_COLORS, STORE_NAMES, channel_of
 
 log = logging.getLogger("rip_radar")
 GREY, AMBER, PURPLE = 0x8A8F9E, 0xF0A020, 0x9B59B6
@@ -155,6 +155,27 @@ class ProductCards:
             self.pending[key] = (store, None, False, False, "")
         self.start()
 
+    def react_existing(self):
+        """Posts made before ✅ ❌ existed get them too (once). Background, paced by the reactions thread."""
+        token = self.get_settings().get("bot_token")
+        if not token:
+            return 0
+        channels, n = {}, 0
+        with self.state_lock:
+            todo = [(k, v) for k, v in self.saved().items() if not v.get("reacted") and v.get("id")]
+        for key, v in todo:
+            hook = v.get("hook", "")
+            if hook not in channels:
+                try:
+                    channels[hook] = str(self.http.get(hook, timeout=15).json().get("channel_id") or "")
+                except Exception:
+                    channels[hook] = ""
+            if channels[hook]:
+                REACTIONS.add(token, channels[hook], v["id"])
+                v["reacted"] = True
+                n += 1
+        return n
+
     def resend_all(self):
         """Sync: re-check every card we have (edits only the ones that changed)."""
         with self.state_lock:
@@ -223,6 +244,8 @@ class ProductCards:
             body["content"] = "@everyone"
         r = self._call("POST", hook + "?wait=true", json=body)
         if r.status_code < 400:
+            m = r.json()
             with self.state_lock:
-                saved[key] = {"hook": hook, "id": r.json()["id"], "sig": sig, "at": time.time(),
-                              "name": rec.get("name", "")}
+                saved[key] = {"hook": hook, "id": m["id"], "sig": sig, "at": time.time(),
+                              "name": rec.get("name", ""), "reacted": True}
+            REACTIONS.add(self.get_settings().get("bot_token"), m.get("channel_id"), m.get("id"))   # ✅ ❌ to tap

@@ -106,7 +106,7 @@ def test_retail_watcher_checks_product_pages_when_tiles_hide_stock(engine):
 def test_ping_layout_uses_webhook_name_and_buy_links(monkeypatch):
     from rip_radar import notify as notify_mod, settings
     payloads = []
-    monkeypatch.setattr(notify_mod.Notifier, "_post_discord", staticmethod(lambda h, p: payloads.append(p) or True))
+    monkeypatch.setattr(notify_mod.Notifier, "_post_discord", staticmethod(lambda h, p, *_: payloads.append(p) or True))
     monkeypatch.setattr(settings, "load", lambda: {"discord_webhook": "https://main", "webhooks": {}})
     n = notify_mod.Notifier(settings.load)
     n.send("urgent", "🟢 NEW & IN STOCK at Walmart: Pokémon TCG ETB", "https://walmart.com/ip/1",

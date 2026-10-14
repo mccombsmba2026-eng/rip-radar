@@ -123,7 +123,7 @@ def test_blocked_site_gets_a_rest(engine):
 def test_drawings_and_status_channels(engine, monkeypatch):
     from rip_radar import notify as notify_mod
     posted = []
-    monkeypatch.setattr(notify_mod.Notifier, "_post_discord", staticmethod(lambda hook, payload: posted.append(hook) or True))
+    monkeypatch.setattr(notify_mod.Notifier, "_post_discord", staticmethod(lambda hook, payload, *_: posted.append(hook) or True))
     settings.update({"discord_webhook": "https://main", "webhooks": {"walmart": "https://walmart"}})
     n = notify_mod.Notifier(settings.load)
     n.send("urgent", "drawing", channel="walmart", copy_to=["drawings"])

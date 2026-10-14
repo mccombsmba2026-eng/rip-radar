@@ -2,6 +2,7 @@
 Also keeps a self-updating status message and an optional 'still running?' chat bot."""
 import json
 import logging
+import queue
 import threading
 import time
 from datetime import datetime, timezone
@@ -126,7 +127,8 @@ class Notifier:
             h = hooks_by_channel.get(extra, "")
             if h.startswith("http"):
                 hooks.add(h)
-        results = [self._post_discord(h, payload) for h in hooks if h.startswith("http")]
+        react = bool(product and url.startswith("http"))       # product posts get ✅ ❌ to tap
+        results = [self._post_discord(h, payload, react) for h in hooks if h.startswith("http")]
         if s.get("ntfy_topic") and level != "system":
             try:
                 requests.post(f"https://ntfy.sh/{s['ntfy_topic']}", data=title.encode("utf-8"),
@@ -147,17 +149,22 @@ class Notifier:
                 log.warning("Twilio failed: %s", e)
         return all(results) if results else False
 
-    @staticmethod
-    def _post_discord(hook, payload):
+    def _post_discord(self, hook, payload, react=False):
         for _ in range(3):
             try:
-                r = requests.post(hook, json=payload, timeout=15)
+                r = requests.post(hook + ("?wait=true" if react else ""), json=payload, timeout=15)
                 if r.status_code == 429:
                     time.sleep(float(r.json().get("retry_after", 2)) + 0.5)
                     continue
                 if r.status_code >= 400:
                     log.warning("Discord error %s: %s", r.status_code, r.text[:200])
                     return False
+                if react:
+                    try:
+                        m = r.json()
+                        REACTIONS.add(self.get_settings().get("bot_token"), m.get("channel_id"), m.get("id"))
+                    except ValueError:
+                        pass
                 return True
             except requests.RequestException as e:
                 log.warning("Discord failed: %s", e)
@@ -284,6 +291,56 @@ def bot_channel_ok(channel_name, channel_id, wanted):
 
 
 BLOCK_EMOJI = {"❌", "✖️", "🚫", "❎"}
+KEEP_EMOJI = {"✅", "✔️", "☑️", "👍"}
+POST_EMOJI = ("✅", "❌")             # put on every product post by the bot, so M just taps one
+
+
+class Reactions:
+    """The bot puts ✅ and ❌ under every product post (webhooks can't react themselves). Runs in its own thread so
+    posting is never slowed down. Needs the bot token + Add Reactions / Read Message History in the channel."""
+
+    def __init__(self):
+        self.q = queue.Queue()
+        self._thread = None
+        self.http = requests
+        self.state = ""
+
+    def add(self, token, channel_id, message_id):
+        if not token or not channel_id or not message_id:
+            return
+        self.q.put((token, str(channel_id), str(message_id)))
+        if not (self._thread and self._thread.is_alive()):
+            self._thread = threading.Thread(target=self._run, daemon=True, name="reactions")
+            self._thread.start()
+
+    def _run(self):
+        from urllib.parse import quote
+        while True:
+            token, ch, mid = self.q.get()
+            for emoji in POST_EMOJI:
+                url = f"https://discord.com/api/v10/channels/{ch}/messages/{mid}/reactions/{quote(emoji)}/@me"
+                for _ in range(4):
+                    try:
+                        r = self.http.put(url, headers={"Authorization": f"Bot {token}"}, timeout=15)
+                    except requests.RequestException as e:
+                        log.info("reaction: %s", e)
+                        break
+                    if r.status_code == 429:
+                        try:
+                            time.sleep(float(r.json().get("retry_after", 1)) + 0.2)
+                        except ValueError:
+                            time.sleep(1.5)
+                        continue
+                    if r.status_code >= 400:
+                        self.state = f"can't add ✅❌ (HTTP {r.status_code}): give the bot Add Reactions + Read Message History"
+                        log.info("reaction %s: %s %s", emoji, r.status_code, r.text[:150])
+                    else:
+                        self.state = "ok"
+                    break
+                time.sleep(0.35)
+
+
+REACTIONS = Reactions()
 
 
 class ChatBot:
@@ -292,7 +349,7 @@ class ChatBot:
     TRIGGERS = {"still running", "running", "status", "you up", "alive"}
 
     def __init__(self, status_text, get_settings=None, reply_text=None, zip_lookup=None, drop_mode=None, watch=None,
-                 block=None):
+                 block=None, keep=None):
         self.status_text = status_text
         self.get_settings = get_settings or (lambda: {})
         self.reply_text = reply_text or (lambda: status_text())
@@ -300,6 +357,7 @@ class ChatBot:
         self.drop_mode = drop_mode            # (hours) -> seconds left; "drop mode on" / "drop mode off" in Discord
         self.watch = watch                    # (text) -> [replies]: commands typed in the #watch channel
         self.block = block                    # (message_id, title) -> reply | None: someone reacted ❌ to a post
+        self.keep = keep                      # (message_id): someone reacted ✅ - a product they want
         self._lookup_channel = {}             # webhook url -> channel id
         self.token = None
         self.state = "off"   # off | connecting | online | error: ...
@@ -355,9 +413,13 @@ class ChatBot:
         @client.event
         async def on_raw_reaction_add(payload):
             # ❌ on a product post: delete it and never post that product (or the same item elsewhere) again
-            if not bot.block or str(payload.emoji) not in BLOCK_EMOJI:
-                return
             if client.user and payload.user_id == client.user.id:
+                return                                      # the bot's own ✅ ❌ on new posts
+            if str(payload.emoji) in KEEP_EMOJI:
+                if bot.keep:
+                    await asyncio.get_running_loop().run_in_executor(None, bot.keep, payload.message_id)
+                return
+            if not bot.block or str(payload.emoji) not in BLOCK_EMOJI:
                 return
             loop = asyncio.get_running_loop()
             channel = client.get_channel(payload.channel_id)

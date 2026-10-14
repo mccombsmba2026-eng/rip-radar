@@ -107,7 +107,7 @@ class Engine:
         self.startup_sync = False
         self.bot = ChatBot(self.status_text, settings_mod.load, self.bot_reply, zip_lookup=self.zip_lookup,
                            drop_mode=lambda hours: self.set_drop_mode(hours), watch=self.handle_watch_command,
-                           block=self.block_product)
+                           block=self.block_product, keep=self.keep_product)
         self.started = datetime.now(CT)
         self.TOPPS_FAST = {"state": "starting", "fails": 0}
         self.last_scan = None
@@ -418,6 +418,7 @@ class Engine:
             if time.time() - getattr(self, "_last_purge", 0) > 6 * 3600:
                 try:
                     self.purge_unwanted_cards()
+                    threading.Thread(target=self.cards.react_existing, daemon=True, name="react-old").start()
                 except Exception as e:
                     log.warning("cleanup: %s", e)
             if settings_mod.load().get("paused"):
@@ -1359,7 +1360,8 @@ class Engine:
                   "back in stock, drawing)\n• `test 151 etb -lot` → what that would catch right now\n"
                   "• `watching` → your list · `unwatch 2` or `unwatch prismatic bundle`\n"
                   "• `check focus` → is each 🔥 focus set / @everyone product actually matching anything\n"
-                  "• React ❌ on any product post → it's deleted and never posts again (same item at other stores too)\n"
+                  "• Every product post comes with ✅ ❌ already on it: tap ❌ → deleted and never posts again (same item "
+                  "at other stores too) · tap ✅ → kept (`kept` lists them)\n"
                   "• `block funko` → block by words · `blocked` → the list · `unblock 3` → undo")
 
     # ---------------------------------------------------------------- ❌ on a post = never show it (or its twins)
@@ -1386,6 +1388,25 @@ class Engine:
         if not name or len(name) < 6:
             return None
         return self.block_name(name)
+
+    def keep_product(self, message_id):
+        """✅ on a product post: M wants it. Remembered (shown in the daily recap / `kept` in #watch); if that product
+        had been blocked by mistake, it's unblocked."""
+        message_id = str(message_id)
+        with self._lock:
+            hit = next((v.get("name") for v in (self.state.get("product_cards") or {}).values()
+                        if str(v.get("id")) == message_id), None)
+            if not hit:
+                return None
+            kept = self.state.setdefault("kept_products", [])
+            if hit not in kept:
+                kept.append(hit)
+                del kept[:-300]
+        bl = self._blocklist()
+        still = [b for b in bl if not (not b.startswith("=") and blocked_by(hit, [b]))]
+        if len(still) != len(bl):
+            settings_mod.update({"blocked_products": still})
+        return hit
 
     def block_name(self, name, typed=False):
         entry = ("=" + name) if typed else name
@@ -1507,6 +1528,10 @@ class Engine:
                     "\n".join(f"`{i}` {q}" for i, q in enumerate(terms, 1))]
         if low in ("check focus", "focus", "check focus list", "focus check"):
             return self.focus_report()
+        if low in ("kept", "keepers", "liked"):
+            kept = self.state.get("kept_products") or []
+            return ["**✅ Kept** (products you tapped ✅ on):\n" + "\n".join(f"• {k}" for k in kept[-40:])
+                    if kept else "Nothing ✅'d yet. Tap ✅ under any product post you want."]
         if low in ("blocked", "blocklist", "block list"):
             bl = self._blocklist()
             if not bl:
