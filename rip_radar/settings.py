@@ -36,6 +36,7 @@ DEFAULTS = {
     "keep_awake": False,
     "resale_check": True,
     "watch_terms": [],
+    "blocked_products": [],      # ❌ in Discord / `block <words>` in #watch: never posted
     "quiet_hours": [2, 6],           # store pages half as often 2-6 AM CT (queue + drawings stay full speed)
     "site_budgets": {},              # override pages-per-hour per site, e.g. {"walmart.com": 120}               # #watch channel: product-name watches (typed in Discord)            # eBay sold median on product posts
     "recap_hour": 21,                # daily recap in #app-status at this hour (CT); -1 = off             # OFF unless M turns it on: ask Windows not to sleep while Rip Radar runs

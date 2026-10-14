@@ -1259,3 +1259,50 @@ def is_card_only(text, kind="cards"):
     if kind == "sports":
         return is_sports_card_product(text)
     return is_pokemon_product(text) or is_sports_card_product(text)
+
+
+# ---------------------------------------------------------------- ❌ = "not this, nor anything like it" (1.0.43)
+BLOCK_STOP = {"pokemon", "pokémon", "tcg", "the", "and", "of", "a", "an", "trading", "card", "cards", "game", "for",
+              "with", "new", "sealed", "exclusive", "edition", "count", "ct", "pc", "x", "by", "in", "from", "mfr",
+              "item", "official", "topps", "bowman", "panini", "-"}
+
+
+def block_words(name):
+    """The words that identify a product ('Ultra PRO Pokémon Charizard Playmat (24x14)' -> ultra pro charizard
+    playmat 24x14). Prices and filler words don't count."""
+    t = _fold(re.sub(r"\$\s?[\d,.]+", " ", name or "")).lower()
+    return [w for w in dict.fromkeys(re.findall(r"[a-z0-9][a-z0-9'+]*", t)) if w not in BLOCK_STOP]
+
+
+def blocked_by(name, blocked):
+    """The blocked entry this product name matches, else "". A match = (nearly) every word of the blocked product
+    is in this name, so the same item at another store (worded a little differently) is caught too.
+    Entries starting with '=' are typed phrases: all of their words must be there."""
+    have = set(block_words(name))
+    if not have:
+        return ""
+    for b in blocked or []:
+        want = block_words(str(b).lstrip("="))
+        if not want:
+            continue
+        if str(b).startswith("=") or len(want) < 5:
+            need = len(want)
+        else:
+            need = len(want) - 1                      # long names: one word may differ between stores
+        if len(want) == 1 and not str(b).startswith("="):
+            if _norm(name) != _norm(b):
+                continue
+        if sum(1 for w in want if w in have) >= need:
+            return str(b)
+    return ""
+
+
+def name_from_title(title):
+    """A Discord post title -> the product name in it.
+    '🟢 IN STOCK · Pokémon TCG: X'  /  '🆕 Loaded at Target, not in stock yet: Pokémon TCG: X · ⚠️ 30% above retail'"""
+    t = re.sub(r"\s·\s⚠️.*$", "", (title or "").strip())
+    head_dot, _, after_dot = t.partition(" · ")
+    head_colon, _, after_colon = t.partition(": ")
+    if after_dot and (not after_colon or len(head_dot) < len(head_colon)):
+        return after_dot.strip()
+    return (after_colon or t).strip()

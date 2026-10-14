@@ -708,3 +708,33 @@ def test_every_store_is_cards_only(engine):
     assert not is_card_only("Pokémon TCG: Pikachu Card Sleeves 65ct", "cards")
     assert is_card_only("Pokémon TCG: Prismatic Evolutions Booster Bundle", "cards")
     assert not is_accessory_only("Pokémon TCG: Collector's Chest Fall 2025")
+
+
+def test_block_matching():
+    from rip_radar.parsing import blocked_by, name_from_title
+    bl = ["Ultra PRO Pokémon Charizard Playmat (24x14)"]
+    assert blocked_by("Ultra Pro Charizard Playmat $24.99", bl)            # same item, another store's wording
+    assert not blocked_by("Pokémon TCG: Charizard ex Premium Collection", bl)
+    assert blocked_by("Funko Pop Pikachu Trading Card Bundle", ["=funko"])  # typed `block funko`
+    assert not blocked_by("Pokémon TCG: Prismatic Evolutions Elite Trainer Box", ["=funko"])
+    assert name_from_title("🔥 🟢 IN STOCK · Pokémon TCG: Prismatic ETB") == "Pokémon TCG: Prismatic ETB"
+    assert name_from_title("🆕 Loaded at Target, not in stock yet: Pokémon TCG: X Box · ⚠️ 30% above retail") \
+        == "Pokémon TCG: X Box"
+
+
+def test_react_x_blocks_product(engine, monkeypatch):
+    from rip_radar import settings as settings_mod
+    store = {}
+    monkeypatch.setattr(settings_mod, "load", lambda: dict(store))
+    monkeypatch.setattr(settings_mod, "update", lambda d: store.update(d))
+    retired = []
+    monkeypatch.setattr(engine.cards, "retire", lambda s, p: retired.append((s, p)))
+    engine.state["product_cards"] = {"target:12345678": {"id": "999", "name": "Pokémon TCG: Pikachu Binder Bundle"}}
+    assert engine.block_product("1") is None                                 # not a product post
+    reply = engine.block_product("999")
+    assert "Blocked" in reply and store["blocked_products"] == ["Pokémon TCG: Pikachu Binder Bundle"]
+    assert any("Pikachu Binder" in m for m in engine.handle_watch_command("blocked"))
+    assert "Unblocked" in engine.handle_watch_command("unblock 1")[0]
+    assert store["blocked_products"] == []
+    engine.handle_watch_command("block funko")
+    assert store["blocked_products"] == ["=funko"]

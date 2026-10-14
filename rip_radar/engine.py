@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 from . import __version__, paths, settings as settings_mod
 from .msrp import msrp_text, price_check
 from .notify import CHANNELS, STORE_NAMES, ChatBot, LiveBoard, Notifier, StatusBoard, store_in
-from .parsing import (CT, focus_match, is_accessory_only, is_card_only, og_image, parse_watch, watch_match, wall_kind, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
+from .parsing import (CT, blocked_by, name_from_title, focus_match, is_accessory_only, is_card_only, og_image, parse_watch, watch_match, wall_kind, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
                       topps_sitemap_numbers, LIVE_STATUSES, RETAIL_STORES, categorize, extract_when, fmt_when, gcal_link, is_card_product,
                       is_etb_or_upc, is_pokemon_product, is_sports_card_product, is_tcg_product, looks_blocked, parse_retail_tiles, parse_topps_calendar,
                       parse_topps_product_page, humanize_handle, tile_status, drawing_window, next_data, sport_of, stock_hint,
@@ -106,7 +106,8 @@ class Engine:
         self.sync_at = 0
         self.startup_sync = False
         self.bot = ChatBot(self.status_text, settings_mod.load, self.bot_reply, zip_lookup=self.zip_lookup,
-                           drop_mode=lambda hours: self.set_drop_mode(hours), watch=self.handle_watch_command)
+                           drop_mode=lambda hours: self.set_drop_mode(hours), watch=self.handle_watch_command,
+                           block=self.block_product)
         self.started = datetime.now(CT)
         self.last_scan = None
         self.health = {}           # name -> {"health","code","at","type","url"}
@@ -871,7 +872,8 @@ class Engine:
             base_keep, kind = keep, t.get("products", "cards")
             keep = lambda text, b=base_keep, k=kind: b(text) and is_card_only(text, k)
         cap = float(t.get("max_price", 0) or 0)
-        cards = [x for x in tiles if keep(f"{x['name']} {x['url']}")
+        blocked = self._blocklist()
+        cards = [x for x in tiles if keep(f"{x['name']} {x['url']}") and not blocked_by(x["name"], blocked)
                  and not (cap and x["price"] and float(x["price"].strip("$").replace(",", "")) > cap)]
         known = st.setdefault("items", {})
 
@@ -1043,7 +1045,7 @@ class Engine:
         if prev is None:                        # first look at this product's stores: baseline, no ping
             return
         got = [(n, q) for n, q in counts.items() if q > 0 and (prev.get(n, 0) == 0 or q - prev.get(n, 0) >= 5)]
-        if not got:
+        if not got or blocked_by(x.get("name", ""), self._blocklist()):
             return
         got.sort(key=lambda g: -g[1])
         label = STORE_NAMES.get(store, store)
@@ -1234,7 +1236,68 @@ class Engine:
                   "• `watch prismatic bundle` → @everyone here whenever any store has a match (loaded, in stock, "
                   "back in stock, drawing)\n• `test 151 etb -lot` → what that would catch right now\n"
                   "• `watching` → your list · `unwatch 2` or `unwatch prismatic bundle`\n"
-                  "• `check focus` → is each 🔥 focus set / @everyone product actually matching anything")
+                  "• `check focus` → is each 🔥 focus set / @everyone product actually matching anything\n"
+                  "• React ❌ on any product post → it's deleted and never posts again (same item at other stores too)\n"
+                  "• `block funko` → block by words · `blocked` → the list · `unblock 3` → undo")
+
+    # ---------------------------------------------------------------- ❌ on a post = never show it (or its twins)
+    def _blocklist(self):
+        return list(settings_mod.load().get("blocked_products") or [])
+
+    def block_product(self, message_id, title=""):
+        """Someone reacted ❌ to a post. Our own product card -> block that product; any other post with a product
+        title -> block that name. Takes down every matching card in every channel. -> reply text, or None when
+        the message isn't a product post (boards, status...)."""
+        message_id = str(message_id)
+        store = pid = name = None
+        with self._lock:
+            for key, v in (self.state.get("product_cards") or {}).items():
+                if str(v.get("id")) == message_id:
+                    store, _, pid = key.partition(":")
+                    name = v.get("name")
+                    break
+        if store and not name:
+            name = next((r["name"] for r in self._catalog(max_age_hours=24 * 30)
+                         if r["store"] == store and str(r["id"]) == pid), None)
+        if not name and title:
+            name = name_from_title(title)
+        if not name or len(name) < 6:
+            return None
+        return self.block_name(name)
+
+    def block_name(self, name, typed=False):
+        entry = ("=" + name) if typed else name
+        blocked = self._blocklist()
+        if entry.lower() not in [b.lower() for b in blocked]:
+            blocked.append(entry)
+            settings_mod.update({"blocked_products": blocked[-500:]})
+        gone = self._retire_blocked()
+        more = f" and {gone - 1} more like it" if gone > 1 else ""
+        return (f"🚫 Blocked **{name[:120]}**{more} · it won't post in any channel again. "
+                f"Undo: type `unblock {len(self._blocklist())}` in #watch (`blocked` shows the list).")
+
+    def _retire_blocked(self):
+        """Take down every card whose product is now blocked. -> how many."""
+        blocked, gone = self._blocklist(), 0
+        with self._lock:
+            return self._retire_blocked_locked(blocked)
+
+    def _retire_blocked_locked(self, blocked):
+        gone = 0
+        for t in self.targets():
+            st = self.state.get("targets", {}).get(t["name"], {})
+            if t["type"] == "retail_search":
+                items, store = st.get("items") or {}, t["store"]
+            elif t["type"] == "topps_sitemap":
+                items, store = st.get("products") or {}, "topps"
+            else:
+                continue
+            for pid, r in items.items():
+                if r.get("carded") and blocked_by(r.get("name", ""), blocked):
+                    self.cards.retire(store, pid)
+                    r["carded"] = False
+                    gone += 1
+        return gone
 
     def _catalog(self, max_age_hours=72):
         """Everything the scanners know about right now (all stores + Topps + Walmart drawings)."""
@@ -1283,8 +1346,33 @@ class Engine:
                     "\n".join(f"`{i}` {q}" for i, q in enumerate(terms, 1))]
         if low in ("check focus", "focus", "check focus list", "focus check"):
             return self.focus_report()
+        if low in ("blocked", "blocklist", "block list"):
+            bl = self._blocklist()
+            if not bl:
+                return ["Nothing blocked. React ❌ to any product post (or type `block <words>` here) to block it."]
+            lines = [f"`{i}` {b.lstrip('=')}{' (typed)' if b.startswith('=') else ''}" for i, b in enumerate(bl, 1)]
+            out, cur = [], "**Blocked** (never posted) · `unblock N` to undo:"
+            for ln in lines:
+                if len(cur) + len(ln) > 1900:
+                    out.append(cur)
+                    cur = ""
+                cur += "\n" + ln
+            return out + [cur]
         cmd, _, rest = msg.partition(" ")
         cmd = cmd.lower()
+        if cmd == "block" and rest:
+            return [self.block_name(rest, typed=True)]
+        if cmd == "unblock" and rest:
+            bl = self._blocklist()
+            if rest.isdigit() and 1 <= int(rest) <= len(bl):
+                gone = bl.pop(int(rest) - 1)
+            else:
+                gone = next((b for b in bl if b.lstrip("=").lower() == rest.lower()), None)
+                if not gone:
+                    return [f"`{rest}` isn't blocked. Type `blocked` to see the list."]
+                bl.remove(gone)
+            settings_mod.update({"blocked_products": bl})
+            return [f"↩️ Unblocked: {gone.lstrip('=')} · it can post again from the next scan."]
         if cmd in ("watch", "add") and rest:
             w = parse_watch(rest)
             if not w["words"]:
@@ -1318,7 +1406,7 @@ class Engine:
     def _watch_alerts(self, store, x, rec, event):
         """A product with news (loaded / in stock / back / drawing) that matches a #watch term -> @everyone there."""
         terms = settings_mod.load().get("watch_terms") or []
-        if not terms:
+        if not terms or blocked_by(x.get("name", ""), self._blocklist()):
             return
         sent = self.state.setdefault("watch_sent", {})
         for q in terms:
@@ -1426,8 +1514,9 @@ class Engine:
                 by_name[self._norm(x["name"])] = x
         if not tiles:
             return "empty", status
+        blocked = self._blocklist()
         cards = [x for x in tiles if self._wanted_card(x["name"] + " " + x["url"])
-                 and not is_accessory_only(x["name"])]
+                 and not is_accessory_only(x["name"]) and not blocked_by(x["name"], blocked)]
         known = st.setdefault("drawings", {})
         now = datetime.now(CT)
         # the page's own visible text: if every drawing on it shows the same "Drawing starts ..." time, a tile we
@@ -1792,6 +1881,11 @@ class Engine:
             prev_status, was_live, new = rec.get("status"), rec.get("live"), not rec.get("status")
             rec.update({k: v for k, v in item.items() if v not in ("", None) or k in ("live",)})
             rec["retail"], rec["ratio"] = "Topps' own price", None
+            if blocked_by(rec.get("name", ""), self._blocklist()):        # ❌'d in Discord
+                if rec.get("carded"):
+                    self.cards.retire("topps", h)
+                    rec["carded"] = False
+                continue
             rec["focus"] = self._focus(rec.get("name", ""))["focus"]
             event = ""
             if new and not rec.get("baseline"):

@@ -283,18 +283,23 @@ def bot_channel_ok(channel_name, channel_id, wanted):
     return not w or w == str(channel_name or "").lower() or w == str(channel_id or "")
 
 
+BLOCK_EMOJI = {"❌", "✖️", "🚫", "❎"}
+
+
 class ChatBot:
     """Answers 'still running?' (or the phrases set in Settings) in Discord with the reply set in Settings.
     Needs a bot token. Wording changes apply right away - it reads settings on every message."""
     TRIGGERS = {"still running", "running", "status", "you up", "alive"}
 
-    def __init__(self, status_text, get_settings=None, reply_text=None, zip_lookup=None, drop_mode=None, watch=None):
+    def __init__(self, status_text, get_settings=None, reply_text=None, zip_lookup=None, drop_mode=None, watch=None,
+                 block=None):
         self.status_text = status_text
         self.get_settings = get_settings or (lambda: {})
         self.reply_text = reply_text or (lambda: status_text())
         self.zip_lookup = zip_lookup          # (zip, miles) -> [message chunks]
         self.drop_mode = drop_mode            # (hours) -> seconds left; "drop mode on" / "drop mode off" in Discord
         self.watch = watch                    # (text) -> [replies]: commands typed in the #watch channel
+        self.block = block                    # (message_id, title) -> reply | None: someone reacted ❌ to a post
         self._lookup_channel = {}             # webhook url -> channel id
         self.token = None
         self.state = "off"   # off | connecting | online | error: ...
@@ -346,6 +351,37 @@ class ChatBot:
         async def on_ready():
             bot.state = "online · waiting for a message (if it never hears one, it can't see that channel)"
             log.info("Discord bot online as %s", client.user)
+
+        @client.event
+        async def on_raw_reaction_add(payload):
+            # ❌ on a product post: delete it and never post that product (or the same item elsewhere) again
+            if not bot.block or str(payload.emoji) not in BLOCK_EMOJI:
+                return
+            if client.user and payload.user_id == client.user.id:
+                return
+            loop = asyncio.get_running_loop()
+            channel = client.get_channel(payload.channel_id)
+            title, msg = "", None
+            try:
+                msg = await channel.fetch_message(payload.message_id)
+                e = msg.embeds[0] if msg.embeds else None
+                if e and e.url:                             # product posts link the product; boards don't
+                    title = e.title or ""
+            except Exception as e:                          # no Read Message History: our own cards still work
+                log.info("❌ reaction: couldn't read the message (%s)", e)
+            reply = await loop.run_in_executor(None, bot.block, payload.message_id, title)
+            if not reply:
+                return
+            if msg is not None and msg.webhook_id is not None:
+                try:
+                    await msg.delete()                      # alerts that aren't self-editing cards (needs Manage Messages)
+                except Exception:
+                    pass
+            try:
+                await channel.send(reply, delete_after=45)
+            except Exception:
+                pass
+            bot.state = "online · last ❌ block handled"
 
         @client.event
         async def on_message(msg):

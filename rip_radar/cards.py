@@ -224,4 +224,5 @@ class ProductCards:
         r = self._call("POST", hook + "?wait=true", json=body)
         if r.status_code < 400:
             with self.state_lock:
-                saved[key] = {"hook": hook, "id": r.json()["id"], "sig": sig, "at": time.time()}
+                saved[key] = {"hook": hook, "id": r.json()["id"], "sig": sig, "at": time.time(),
+                              "name": rec.get("name", "")}

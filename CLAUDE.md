@@ -105,6 +105,13 @@ captchas, and never automates purchases. Keep it that way.
 - `cards_only: true` (1.0.40) on Barnes & Noble, Hot Topic, Amazon, GameStop, Dick's, Costco: each has exactly one
   Pokémon-cards scan + one sports-cards scan, and keeps CARDS only (`parsing.is_card_only`: sealed or singles; no
   accessories / merch). Since 1.0.42 `cards_only` defaults to TRUE for every store. No store keeps single cards (1.0.41).
+- ❌ to block (1.0.43): the bot's `on_raw_reaction_add` (❌ ✖️ 🚫 ❎) on any post -> `engine.block_product(message_id,
+  title)`: our own product card (found by message id in `state["product_cards"]`, which now stores the name) or any
+  post whose embed links a product (name via `parsing.name_from_title`) -> name added to `settings["blocked_products"]`,
+  every matching card retired, other posts deleted by the bot if it has Manage Messages, a 45 s confirmation.
+  `parsing.blocked_by`: all words of the blocked name (one may differ for 5+ words) = the same item at any store;
+  "=words" entries come from typing `block <words>` in #watch. `blocked` / `unblock N` in #watch. Applied to store
+  scans, Topps formats, Walmart drawings, restocks and #watch alerts.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT
