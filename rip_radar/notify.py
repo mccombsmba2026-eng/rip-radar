@@ -385,15 +385,38 @@ class ChatBot:
             return str(channel_id) == urgent_id
         return "urgent" in str(channel_name or "").lower()
 
+    async def _reply(self, channel, text, hook=""):
+        """Post as the bot; if Discord won't let the bot post in that channel, post through the channel's webhook
+        (it always can) and say which permission is missing."""
+        try:
+            await channel.send(text)
+            return True
+        except Exception as e:
+            self.state = (f"online · can read {('#' + str(getattr(channel, 'name', '')))} but can't post there "
+                          f"({type(e).__name__}) - give the bot Send Messages in that channel")
+            log.warning("bot reply failed in #%s: %s", getattr(channel, "name", ""), e)
+        if str(hook).startswith("http"):
+            try:
+                import asyncio as _a
+                await _a.get_running_loop().run_in_executor(
+                    None, lambda: requests.post(hook, json={"content": text}, timeout=15))
+                return True
+            except Exception as e:
+                log.warning("webhook reply failed: %s", e)
+        return False
+
     def channel_id_of(self, hook):
         if not str(hook).startswith("http"):
             return None
-        if hook not in self._lookup_channel:
+        if not self._lookup_channel.get(hook):
             try:
-                self._lookup_channel[hook] = str(requests.get(hook, timeout=15).json().get("channel_id") or "")
+                cid = str(requests.get(hook, timeout=15).json().get("channel_id") or "")
             except (requests.RequestException, ValueError):
                 return None
-        return self._lookup_channel[hook] or None
+            if not cid:
+                return None
+            self._lookup_channel[hook] = cid
+        return self._lookup_channel[hook]
 
     def start(self, token):
         if not token or token == self.token and self._thread and self._thread.is_alive():
@@ -490,22 +513,23 @@ class ChatBot:
                 bot.state = (f"online · heard a message in {where} but can't read it: turn on Message Content Intent "
                              "(discord.com/developers → your app → Bot) and save")
                 return
-            if bot.prices and msg.content:
-                prices_id = await loop_.run_in_executor(None, bot.channel_id_of,
-                                                        (s.get("webhooks") or {}).get("prices") or "")
-                if prices_id and str(getattr(msg.channel, "id", "")) == prices_id:
-                    for c in await loop_.run_in_executor(None, bot.prices, msg.content):
-                        await msg.channel.send(c[:1990])
-                    bot.state = f"online · last price-list command: {msg.content[:40]}"
-                    return
-            if bot.watch and msg.content:
-                watch_id = await loop_.run_in_executor(None, bot.channel_id_of,
-                                                       (s.get("webhooks") or {}).get("watch") or "")
-                if watch_id and str(getattr(msg.channel, "id", "")) == watch_id:
-                    for c in await loop_.run_in_executor(None, bot.watch, msg.content):
-                        await msg.channel.send(c[:1990])
-                    bot.state = f"online · last #watch command: {msg.content[:40]}"
-                    return
+            hooks = s.get("webhooks") or {}
+            for key, handler in (("prices", bot.prices), ("watch", bot.watch)):
+                if not handler or not msg.content:
+                    continue
+                cid = await loop_.run_in_executor(None, bot.channel_id_of, hooks.get(key) or "")
+                if not cid or str(getattr(msg.channel, "id", "")) != cid:
+                    continue
+                try:
+                    replies = await loop_.run_in_executor(None, handler, msg.content)
+                except Exception as e:                           # never go silent: say what broke
+                    log.warning("%s command %r: %s", key, msg.content[:40], e)
+                    replies = [f"⚠️ That command hit an error ({type(e).__name__}: {str(e)[:150]}). "
+                               "Send this to whoever maintains Rip Radar."]
+                for c in replies:
+                    await bot._reply(msg.channel, c[:1990], hooks.get(key) or "")
+                bot.state = f"online · last {where} command: {msg.content[:40]}"
+                return
             dm = drop_mode_command(msg.content)
             if dm is not None and bot.drop_mode:
                 allowed = await loop_.run_in_executor(None, bot.drop_mode_allowed, getattr(msg.channel, "name", ""),

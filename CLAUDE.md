@@ -179,6 +179,9 @@ captchas, and never automates purchases. Keep it that way.
   price)" (`parsing.first_party`); Price shows "· since 3:10 PM" (`price_since`, set when the price changes); a carded
   product not seen on the store page for 30+ min gets "⚠️ Price check: may have changed" (`rec["stale"]`, cleared the
   next time it's seen).
+- 1.0.55: commands in #watch / #price-list never go silent: `ChatBot._reply` posts as the bot, else through that
+  channel's webhook (and `bot.state` names the missing permission); a handler exception is answered with the error;
+  `channel_id_of` no longer caches an empty / failed webhook lookup.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT
