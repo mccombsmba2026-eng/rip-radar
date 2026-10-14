@@ -81,8 +81,14 @@ def summarize(prices):
 
 
 class ResaleChecker:
-    def __init__(self, state, get_settings, pace=8, ttl_hours=24, on_result=None):
+    FAIL_TTL = 1800          # a failed lookup is retried after 30 min (not cached for a day)
+
+    def __init__(self, state, get_settings, pace=15, ttl_hours=24, on_result=None, browser_fetch=None):
         self.state, self.get_settings, self.pace, self.ttl = state, get_settings, pace, ttl_hours * 3600
+        # eBay turns plain Python requests away (HTTP 403): ask through a hidden real-browser window when we have one
+        self.browser_fetch = browser_fetch
+        self.stats = {"ok": 0, "priced": 0, "fail": 0, "fail_streak": 0, "last_error": "", "last_ok": 0,
+                      "via": ""}
         self.cache = state.setdefault("resale", {})
         self.q = queue.PriorityQueue()       # live drops (priority 0) jump ahead of background valuing (1)
         self.on_result = on_result or (lambda key, result: None)
@@ -102,7 +108,7 @@ class ResaleChecker:
         q = clean_query(name)
         key = q.lower()
         hit = self.cache.get(key)
-        if hit and time.time() - hit.get("at", 0) < self.ttl:
+        if hit and time.time() - hit.get("at", 0) < (self.ttl if hit.get("ok", "median" in hit) else self.FAIL_TTL):
             return hit if hit.get("median") else None
         with self._lock:
             if key not in self.queued or urgent:
@@ -142,7 +148,8 @@ class ResaleChecker:
                 self.cache[key] = self.check(q)
             except Exception as e:
                 log.info("resale %s: %s", q, e)
-                self.cache[key] = {"at": time.time(), "q": q}
+                self._failed(f"{type(e).__name__}")
+                self.cache[key] = {"at": time.time(), "q": q, "ok": False}
             finally:
                 with self._lock:
                     self.queued.discard(key)
@@ -157,13 +164,47 @@ class ResaleChecker:
     def key(name):
         return clean_query(name).lower()
 
+    def _failed(self, why):
+        self.stats["fail"] += 1
+        self.stats["fail_streak"] += 1
+        self.stats["last_error"] = why
+
+    def _get(self, url):
+        """-> (status, html, how). Hidden browser first (eBay blocks plain requests); plain HTTP as the fallback."""
+        if self.browser_fetch:
+            try:
+                status, _, html = self.browser_fetch(url)
+                if html and any(k in html for k in ("s-item", "s-card", "srp-results")):
+                    return status, html, "browser"
+                if html and ("captcha" in html.lower() or "pardon our interruption" in html.lower()):
+                    return 403, html, "browser"
+            except Exception as e:
+                log.info("resale browser: %s", e)
+        r = self.s.get(url, timeout=20)
+        return r.status_code, r.text, "http"
+
     def check(self, q):
-        r = self.s.get(search_url(q), timeout=20)
-        res = {"at": time.time(), "q": q}
-        if r.status_code < 400:
-            got = summarize(parse_sold(r.text, q))
+        status, html, how = self._get(search_url(q))
+        res = {"at": time.time(), "q": q, "ok": status < 400}
+        if status < 400:
+            self.stats.update({"ok": self.stats["ok"] + 1, "fail_streak": 0, "last_ok": time.time(), "via": how})
+            got = summarize(parse_sold(html, q))
             if got:
                 res.update(got)
+                self.stats["priced"] += 1
         else:
-            log.info("resale: eBay HTTP %s", r.status_code)
+            self._failed(f"eBay HTTP {status}")
+            log.info("resale: eBay HTTP %s (%s)", status, how)
         return res
+
+    def health(self):
+        """One line for the startup message / status: is eBay answering?"""
+        st = self.stats
+        if not self.enabled():
+            return "💸 Resale values: off (Settings)"
+        if st["fail_streak"] >= 5 and not st["ok"]:
+            return f"💸 Resale values: ❌ eBay is turning lookups away ({st['last_error']}) - retrying every 30 min"
+        if st["ok"]:
+            return (f"💸 Resale values: ✅ working ({st['priced']} priced of {st['ok']} looked up since launch"
+                    f"{', ' + str(st['fail']) + ' failed' if st['fail'] else ''})")
+        return "💸 Resale values: starting (first eBay lookups run in the background)"

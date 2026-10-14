@@ -68,7 +68,7 @@ class Fetcher:
 
 
 class Engine:
-    def __init__(self, browser_fetch=None, queue_fetch=None, stock_json=None, extra_browsers=None):
+    def __init__(self, browser_fetch=None, queue_fetch=None, stock_json=None, extra_browsers=None, resale_fetch=None):
         paths.ensure_dirs()
         self.builtin = load_builtin()
         self.state = self._load_state()
@@ -80,7 +80,8 @@ class Engine:
         self.stock_json = stock_json          # Target stock asked from inside a browser on target.com
         from .resale import ResaleChecker
         self._resale_posts = {}               # resale key -> {(store, pid): rec} waiting for a value
-        self.resale = ResaleChecker(self.state, settings_mod.load, on_result=self._resale_ready)
+        self.resale = ResaleChecker(self.state, settings_mod.load, on_result=self._resale_ready,
+                                    browser_fetch=resale_fetch)
         self._queue_thread = None
         self.notify = Notifier(settings_mod.load, on_alert=self._record_alert)
         self.board = StatusBoard(settings_mod.load, self.status_text, self.state)
@@ -500,6 +501,7 @@ class Engine:
         default_iv = self.builtin.get("default_interval_seconds", 90)
         while not self._stop.is_set():
             self._apply_keep_awake()
+            self._resale_watchdog()
             if time.time() - getattr(self, "_last_purge", 0) > 6 * 3600:
                 try:
                     self.purge_unwanted_cards()
@@ -561,6 +563,7 @@ class Engine:
                     bad = [f"❌ **{k}**: {v}" for k, v in report.items() if not v.startswith("ok")]
                     self.notify.send("system", f"🟢 Rip Radar {__version__} is running · all channels synced",
                                      desc=f"{ok}/{len(report)} sources working.\n{self.stock_health()}\n{self.topps_fast_health()}\n"
+                                          f"{self.resale.health()}\n"
                                           + "\n".join(bad)[:3400])
                 else:
                     self.notify.send("normal", "🔄 All channels synced", desc="Each channel has a fresh board with "
@@ -1395,21 +1398,53 @@ class Engine:
         first and immediately - and edited into the post the moment the answer comes back (_resale_ready)."""
         if not getattr(self, "resale", None):
             return
+        if not self.resale.enabled():
+            return
         for x, rec, event, _ in changed:
             name = rec.get("name", "")
             r = self.resale.lookup(name, urgent=bool(event) and bool(rec.get("live")))
             if r:
                 rec["resale"] = self.resale.text(r, rec.get("price"))
-            elif store and rec.get("carded", True):
+                continue
+            hit = self.resale.cache.get(self.resale.key(name)) or {}
+            if hit.get("ok") and not hit.get("median"):
+                rec["resale"] = self.RESALE_NONE
+                continue
+            if not rec.get("resale") or rec["resale"] == self.RESALE_FAIL:
+                rec["resale"] = self.RESALE_WAIT          # shows on the post until the value is edited in
+            if store and rec.get("carded", True):
                 self._resale_posts.setdefault(self.resale.key(name), {})[(store, x["id"])] = rec
 
+    def _resale_watchdog(self):
+        """#app-status hears about it once when eBay keeps turning lookups away, and once when it works again."""
+        st = self.resale.stats
+        flagged = self.state.get("resale_flagged")
+        if st["fail_streak"] >= 15 and not flagged:
+            self.state["resale_flagged"] = True
+            self.notify.send("system", "💸 Resale values aren't coming through", "https://www.ebay.com/",
+                             {"Why": st["last_error"], "What happens": "Posts show \"eBay didn't answer\"; lookups retry "
+                              "every 30 min by themselves"})
+        elif flagged and st["fail_streak"] == 0 and st["ok"]:
+            self.state["resale_flagged"] = False
+            self.notify.send("system", "💸 Resale values are working again", "https://www.ebay.com/")
+
+    RESALE_WAIT = "⏳ checking eBay sold listings…"
+    RESALE_NONE = "No recent eBay sales match this product"
+    RESALE_FAIL = "⚠️ eBay didn't answer · retrying in 30 min"
+
     def _resale_ready(self, key, result):
-        """A value came back: write it on every waiting post and edit those posts now (no new ping)."""
+        """A lookup finished: write the value (or why there isn't one) on every waiting post and edit those posts
+        now (no new ping)."""
         waiting = self._resale_posts.pop(key, {})
-        if not result or not result.get("median"):
+        if not result:
             return
         for (store, pid), rec in waiting.items():
-            rec["resale"] = self.resale.text(result, rec.get("price"))
+            if result.get("median"):
+                rec["resale"] = self.resale.text(result, rec.get("price"))
+            elif result.get("ok"):
+                rec["resale"] = self.RESALE_NONE
+            else:
+                rec["resale"] = self.RESALE_FAIL
             if self.cards.enabled(store) and rec.get("carded"):
                 self.cards.request(store, pid, rec)
 
@@ -1457,6 +1492,7 @@ class Engine:
                   "• Every product post comes with ✅ ❌ already on it: tap ❌ → deleted and never posts again (same item "
                   "at other stores too) · tap ✅ → kept (`kept` lists them)\n"
                   "• `block funko` → block by words · `blocked` → the list · `unblock 3` → undo\n"
+                  "• `value prismatic etb` → what it sells for on eBay right now · `resale` → is eBay answering\n"
                   "• `watch tcin 94681234` or paste a Target link → that exact Target product ID, checked every ~90 s: "
                   "@everyone when it gets LOADED, a DRAWING is set up, or it's IN STOCK · `unwatch tcin 94681234`")
 
@@ -1674,6 +1710,22 @@ class Engine:
                     f"loaded, set up as a drawing / invite, or comes in stock.\nRight now: "
                     + (self._tcin_line(tc, phase, info) if phase != "unknown" else "couldn't ask Target yet "
                        "(it'll keep trying)")]
+        if cmd in ("value", "resale", "ebay") and rest:
+            from .resale import clean_query
+            q = clean_query(rest)
+            try:
+                r = self.resale.check(q)
+            except Exception as e:
+                return [f"💸 Couldn't reach eBay ({type(e).__name__}). {self.resale.health()}"]
+            self.resale.cache[q.lower()] = r
+            if r.get("median"):
+                return [f"💸 **{q}** · " + self.resale.text(r)]
+            if r.get("ok"):
+                return [f"💸 **{q}** · eBay answered, but no recent sold listings match all of those words. Try "
+                        "fewer / different words."]
+            return [f"💸 eBay didn't answer. {self.resale.health()}"]
+        if low in ("resale", "resale status", "ebay"):
+            return [self.resale.health()]
         if cmd == "block" and rest:
             return [self.block_name(rest, typed=True)]
         if cmd == "unblock" and rest:

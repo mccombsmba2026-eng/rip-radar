@@ -954,3 +954,48 @@ def test_crunchyroll_store_and_queue(engine):
     pc = next(t for t in q if "pokemoncenter" in t["url"])
     assert engine._queue_site(pc) == ("Pokémon Center", "pokemon-center")
     assert any(t.get("store") == "crunchyroll" and t["type"] == "retail_search" for t in engine.targets())
+
+
+SOLD_HTML = "<ul>" + "".join(
+    f'<li class="s-item"><div class="s-item__title">Pokemon Prismatic Evolutions Booster Bundle Sealed</div>'
+    f'<span class="s-item__price">${p}</span></li>' for p in (55, 60, 62, 58, 65)) + "</ul>"
+
+
+def test_resale_goes_through_browser_when_ebay_blocks_plain_requests():
+    from rip_radar.resale import ResaleChecker
+    calls = []
+    rc = ResaleChecker({}, lambda: {"resale_check": True},
+                       browser_fetch=lambda url: calls.append(url) or (200, url, SOLD_HTML))
+    res = rc.check("Pokémon Prismatic Evolutions Booster Bundle")
+    assert calls and res["median"] == 60 and res["ok"]
+    assert "✅ working" in rc.health() and rc.stats["via"] == "browser"
+
+
+def test_resale_failure_is_retried_soon_and_reported():
+    import time
+    from rip_radar.resale import ResaleChecker
+    rc = ResaleChecker({}, lambda: {"resale_check": True}, browser_fetch=lambda url: (200, url, "<p>Pardon our interruption</p>"))
+    rc.s = type("S", (), {"get": lambda self, url, **kw: type("R", (), {"status_code": 403, "text": ""})()})()
+    for _ in range(5):
+        res = rc.check("Pokémon Prismatic Evolutions Booster Bundle")
+    assert res["ok"] is False and "❌" in rc.health() and "403" in rc.health()
+    key = rc.key("Pokémon Prismatic Evolutions Booster Bundle")
+    rc.cache[key] = {"at": time.time() - 3600, "q": "x", "ok": False}       # an hour-old failure
+    rc._start = lambda: None
+    rc.lookup("Pokémon Prismatic Evolutions Booster Bundle")
+    assert key in rc.queued                                                   # asked again (not cached for a day)
+
+
+def test_post_shows_resale_state(engine):
+    rec = {"name": "Pokémon TCG: Prismatic Evolutions Booster Bundle", "price": "$59.99", "carded": True}
+    engine.resale.lookup = lambda name, urgent=False: None
+    engine.resale.enabled = lambda: True
+    engine._attach_resale([({"id": "1"}, rec, None, False)], "target")
+    assert rec["resale"] == engine.RESALE_WAIT
+    engine.cards.request = lambda *a, **k: None
+    engine._resale_ready(engine.resale.key(rec["name"]), {"ok": False, "at": 0})
+    assert rec["resale"] == engine.RESALE_FAIL
+    engine._attach_resale([({"id": "1"}, rec, None, False)], "target")
+    engine._resale_ready(engine.resale.key(rec["name"]), {"ok": True, "median": 75.0, "n": 9, "low": 60, "high": 90,
+                                                          "q": "x", "at": 0})
+    assert "$75 median of 9 sold" in rec["resale"]

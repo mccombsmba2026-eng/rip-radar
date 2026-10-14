@@ -330,8 +330,11 @@ class App:
         self.queue_fetcher = BrowserFetcher(scroll=False, settle=3, challenge_wait=30, load_wait=20)
         self.stock_browser = TargetStockBrowser()
         self.more_fetchers = [BrowserFetcher(), BrowserFetcher()]     # 3 store scanners side by side
+        # eBay sold listings for the 💸 Resale value: eBay turns plain requests away, a real browser window gets in
+        self.resale_browser = BrowserFetcher(scroll=False, settle=2, challenge_wait=15, load_wait=25)
         self.engine = Engine(browser_fetch=self.fetcher, queue_fetch=self.queue_fetcher,
-                             stock_json=self.stock_browser.get_json, extra_browsers=self.more_fetchers)
+                             stock_json=self.stock_browser.get_json, extra_browsers=self.more_fetchers,
+                             resale_fetch=self.resale_browser)
         base_alert = self.engine.notify.on_alert
 
         def on_alert(a):
@@ -355,6 +358,7 @@ class App:
         self.stock_browser.window = webview.create_window("Rip Radar Target stock", url="about:blank", hidden=True)
         for i, f in enumerate(self.more_fetchers, 2):
             f.window = webview.create_window(f"Rip Radar scanner {i}", url="about:blank", hidden=True)
+        self.resale_browser.window = webview.create_window("Rip Radar resale", url="about:blank", hidden=True)
 
     # --- window / tray
     def _on_closing(self):

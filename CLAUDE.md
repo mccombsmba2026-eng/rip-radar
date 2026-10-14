@@ -145,6 +145,13 @@ captchas, and never automates purchases. Keep it that way.
   (`site: Crunchyroll Store`, channel hottopic) in the queue browser. Queue code is generic via `_queue_site(t)`
   (messages, debug file names, history key `queue_history_<slug>`); bot-check posts and the blocked-queue
   protection stay Pokémon Center only.
+- 1.0.49 RESALE FIX: eBay answered HTTP 403 to EVERY plain request (M's 10/14 log) and failures were cached 24 h, so no
+  values ever showed. Now: hidden "Rip Radar resale" browser window (`App.resale_browser` -> `Engine(resale_fetch=)` ->
+  `ResaleChecker(browser_fetch=)`, plain HTTP only as fallback), failures retried after 30 min (`FAIL_TTL`, cache
+  entries carry "ok"), background pace 1 / 15 s. Posts always show the state: "⏳ checking eBay sold listings…" ->
+  value, or "No recent eBay sales match this product", or "⚠️ eBay didn't answer · retrying in 30 min"
+  (`Engine.RESALE_*`). `resale.health()` line in the startup message; `_resale_watchdog` posts to #app-status once
+  after 15 failures in a row (and once when it works again). #watch: `value <product>` (live eBay lookup) and `resale`.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT
