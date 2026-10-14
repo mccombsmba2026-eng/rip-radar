@@ -699,3 +699,12 @@ def test_general_stores_are_cards_only(engine):
             assert t.get("cards_only"), t["name"]
             stores.setdefault(t["store"], set()).add(t.get("products"))
     assert all(v == {"pokemon", "sports"} for v in stores.values()), stores     # one Pokémon + one sports scan each
+
+
+def test_every_store_is_cards_only(engine):
+    """1.0.42: Target / Walmart / Best Buy... drop sleeves, binders, playmats too - not just the 6 general stores."""
+    from rip_radar.parsing import is_accessory_only, is_card_only
+    assert is_accessory_only("Ultra Pro Pokemon Charizard Playmat")
+    assert not is_card_only("Pokémon TCG: Pikachu Card Sleeves 65ct", "cards")
+    assert is_card_only("Pokémon TCG: Prismatic Evolutions Booster Bundle", "cards")
+    assert not is_accessory_only("Pokémon TCG: Collector's Chest Fall 2025")

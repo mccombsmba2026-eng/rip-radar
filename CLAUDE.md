@@ -60,7 +60,8 @@ captchas, and never automates purchases. Keep it that way.
   (share the `pharmacy` channel: `notify.STORE_CHANNEL` / `channel_of`), ace, barnes. Store keys stay separate
   (colors, names, product ids); `channel_of(store)` picks the Discord channel everywhere (Notifier, ProductCards).
 - What counts (M's rules, latest 1.0.41): Pokémon = sealed (ETB, UPC, booster bundles/boxes/packs/blisters, tins,
-  collections, chests) + Pokémon accessories (except cards_only stores); sports = sealed. ALWAYS cut
+  collections, chests); sports = sealed. 1.0.42: EVERY store is cards only - no accessories (sleeves, binders,
+  playmats, deck boxes...) anywhere, incl. Pokémon Center, Walmart drawings and watched pages. ALWAYS cut
   (`is_excluded_listing`): SINGLE CARDS (`is_single_card`: card numbers like 102/128, "holo rare", "secret rare",
   "full art", Topps NOW, "#12", RC/auto/patch/refractor... unless it's a sealed product with bonus promos), graded
   slabs (PSA/BGS/CGC/SGC/TAG + grade, "graded", "slab"), card lots / bulk / random / mystery / repacks,
@@ -103,7 +104,7 @@ captchas, and never automates purchases. Keep it that way.
   every 90 s (≤120/h); a flip to in stock re-scans Target immediately. Topps calendar 90 s, sitemap hot items 60 s.
 - `cards_only: true` (1.0.40) on Barnes & Noble, Hot Topic, Amazon, GameStop, Dick's, Costco: each has exactly one
   Pokémon-cards scan + one sports-cards scan, and keeps CARDS only (`parsing.is_card_only`: sealed or singles; no
-  accessories / merch). Other stores keep Pokémon accessories. No store keeps single cards (1.0.41).
+  accessories / merch). Since 1.0.42 `cards_only` defaults to TRUE for every store. No store keeps single cards (1.0.41).
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

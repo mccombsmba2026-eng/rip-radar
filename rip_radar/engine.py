@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 from . import __version__, paths, settings as settings_mod
 from .msrp import msrp_text, price_check
 from .notify import CHANNELS, STORE_NAMES, ChatBot, LiveBoard, Notifier, StatusBoard, store_in
-from .parsing import (CT, focus_match, is_card_only, og_image, parse_watch, watch_match, wall_kind, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
+from .parsing import (CT, focus_match, is_accessory_only, is_card_only, og_image, parse_watch, watch_match, wall_kind, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
                       topps_sitemap_numbers, LIVE_STATUSES, RETAIL_STORES, categorize, extract_when, fmt_when, gcal_link, is_card_product,
                       is_etb_or_upc, is_pokemon_product, is_sports_card_product, is_tcg_product, looks_blocked, parse_retail_tiles, parse_topps_calendar,
                       parse_topps_product_page, humanize_handle, tile_status, drawing_window, next_data, sport_of, stock_hint,
@@ -529,7 +529,7 @@ class Engine:
             text = " ".join(a.get_text(" ").split()) or a.get("aria-label", "") or href.rsplit("/", 1)[-1]
             blob = (text + " " + href).lower()
             if (want and not any(k in blob for k in want)) or any(k in blob for k in avoid) \
-                    or (t.get("tcg_only") and not is_tcg_product(blob)):
+                    or (t.get("tcg_only") and (not is_tcg_product(blob) or is_accessory_only(blob))):
                 skipped += 1
                 continue
             if href not in found or len(text) > len(found[href]):
@@ -862,9 +862,12 @@ class Engine:
             return "empty", status
         keep = {"pokemon": is_pokemon_product, "sports": self._wanted_sports_card}.get(t.get("products", "cards"),
                                                                                        self._wanted_card)
+        # M's rule (1.0.42): EVERY store channel is cards only - sealed Pokémon / sports product, no sleeves, binders,
+        # playmats, deck boxes or plush ("cards_only: false" on a source would turn this off)
         if store == "pokemon":
-            keep = is_tcg_product       # everything at Pokémon Center is Pokémon, names don't always say so
-        if t.get("cards_only"):         # general-merch stores: Pokémon / sports CARDS only, no binders or plush
+            # everything at Pokémon Center is Pokémon, names don't always say so
+            keep = lambda text: is_tcg_product(text) and not is_accessory_only(text)
+        elif t.get("cards_only", True):
             base_keep, kind = keep, t.get("products", "cards")
             keep = lambda text, b=base_keep, k=kind: b(text) and is_card_only(text, k)
         cap = float(t.get("max_price", 0) or 0)
@@ -1423,7 +1426,8 @@ class Engine:
                 by_name[self._norm(x["name"])] = x
         if not tiles:
             return "empty", status
-        cards = [x for x in tiles if self._wanted_card(x["name"] + " " + x["url"])]
+        cards = [x for x in tiles if self._wanted_card(x["name"] + " " + x["url"])
+                 and not is_accessory_only(x["name"])]
         known = st.setdefault("drawings", {})
         now = datetime.now(CT)
         # the page's own visible text: if every drawing on it shows the same "Drawing starts ..." time, a tile we
