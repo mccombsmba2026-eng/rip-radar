@@ -363,6 +363,19 @@ targets:
     verify_pages: 1
     interval_seconds: 300
 
+  # Collector Store (Shopify): the coming-soon / pre-order list -> #presales. Read from the collection's own
+  # products.json (small, has availability + price + a real add-to-cart link), so no browser is needed.
+  - name: Collector Store · coming soon
+    type: retail_search
+    store: collectorstore
+    products: cards
+    url: https://collectorstore.com/collections/coming-soon/products.json?limit=250
+    browser: false
+    channel: presale
+    alert_new_listed: true
+    stock_pages: 0
+    interval_seconds: 180
+
   # Crunchyroll Store (shares the Hot Topic channel + webhook). Sells Pokémon TCG, no sports cards: one scan of its
   # trading-cards collection (search is robots-blocked), plus a queue watcher like Pokémon Center's.
   - name: Crunchyroll · Pokémon cards

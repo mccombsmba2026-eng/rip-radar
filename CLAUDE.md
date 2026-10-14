@@ -163,6 +163,15 @@ captchas, and never automates purchases. Keep it that way.
   pending keys, priority 1 paced 6 s) and, when all answered or after 20 min, posts a NEW message
   (`_post_price_list`: forgets the old board id, "💸 Price list · <day> · daily update / refreshed on request");
   earlier lists stay as a record. Boards sync skips the prices board while a refresh is running.
+- 1.0.52 PRESALES + RAFFLE ROUTING: new `presale` channel ("Presales & pre-orders"). Any store product whose name /
+  status / Shopify tags say PRESALE / PRE-SALE / PRE SALE / pre-order (`parsing.is_presale`, tags like
+  "DeltaReignPreorder" too) gets a "🛍️ PRESALE · …" copy in #presales (strict: only with its webhook) besides its
+  store card; Topps Pre-order events too. Any product with raffle / lottery / drawing in its name
+  (`parsing.is_raffle`) or a Drawing status gets the #drawings copy. COLLECTOR STORE (`collectorstore`, Shopify,
+  channel = presale via STORE_CHANNEL): /collections/coming-soon/products.json (plain HTTP, 180 s;
+  `parsing.shopify_collection_items`, used by parse_retail_tiles for `shopify: True` stores or any products.json:
+  real cart link /cart/<variant>:1). Walmart drawing button now reads "OPEN PRODUCT → tap ENTER DRAWING": Walmart
+  has no direct entry link - the Enter drawing button is on the product page (and the app never enters for M).
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

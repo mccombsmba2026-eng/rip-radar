@@ -1043,3 +1043,38 @@ def test_price_list_posts_fresh_message_when_done(engine, monkeypatch):
     engine.price_list_tick()
     assert posts and "refreshed on request" in posts[-1]
     assert "board_prices" not in engine.state                     # yesterday's message kept, a new one posted
+
+
+def test_presale_and_raffle_words():
+    from rip_radar.parsing import is_presale, is_raffle
+    for t in ("PRESALE: Pokémon Ascended Heroes ETB", "Pre-Sale 2025 Topps Chrome", "pre sale booster box",
+              "Pokémon TCG Pre-Order Bundle"):
+        assert is_presale(t), t
+    assert not is_presale("Pokémon TCG: Prismatic Evolutions Elite Trainer Box")
+    assert is_raffle("RAFFLE - Prismatic Evolutions SPC") and is_raffle("", "Drawing open")
+    assert not is_raffle("Pokémon drawing book")
+
+
+SHOPIFY = {"products": [
+    {"id": 111, "title": "PRESALE Pokémon TCG: Ascended Heroes Elite Trainer Box", "handle": "ah-etb",
+     "tags": ["Pokemon", "Presale"], "product_type": "Sealed",
+     "variants": [{"id": 999, "available": True, "price": "59.99"}], "images": [{"src": "//cdn.shopify.com/a.jpg"}]},
+    {"id": 222, "title": "Pokémon TCG: Chaos Rising Booster Box", "handle": "cr-bb", "tags": "Pokemon, Coming Soon",
+     "variants": [{"id": 998, "available": False, "price": "159.99"}], "images": []}]}
+
+
+def test_collectorstore_shopify_collection():
+    import json
+    from rip_radar.parsing import parse_retail_tiles
+    tiles = parse_retail_tiles(json.dumps(SHOPIFY), "https://collectorstore.com/collections/coming-soon/products.json",
+                               "collectorstore")
+    a, b = tiles
+    assert a["status"] == "Pre-order" and a["live"] and a["presale"] and a["price"] == "$59.99"
+    assert a["add_to_cart"] == "https://collectorstore.com/cart/999:1" and a["image"].startswith("https://cdn")
+    assert a["url"] == "https://collectorstore.com/products/ah-etb"
+    assert b["status"] == "Coming soon" and not b["live"] and not b["add_to_cart"]
+
+
+def test_collectorstore_posts_in_presale_channel():
+    from rip_radar.notify import channel_of
+    assert channel_of("collectorstore") == "presale"

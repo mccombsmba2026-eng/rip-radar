@@ -589,6 +589,8 @@ RETAIL_STORES = {
     "gamestop": {"label": "GameStop", "id": r"/products/[^/?#]+/(\d{6,})\.html"},
     "hottopic": {"label": "Hot Topic", "id": r"/product/[^/?#]+/(\d{6,})\.html"},
     # store.crunchyroll.com/products/<name>-<UPC>.html (the name part can be empty: /products/-0196214132474.html)
+    # collectorstore.com (Shopify): read through the collection's products.json, ids = Shopify product ids
+    "collectorstore": {"label": "Collector Store", "id": r"/products/([a-z0-9-]+)", "shopify": True},
     "crunchyroll": {"label": "Crunchyroll Store", "id": r"/products/[^/?#]*?(\d{10,14})\.html"},
 }
 LIVE_WORDS = ("add to cart", "add to bag", "add for shipping", "add for pickup", "add for delivery", "buy now",
@@ -708,6 +710,8 @@ def tile_status(text, live_if_price=False):
 def parse_retail_tiles(html, base_url, store, live_if_price=False):
     """Product tiles on a store search/category page ->
     [{"id","name","url","image","price","status","live","add_to_cart","buy_now"}]."""
+    if RETAIL_STORES[store].get("shopify") or (html or "").lstrip()[:20].startswith('{"products"'):
+        return shopify_collection_items(html, base_url)
     rx = re.compile(RETAIL_STORES[store]["id"])
     soup = BeautifulSoup(html or "", "html.parser")
 
@@ -1387,3 +1391,61 @@ def shopify_product_js(text):
         image = "https:" + image
     return {"available": bool(d.get("available")) or bool(avail), "price": price,
             "variant": str(first.get("id") or ""), "name": d.get("title") or "", "image": image}
+
+
+# ---------------------------------------------------------------- presales + raffles routing (1.0.52)
+RE_PRESALE = re.compile(r"\bpre[\s\-_]?sale\b|\bpre[\s\-_]?orders?\b", re.I)
+RE_RAFFLE = re.compile(r"\braffles?\b|\blotter(?:y|ies)\b|\bdrawing\b(?!\s*(?:book|pad|set|kit|pencil|paper))", re.I)
+
+
+def is_presale(*texts):
+    """PRESALE / PRE-SALE / PRE SALE / pre-order anywhere in the name, status or tags -> #presales."""
+    return any(RE_PRESALE.search(str(t or "")) for t in texts)
+
+
+def is_raffle(*texts):
+    """'raffle' / 'lottery' / 'drawing' in a product's name or status -> #drawings too."""
+    return any(RE_RAFFLE.search(str(t or "")) for t in texts)
+
+
+def shopify_collection_items(text, base_url):
+    """A Shopify store's /collections/<x>/products.json -> tiles. Shopify stores publish this JSON for every
+    collection; it has availability, price, picture and the variant id for a real add-to-cart link."""
+    t = (text or "").strip()
+    if not t.startswith("{"):
+        t = BeautifulSoup(t, "html.parser").get_text()
+    try:
+        data = json.loads(t[t.find("{"):t.rfind("}") + 1])
+    except ValueError:
+        return []
+    m = re.match(r"https?://[^/]+", base_url or "")
+    host = m.group(0) if m else ""
+    out = []
+    for p in data.get("products") or []:
+        if not isinstance(p, dict) or not p.get("handle"):
+            continue
+        variants = [v for v in p.get("variants") or [] if isinstance(v, dict)]
+        avail = [v for v in variants if v.get("available")]
+        v = (avail or variants or [{}])[0]
+        try:
+            price = f"${float(v.get('price') or 0):,.2f}" if v.get("price") not in (None, "") else ""
+        except (TypeError, ValueError):
+            price = ""
+        tags = p.get("tags") or []
+        tags = tags if isinstance(tags, list) else str(tags).split(",")
+        name = (p.get("title") or "").strip()
+        presale = (is_presale(name, " ".join(map(str, tags)), p.get("product_type"))
+                   or any(w in str(x).lower() for x in tags + [p.get("product_type") or ""]
+                          for w in ("preorder", "presale", "pre-order", "pre-sale")))
+        if avail:
+            status = "Pre-order" if presale else "In stock"
+        else:
+            status = "Coming soon" if presale or "coming" in base_url.lower() else "Sold out"
+        img = ((p.get("images") or [{}])[0] or {}).get("src", "")
+        if img.startswith("//"):
+            img = "https:" + img
+        out.append({"id": str(p.get("id") or p["handle"]), "name": name, "url": f"{host}/products/{p['handle']}",
+                    "image": img, "price": price, "status": status, "live": bool(avail),
+                    "add_to_cart": f"{host}/cart/{v['id']}:1" if avail and v.get("id") else "", "buy_now": "",
+                    "presale": presale, "tags": [str(x).strip() for x in tags][:20]})
+    return out

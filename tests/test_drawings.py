@@ -50,7 +50,7 @@ def test_drawings_announce_then_remind_on_the_clock(engine):
     f = got[0][1]
     assert f["Price"] == "$79.94" and f["Opens (CT)"] and "Calendar" in f and f["Retail (MSRP)"].startswith("~$79.98")
     assert got[0][2].get("copy_to") == ["drawings"] and got[0][2].get("channel") == "walmart"
-    enter = dict(got[0][2]["links"])["🎟️ ENTER THE DRAWING"]
+    enter = dict(got[0][2]["links"])["🎟️ OPEN PRODUCT → tap ENTER DRAWING"]
     assert enter.startswith("https://www.walmart.com/ip/") and enter.endswith("/20640569221")
     got.clear()
     engine.check_walmart_drawings(dict(T), st, False)

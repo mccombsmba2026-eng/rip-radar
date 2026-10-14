@@ -14,7 +14,8 @@ COLORS = {"urgent": 0xE0342B, "normal": 0x2350C8, "system": 0x8A8F9E}
 STORE_COLORS = {"target": 0xCC0000, "walmart": 0x0071CE, "bestbuy": 0x0046BE, "amazon": 0xFF9900,
                 "dicks": 0x006B54, "pokemon": 0xFFCB05, "topps": 0xE31837, "costco": 0xE31837, "samsclub": 0x0067A0,
                 "cvs": 0xCC0000, "walgreens": 0xE31837, "ace": 0xD40029, "barnes": 0x2A5934,
-                "gamestop": 0xE4002B, "hottopic": 0x111111, "crunchyroll": 0xF47521}
+                "gamestop": 0xE4002B, "hottopic": 0x111111, "crunchyroll": 0xF47521,
+                "collectorstore": 0x7B2FBE}
 
 
 # One Discord channel per store. Key -> label shown in the app. Webhooks live in settings["webhooks"].
@@ -26,6 +27,7 @@ CHANNELS = {"topps": "Topps products (formats, in stock)", "topps_calendar": "To
             "instore": "Mat local (in-store restocks near your ZIP)",
             "lookup": "In store look up (type a ZIP)",
             "watch": "Watch by name (@everyone · type watch / test / watching)",
+            "presale": "Presales & pre-orders (any store · PRESALE / PRE-SALE / pre-order)",
             "prices": "Price list (daily eBay resale · 🔥 sets + @everyone products)",
             "drawings": "Drawings & raffles (all stores)", "calendar": "Drop calendar (all announced dates)",
             "status": "App status"}
@@ -33,9 +35,10 @@ STORE_NAMES = {"topps": "Topps", "pokemon": "Pokémon Center", "walmart": "Walma
                "dicks": "Dick's", "amazon": "Amazon", "bestbuy": "Best Buy", "costco": "Costco",
                "samsclub": "Sam's Club", "cvs": "CVS", "walgreens": "Walgreens", "ace": "Ace Hardware",
                "barnes": "Barnes & Noble", "gamestop": "GameStop", "hottopic": "Hot Topic",
-               "crunchyroll": "Crunchyroll Store"}
+               "crunchyroll": "Crunchyroll Store", "collectorstore": "Collector Store"}
 # stores that share a Discord channel (store key -> channel key); everything else posts to its own key
-STORE_CHANNEL = {"cvs": "pharmacy", "walgreens": "pharmacy", "crunchyroll": "hottopic"}   # Crunchyroll shares #hottopic
+STORE_CHANNEL = {"cvs": "pharmacy", "walgreens": "pharmacy", "crunchyroll": "hottopic",
+                 "collectorstore": "presale"}       # Collector Store's coming-soon list lives in #presales   # Crunchyroll shares #hottopic
 
 
 def channel_of(store):
@@ -52,6 +55,7 @@ STORE_WORDS = [("pokemon", ("pokémon center", "pokemon center", "pokemoncenter"
                ("barnes", ("barnes & noble", "barnes and noble", "barnesandnoble")), ("gamestop", ("gamestop", "game stop")),
                ("hottopic", ("hot topic", "hottopic")),
                ("crunchyroll", ("crunchyroll",)),
+               ("collectorstore", ("collectorstore", "collector store")),
                ("topps", ("topps", "bowman"))]
 
 

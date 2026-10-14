@@ -17,8 +17,8 @@ from bs4 import BeautifulSoup
 
 from . import __version__, paths, settings as settings_mod
 from .msrp import msrp_text, price_check
-from .notify import CHANNELS, STORE_NAMES, ChatBot, LiveBoard, Notifier, StatusBoard, store_in
-from .parsing import (CT, blocked_by, shopify_product_js, name_from_title, focus_match, is_accessory_only, is_card_only, og_image, parse_watch, watch_match, wall_kind, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
+from .notify import CHANNELS, STORE_NAMES, ChatBot, LiveBoard, Notifier, StatusBoard, channel_of, store_in
+from .parsing import (CT, is_presale, is_raffle, blocked_by, shopify_product_js, name_from_title, focus_match, is_accessory_only, is_card_only, og_image, parse_watch, watch_match, wall_kind, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
                       topps_sitemap_numbers, LIVE_STATUSES, RETAIL_STORES, categorize, extract_when, fmt_when, gcal_link, is_card_product,
                       is_etb_or_upc, is_pokemon_product, is_sports_card_product, is_tcg_product, looks_blocked, parse_retail_tiles, parse_topps_calendar,
                       parse_topps_product_page, humanize_handle, tile_status, drawing_window, next_data, sport_of, stock_hint,
@@ -1188,19 +1188,26 @@ class Engine:
             # an announced date on a product that isn't buyable yet -> drop calendar, linked to the product
             if not x["live"]:
                 self._product_date(x, store, label)
+            # copies: anything that's a raffle / drawing -> #drawings, anything PRESALE / pre-order -> #presales
+            raffle = x["status"].startswith("Drawing") or is_raffle(x["name"])
+            presale = (bool(x.get("presale")) or is_presale(x["name"], x["status"])) and channel_of(store) != "presale"
             if event and not use_cards:
                 title = f"{event}: {x['name']}{warn}"
                 self._product_alert("urgent" if x["live"] else "normal", title, x, label, extra,
-                                    copy_to=["drawings"] if x["status"].startswith("Drawing") else None,
+                                    copy_to=(["drawings"] if raffle else []) + (["presale"] if presale else []) or None,
                                     store=store, ping=big)
             elif event:
                 self._record_alert({"level": "urgent" if x["live"] else "normal", "title": f"{event}: {x['name']}{warn}",
                                     "url": x["url"], "fields": {k: v for k, v in {"Price": x["price"], **extra}.items() if v},
                                     "desc": "", "image": x.get("image", ""), "links": self._buy_links(x),
                                     "channel": store, "at": datetime.now(timezone.utc).isoformat()})
-                if x["status"].startswith("Drawing"):         # the store's card bumps AND #drawings gets it
+                if raffle:                                    # the store's card bumps AND #drawings gets it
                     self._product_alert("urgent", f"{event}: {x['name']}{warn}", x, label, extra,
                                         channel="drawings", store=store, ping=big, strict=True, record=False)
+                if presale:                                   # ... and #presales gets PRESALE / pre-order items
+                    self._product_alert("urgent" if x["live"] else "normal", f"🛍️ PRESALE · {event}: {x['name']}{warn}",
+                                        x, label, extra, channel="presale", store=store, ping=big, strict=True,
+                                        record=False)
             if event:
                 self._watch_alerts(store, x, rec, event)
             changed.append((x, rec, event, big and bool(event)))
@@ -1981,7 +1988,8 @@ class Engine:
                   "Retail (MSRP)": rec.get("retail")}
         if start and start > datetime.now(CT):
             fields["Calendar"] = (f"[Add to Google Calendar]({gcal_link('Walmart drawing: ' + rec['name'], start, rec['page'])})")
-        links = [("🎟️ ENTER THE DRAWING", rec["url"]), ("All Walmart drawings", rec.get("page", ""))]
+        # Walmart has no separate entry link: the "Enter drawing" button is ON the product page (signed in)
+        links = [("🎟️ OPEN PRODUCT → tap ENTER DRAWING", rec["url"]), ("All Walmart drawings", rec.get("page", ""))]
         self.notify.send("urgent", title, rec["url"], fields, image=rec.get("image", ""), links=links, channel="walmart",
                          copy_to=["drawings"], store="walmart", product=True,
                          ping=is_etb_or_upc(rec["name"]) or self._focus(rec["name"])["ping"])
@@ -2297,6 +2305,11 @@ class Engine:
                                  image=rec.get("image", ""), links=self._buy_links(rec), store="topps", product=True,
                                  ping=True, channel="topps",
                                  copy_to=["drawings"] if rec["status"] == "Drawing open" else None)
+            if event and (rec["status"] == "Pre-order" or is_presale(rec.get("name", ""))):
+                self.notify.send("urgent", f"🛍️ PRESALE · {event}: {rec['name']}", rec["url"],
+                                 {"Price": rec.get("price"), "Limit": rec.get("limit")}, image=rec.get("image", ""),
+                                 links=self._buy_links(rec), store="topps", product=True, ping=True,
+                                 channel="presale", strict=True, record=False)
             if event and rec["status"] == "Drawing open" and use_cards:
                 self.notify.send("urgent", f"🎟️ TOPPS DRAWING OPEN: {rec['name']}", rec["url"],
                                  {"Price": rec.get("price"), "Limit": rec.get("limit")}, image=rec.get("image", ""),

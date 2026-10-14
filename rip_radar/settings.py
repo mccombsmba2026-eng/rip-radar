@@ -11,7 +11,7 @@ DEFAULTS = {
     # one channel per store; empty = that store's alerts go to discord_webhook
     "webhooks": {"topps": "", "topps_calendar": "", "pokemon": "", "pokemon_queue": "", "walmart": "", "target": "",
                  "dicks": "", "amazon": "", "bestbuy": "", "costco": "", "samsclub": "", "pharmacy": "", "ace": "",
-                 "barnes": "", "gamestop": "", "hottopic": "", "watch": "", "prices": "", "instore": "", "drawings": "", "calendar": "", "status": ""},
+                 "barnes": "", "gamestop": "", "hottopic": "", "watch": "", "presale": "", "prices": "", "instore": "", "drawings": "", "calendar": "", "status": ""},
     "ntfy_topic": "",
     "twilio": {"account_sid": "", "auth_token": "", "from": "", "to": ""},
     "sms_for": ["urgent"],
