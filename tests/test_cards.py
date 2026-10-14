@@ -1024,3 +1024,22 @@ def test_price_list(engine, monkeypatch):
     assert "🔥 **Prismatic Evolutions**" in text and "ETB **$92** ▲15% (1.3× retail)" in text
     assert "🟢 **2025-26 Topps Chrome**" in text and "⏳" in text
     assert engine.handle_watch_command("prices")[0].startswith("**💸 Price list")
+
+
+def test_price_list_posts_fresh_message_when_done(engine, monkeypatch):
+    from rip_radar import settings as settings_mod
+    s = dict(settings_mod.load(), focus_sets=["Prismatic Evolutions"], everyone_products=[])
+    monkeypatch.setattr(settings_mod, "load", lambda: s)
+    monkeypatch.setattr(engine.resale, "lookup", lambda q, urgent=False, priority=None: None)
+    posts = []
+    monkeypatch.setattr(engine.prices_board, "tick", lambda render, force=False, repost=False, content=None:
+                        posts.append(content))
+    engine.state["board_prices"] = {"hook": "h", "id": "yesterday"}
+    reply = engine.handle_prices_command("refresh")[0]
+    assert "Checking eBay again for 3 items" in reply
+    assert "Already refreshing" in engine.handle_prices_command("refresh")[0]
+    for k in list(engine.state["price_refresh"]["pending"]):
+        engine._resale_ready(k, {"ok": True, "median": 50.0, "n": 5, "low": 40, "high": 60, "q": "x", "at": 0})
+    engine.price_list_tick()
+    assert posts and "refreshed on request" in posts[-1]
+    assert "board_prices" not in engine.state                     # yesterday's message kept, a new one posted

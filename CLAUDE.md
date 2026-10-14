@@ -158,7 +158,11 @@ captchas, and never automates purchases. Keep it that way.
   Cooper Flagg skipped) x (Hobby, Mega, Blaster). `price_list_tick` once a day at `price_list_hour` (8 AM CT, -1 off):
   re-looks each up on eBay at resale priority 1 (0 = live drops, 2 = background); results -> `state["price_history"]`
   (30 days) via `_resale_ready` -> self-editing board: median, ▲▼ % vs the previous day, × retail (msrp). #watch:
-  `prices`, `prices refresh`.
+  `prices`, `prices refresh`. 1.0.51: each daily run (and `refresh` typed in the price-list channel - the bot
+  routes that channel to `engine.handle_prices_command`) re-asks eBay for every item (`state["price_refresh"]`
+  pending keys, priority 1 paced 6 s) and, when all answered or after 20 min, posts a NEW message
+  (`_post_price_list`: forgets the old board id, "💸 Price list · <day> · daily update / refreshed on request");
+  earlier lists stay as a record. Boards sync skips the prices board while a refresh is running.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

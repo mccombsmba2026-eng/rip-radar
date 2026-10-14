@@ -111,7 +111,7 @@ class Engine:
         self.startup_sync = False
         self.bot = ChatBot(self.status_text, settings_mod.load, self.bot_reply, zip_lookup=self.zip_lookup,
                            drop_mode=lambda hours: self.set_drop_mode(hours), watch=self.handle_watch_command,
-                           block=self.block_product, keep=self.keep_product)
+                           block=self.block_product, keep=self.keep_product, prices=self.handle_prices_command)
         self.started = datetime.now(CT)
         self.TOPPS_FAST = {"state": "starting", "fails": 0}
         self.last_scan = None
@@ -1445,6 +1445,9 @@ class Engine:
         waiting = self._resale_posts.pop(key, {})
         if result and key in self._price_keys():
             self._record_price(key, result)
+            run = self.state.get("price_refresh") or {}
+            if key in run.get("pending", []):
+                run["pending"].remove(key)
         if not result:
             return
         for (store, pid), rec in waiting.items():
@@ -1739,10 +1742,8 @@ class Engine:
             for title, desc in self._render_prices():
                 out.append(f"**{title}**\n{desc}"[:1990])
             return out
-        if low in ("prices refresh", "refresh prices", "update prices"):
-            n = self.price_list_tick(force=True)
-            return [f"💸 Refreshing the price list: {n} eBay lookups queued (one every ~15 s, about "
-                    f"{max(1, n * 15 // 60)} min). The board fills in as they come back."]
+        if low in ("prices refresh", "refresh prices", "update prices", "refresh"):
+            return self.handle_prices_command("refresh")
         if low in ("resale", "resale status", "ebay"):
             return [self.resale.health()]
         if cmd == "block" and rest:
@@ -2493,29 +2494,59 @@ class Engine:
             hist.pop(d, None)
         self._prices_dirty = True
 
-    def price_list_tick(self, force=False):
-        """Once a day (Settings price_list_hour, 8 AM CT): look every item up on eBay again (one every ~15 s, in
-        the background) - the board fills in as answers come back, with the change since the day before."""
-        hour = int(settings_mod.load().get("price_list_hour", 8))
+    def price_list_tick(self, force=False, reason="daily"):
+        """Once a day (Settings price_list_hour, 8 AM CT) - or when M types `refresh` in the price-list channel -
+        every item is looked up on eBay again (in the background, ahead of other valuing). When the answers are in
+        (or after 20 min), a NEW price list message is posted; earlier days' lists stay above it as a record."""
         now = datetime.now(CT)
-        if not force and (hour < 0 or now.hour < hour or self.state.get("price_list_day") == now.date().isoformat()):
-            if getattr(self, "_prices_dirty", False):
+        run = self.state.get("price_refresh")
+        if run:
+            if not run.get("pending") or time.time() - run.get("started", 0) > 1200:
+                self.state.pop("price_refresh", None)
+                self._post_price_list(run.get("reason", "daily"))
+            return 0
+        hour = int(settings_mod.load().get("price_list_hour", 8))
+        due = hour >= 0 and now.hour >= hour and self.state.get("price_list_day") != now.date().isoformat()
+        if not force and not due:
+            if getattr(self, "_prices_dirty", False):         # a late answer: edit today's list
                 self._prices_dirty = False
                 self.prices_board.tick(self._render_prices, force=True)
             return 0
         self.state["price_list_day"] = now.date().isoformat()
-        n = 0
+        pending = []
         for *_, q, _ in self.price_list_items():
             k = self.resale.key(q)
-            hit = self.resale.cache.get(k)
-            if hit and hit.get("at", 0) > time.time() - 6 * 3600:
-                self._record_price(k, hit)            # looked up in the last 6 h: good enough for today
-                continue
             self.resale.cache.pop(k, None)
             self.resale.lookup(q, priority=1)       # ahead of background valuing, behind live drops
-            n += 1
-        self._prices_dirty = True
-        return n
+            if k not in pending:
+                pending.append(k)
+        self.state["price_refresh"] = {"pending": pending, "started": time.time(), "reason": reason}
+        return len(pending)
+
+    def _post_price_list(self, reason="daily"):
+        """A fresh message at the bottom of the channel (the previous list is kept, not edited)."""
+        now = datetime.now(CT)
+        self.state.pop("board_prices", None)            # forget yesterday's message: post a new one
+        self.prices_board.next = 0
+        head = (f"💸 **Price list · {now:%a %b} {now.day}**" + (" · refreshed on request" if reason != "daily" else
+                                                               " · daily update"))
+        self.prices_board.tick(self._render_prices, force=True, content=head)
+        self._prices_dirty = False
+
+    def handle_prices_command(self, text):
+        """Messages typed in the price-list channel."""
+        low = " ".join((text or "").lower().split())
+        if low in ("refresh", "update", "check", "check again", "prices refresh", "refresh prices", "recheck"):
+            if self.state.get("price_refresh"):
+                left = len(self.state["price_refresh"].get("pending", []))
+                return [f"💸 Already refreshing · {left} lookups left. The new list posts here when they're done."]
+            n = self.price_list_tick(force=True, reason="refresh")
+            return [f"🔄 Checking eBay again for {n} items · about {max(2, n * 8 // 60)} min. "
+                    "A new price list posts here when it's done."]
+        if low in ("prices", "list", "show", "price list"):
+            return [f"**{t}**\n{d}"[:1990] for t, d in self._render_prices()]
+        return ["Type `refresh` to check eBay again now (a new list posts here when done), or `prices` to see the "
+                "current list. It also posts a new list by itself every morning."]
 
     def _price_cell(self, key, retail=None):
         hist = self.state.get("price_history", {}).get(key) or {}
@@ -2622,8 +2653,9 @@ class Engine:
     # ------------------------------------------------------------ channel boards (current state of each channel)
     def _all_boards(self):
         out = [(self.cal_board, self._render_calendar), (self.topps_board, self._render_topps_board),
-               (self.drawings_board, self._render_drawings), (self.restock_board, self._render_restocks),
-               (self.prices_board, self._render_prices)]
+               (self.drawings_board, self._render_drawings), (self.restock_board, self._render_restocks)]
+        if not self.state.get("price_refresh"):       # mid-refresh: leave the last list alone until the new one posts
+            out.append((self.prices_board, self._render_prices))
         return out
 
     def _retire_store_boards(self):

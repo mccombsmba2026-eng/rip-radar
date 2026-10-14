@@ -354,7 +354,7 @@ class ChatBot:
     TRIGGERS = {"still running", "running", "status", "you up", "alive"}
 
     def __init__(self, status_text, get_settings=None, reply_text=None, zip_lookup=None, drop_mode=None, watch=None,
-                 block=None, keep=None):
+                 block=None, keep=None, prices=None):
         self.status_text = status_text
         self.get_settings = get_settings or (lambda: {})
         self.reply_text = reply_text or (lambda: status_text())
@@ -363,6 +363,7 @@ class ChatBot:
         self.watch = watch                    # (text) -> [replies]: commands typed in the #watch channel
         self.block = block                    # (message_id, title) -> reply | None: someone reacted ❌ to a post
         self.keep = keep                      # (message_id): someone reacted ✅ - a product they want
+        self.prices = prices                  # (text) -> [replies]: `refresh` / `prices` in the price-list channel
         self._lookup_channel = {}             # webhook url -> channel id
         self.token = None
         self.state = "off"   # off | connecting | online | error: ...
@@ -485,6 +486,14 @@ class ChatBot:
                 bot.state = (f"online · heard a message in {where} but can't read it: turn on Message Content Intent "
                              "(discord.com/developers → your app → Bot) and save")
                 return
+            if bot.prices and msg.content:
+                prices_id = await loop_.run_in_executor(None, bot.channel_id_of,
+                                                        (s.get("webhooks") or {}).get("prices") or "")
+                if prices_id and str(getattr(msg.channel, "id", "")) == prices_id:
+                    for c in await loop_.run_in_executor(None, bot.prices, msg.content):
+                        await msg.channel.send(c[:1990])
+                    bot.state = f"online · last price-list command: {msg.content[:40]}"
+                    return
             if bot.watch and msg.content:
                 watch_id = await loop_.run_in_executor(None, bot.channel_id_of,
                                                        (s.get("webhooks") or {}).get("watch") or "")

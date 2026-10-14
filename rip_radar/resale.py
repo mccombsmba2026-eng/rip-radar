@@ -159,7 +159,7 @@ class ResaleChecker:
             except Exception as e:
                 log.info("resale callback: %s", e)
             if pri:                                   # live drops (priority 0) go one after another, no pause
-                time.sleep(self.pace)
+                time.sleep(self.pace if pri >= 2 else 6)   # the price list (1) moves faster than background (2)
 
     @staticmethod
     def key(name):
