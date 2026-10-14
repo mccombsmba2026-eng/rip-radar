@@ -177,19 +177,6 @@ class Api:
         """Settings → Check focus lists: how many products each focus set / @everyone product matches right now."""
         return {"text": "\n".join(self._app.engine.focus_report()).replace("**", "")}
 
-    SIGN_IN = {"costco": ("Costco", "https://www.costco.com/LogonForm"),
-               "samsclub": ("Sam's Club", "https://www.samsclub.com/login")}
-
-    def store_sign_in(self, store="costco"):
-        """Opens the store's sign-in page in a normal (visible) window. M signs in himself; every hidden scanner
-        window shares the same browser profile, so from the next scan they see member prices and stock.
-        The password is typed into the store's own page - Rip Radar never sees or stores it."""
-        import webview
-        label, url = self.SIGN_IN.get(store, self.SIGN_IN["costco"])
-        webview.create_window(f"Sign in to {label} · close this window when you're signed in", url=url,
-                              width=1050, height=820)
-        return {"ok": True, "label": label}
-
     def set_drop_mode(self, hours):
         left = self._app.engine.set_drop_mode(hours)
         return {"ok": True, "seconds_left": left}

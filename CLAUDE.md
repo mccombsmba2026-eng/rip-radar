@@ -117,8 +117,8 @@ captchas, and never automates purchases. Keep it that way.
   (Shopify product JSON, `parsing.shopify_product_js`) every 60 s each, ≤240/h. Available -> `rec["force"]` + Topps
   sitemap source due now -> that page is opened first and the normal card/@everyone goes out. 403/429 or 10 fails ->
   paused 30 min (the normal page checks continue). Startup message line "⚡ Topps fast check" (`topps_fast_health`).
-  Sources → "Sign in to Costco / Sam's Club" (`Api.store_sign_in`): a visible window on the store's own sign-in page;
-  all windows share one WebView2 profile, so the hidden scanners get the member session. Never store passwords.
+  Costco / Sam's Club sign-in was tried in 1.0.44 and REMOVED in 1.0.45 at M's request: Costco posts are links only
+  (no member price / stock).
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT
