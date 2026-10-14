@@ -342,7 +342,16 @@ class Engine:
                     except Exception as e:
                         log.warning("queue watch: %s", e)
             every = 30 if self.drop_mode() else 60
+            streak = self._queue_blocked_streak()
+            if streak >= 3:
+                # Pokémon Center keeps turning the check away: check less often so its bot check cools off
+                # (the product scans there are already paused) - hammering it keeps us blocked longer
+                every = 60 if self.drop_mode() else (180 if streak >= 8 else 120)
             self._stop.wait(max(5, every - (time.time() - started)))
+
+    def _queue_blocked_streak(self):
+        t = next((t for t in self.targets() if t.get("track_duration")), None)
+        return (self.state.get("targets", {}).get(t["name"], {}).get("blocked_streak", 0)) if t else 0
 
     def _apply_keep_awake(self):
         """Settings → 'Keep this PC awake while Rip Radar runs' (OFF unless M turns it on). Applied from the scanner
@@ -390,7 +399,7 @@ class Engine:
                         "alert_title": f"{pre.get('alert', '🚨 PAGE LIVE')}: {p['name']}", "user": True,
                         "channel": pre.get("channel") or store_in(p["url"])})
         for t in out:
-            if t["type"] == "retail_search" and len(getattr(self, "_fetchers", [])) > 1:
+            if t["type"] == "retail_search" and len(getattr(self, "_fetchers", [])) > 1 and t.get("store") != "pokemon":
                 # 3 browsers in parallel: store pages come round about twice as often (never under 2 min)
                 t["interval_seconds"] = max(120, int(t.get("interval_seconds", 300) * 0.5))
             if t["type"] == "topps_calendar":
@@ -406,15 +415,21 @@ class Engine:
         default_iv = self.builtin.get("default_interval_seconds", 90)
         while not self._stop.is_set():
             self._apply_keep_awake()
+            if time.time() - getattr(self, "_last_purge", 0) > 6 * 3600:
+                try:
+                    self.purge_unwanted_cards()
+                except Exception as e:
+                    log.warning("cleanup: %s", e)
             if settings_mod.load().get("paused"):
                 self._wake.wait(5)
                 self._wake.clear()
                 continue
             report = {}
             pass_started = time.time()
+            pc_rest = self.drop_mode() or self._queue_blocked_streak() >= 2
             targets = [t for t in self.targets()
                        if not (t.get("track_duration") and self._queue_has_own_loop())
-                       and not (self.drop_mode() and t.get("store") == "pokemon")]
+                       and not (pc_rest and t.get("store") == "pokemon")]
             pending = {t["name"] for t in targets}
             while not self._stop.is_set():
                 # one source at a time, most overdue first (relative to its interval), so fast sources like the
@@ -942,6 +957,20 @@ class Engine:
         del shared[:-3000]
         return f"ok ({len(feed.entries)} posts)", status
 
+    def _keep_filter(self, t):
+        """Which listings a store source keeps -> fn(text). (Shared with tools/diag_filter.py.)"""
+        keep = {"pokemon": is_pokemon_product, "sports": self._wanted_sports_card}.get(t.get("products", "cards"),
+                                                                                       self._wanted_card)
+        # M's rule (1.0.42): EVERY store channel is cards only - sealed Pokémon / sports product, no sleeves, binders,
+        # playmats, deck boxes or plush ("cards_only: false" on a source would turn this off)
+        if t["store"] == "pokemon":
+            # everything at Pokémon Center is Pokémon, names don't always say so
+            return lambda text: is_tcg_product(text) and not is_accessory_only(text)
+        if t.get("cards_only", True):
+            base_keep, kind = keep, t.get("products", "cards")
+            return lambda text, b=base_keep, k=kind: b(text) and is_card_only(text, k)
+        return keep
+
     def check_retail_search(self, t, st, first):
         """A store's search/category page: every Pokémon / sports-card product on it.
         Pings when a card product is IN STOCK (new and already in stock, or back in stock), with picture,
@@ -958,16 +987,7 @@ class Engine:
         tiles = parse_retail_tiles(html, final, store, t.get("live_if_price", False))
         if not tiles:
             return "empty", status
-        keep = {"pokemon": is_pokemon_product, "sports": self._wanted_sports_card}.get(t.get("products", "cards"),
-                                                                                       self._wanted_card)
-        # M's rule (1.0.42): EVERY store channel is cards only - sealed Pokémon / sports product, no sleeves, binders,
-        # playmats, deck boxes or plush ("cards_only: false" on a source would turn this off)
-        if store == "pokemon":
-            # everything at Pokémon Center is Pokémon, names don't always say so
-            keep = lambda text: is_tcg_product(text) and not is_accessory_only(text)
-        elif t.get("cards_only", True):
-            base_keep, kind = keep, t.get("products", "cards")
-            keep = lambda text, b=base_keep, k=kind: b(text) and is_card_only(text, k)
+        keep = self._keep_filter(t)
         cap = float(t.get("max_price", 0) or 0)
         blocked = self._blocklist()
         cards = [x for x in tiles if keep(f"{x['name']} {x['url']}") and not blocked_by(x["name"], blocked)
@@ -1023,7 +1043,10 @@ class Engine:
                 up_before = f"{atleast}{self._dur(timedelta(seconds=now - listed_at))} before stock"
                 extra["Link was up"] = up_before
             event = None
-            if not first and x["live"] and (prev is None or not prev.get("live")):
+            # a listing that flickers out and back within 10 min (Hot Topic does this) is not a restock: no new ping
+            flicker = (prev is not None and not prev.get("live") and prev.get("oos_since")
+                       and now - prev["oos_since"] < 600 and not x["status"].startswith("Drawing"))
+            if not first and x["live"] and (prev is None or not prev.get("live")) and not flicker:
                 if x["status"].startswith("Drawing"):
                     event = (f"🎟️ INVITE REQUEST OPEN at {label}" if store == "amazon"
                              else f"🎟️ DRAWING / INVITE OPEN at {label}")
@@ -1036,6 +1059,8 @@ class Engine:
                 rec["first_seen"], rec["baseline"] = now, bool(first)
                 rec["loaded_before_stock"] = not first and not x["live"]
             if x["status"] != "Listed" or "live" not in rec:
+                if rec.get("live") and not x["live"]:
+                    rec["oos_since"] = now
                 if rec.get("live") and not x["live"] and rec.get("live_since"):
                     # sold out: remember how long it lasted, for the daily recap
                     self.state.setdefault("sellouts", []).append({
@@ -1372,6 +1397,45 @@ class Engine:
         more = f" and {gone - 1} more like it" if gone > 1 else ""
         return (f"🚫 Blocked **{name[:120]}**{more} · it won't post in any channel again. "
                 f"Undo: type `unblock {len(self._blocklist())}` in #watch (`blocked` shows the list).")
+
+    def purge_unwanted_cards(self):
+        """Takes down every product post the CURRENT rules don't want: old posts from before a filter changed
+        (singles, toys, books, accessories), products ❌'d, and posts whose product we no longer track at all.
+        Runs at launch and every 6 h. -> how many were removed."""
+        blocked, gone = self._blocklist(), 0
+        with self._lock:
+            tracked, unwanted = set(), {}
+            for t in self.targets():
+                st = self.state.get("targets", {}).get(t["name"], {})
+                if t["type"] == "retail_search":
+                    keep = self._keep_filter(t)
+                    for pid, r in (st.get("items") or {}).items():
+                        if not r.get("carded"):
+                            continue
+                        key = f"{t['store']}:{pid}"
+                        if not keep(f"{r.get('name', '')} {r.get('url', '')}") or blocked_by(r.get("name", ""), blocked):
+                            unwanted.setdefault(key, []).append(r)
+                        else:
+                            tracked.add(key)
+                elif t["type"] == "topps_sitemap":
+                    for h, r in (st.get("products") or {}).items():
+                        if r.get("carded"):
+                            tracked.add(f"topps:{h}")
+            for key, recs in unwanted.items():
+                if key in tracked:                  # another scan of the same store still wants it
+                    continue
+                for r in recs:
+                    r["carded"] = False
+                self.cards.retire(*key.split(":", 1))
+                gone += 1
+            for key in list((self.state.get("product_cards") or {}).keys()):
+                if key not in tracked and key not in unwanted:
+                    self.cards.retire(*key.split(":", 1))
+                    gone += 1
+        if gone:
+            log.info("cleanup: took down %d product posts the current rules don't want", gone)
+        self._last_purge = time.time()
+        return gone
 
     def _retire_blocked(self):
         """Take down every card whose product is now blocked. -> how many."""

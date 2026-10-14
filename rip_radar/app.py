@@ -36,10 +36,26 @@ class BrowserFetcher:
       return document.documentElement.outerHTML + (out.length ? '<div id="rr-shadow">' + out.join('') + '</div>' : '');
     })()"""
 
-    def __init__(self, scroll=True, settle=4, challenge_wait=25):
+    def __init__(self, scroll=True, settle=4, challenge_wait=25, load_wait=45):
         self.window = None
         self._lock = threading.Lock()
-        self.scroll, self.settle, self.challenge_wait = scroll, settle, challenge_wait
+        self.scroll, self.settle, self.challenge_wait, self.load_wait = scroll, settle, challenge_wait, load_wait
+        self.last_challenge = False
+
+    def _read_now(self, w, script, timeout=15):
+        """Run a script on whatever the window shows right now - even while the page is still 'loading'
+        (Pokémon Center keeps a request open forever, so the page never reports it finished)."""
+        box = {}
+
+        def run():
+            try:
+                box["v"] = w.gui.evaluate_js(script, w.uid, False)
+            except Exception as e:          # mid-navigation
+                box["e"] = e
+        th = threading.Thread(target=run, daemon=True)
+        th.start()
+        th.join(timeout)
+        return box.get("v") or ""
 
     def __call__(self, url):
         if self.window is None:
@@ -47,9 +63,16 @@ class BrowserFetcher:
         with self._lock:
             w = self.window
             w.load_url(url)
-            if not w.events.loaded.wait(45):
-                raise TimeoutError("page took too long")
             from .parsing import is_challenge
+            if not w.events.loaded.wait(self.load_wait):
+                # never "finished": read what's on screen anyway (the content is there; an ad / tracker isn't)
+                html = str(self._read_now(w, self.READ_PAGE) or "")
+                if len(html) < 2000:
+                    raise TimeoutError("page took too long")
+                self.last_challenge = is_challenge(html)
+                current = str(self._read_now(w, "location.href", 5) or url)
+                log.info("%s: read before it finished loading (%d KB)", url[:70], len(html) // 1000)
+                return 200, current, html
             deadline = time.time() + self.challenge_wait
             time.sleep(self.settle)  # let redirects / scripts settle
             # store pages draw their product tiles after load and more as you scroll: scroll down in steps and wait
@@ -304,7 +327,7 @@ class App:
         self.fetcher = BrowserFetcher()
         # the Pokémon Center queue gets its OWN hidden browser: it never waits behind a slow store page
         # Pokémon Center's Imperva check ("Please stand by...") clears in ~10-25 s in a real browser: wait it out
-        self.queue_fetcher = BrowserFetcher(scroll=False, settle=3, challenge_wait=30)
+        self.queue_fetcher = BrowserFetcher(scroll=False, settle=3, challenge_wait=30, load_wait=20)
         self.stock_browser = TargetStockBrowser()
         self.more_fetchers = [BrowserFetcher(), BrowserFetcher()]     # 3 store scanners side by side
         self.engine = Engine(browser_fetch=self.fetcher, queue_fetch=self.queue_fetcher,

@@ -71,27 +71,40 @@ targets:
                "keep this window open", "do not refresh"]
     alert_on_end: true
 
-  - name: Pokémon Center · card products
+  # Pokémon Center: SEALED categories only (its general TCG page is sleeves / binders / playmats). Kept light on
+  # purpose - fewer Pokémon Center page loads = the queue check gets turned away less (these never speed up).
+  - name: Pokémon Center · new TCG releases
     type: retail_search
     store: pokemon
     products: pokemon
-    url: https://www.pokemoncenter.com/category/trading-card-game
+    url: https://www.pokemoncenter.com/category/new-releases?category=trading-card-game
     browser: true
     channel: pokemon
     alert_new_listed: true
     verify_pages: 1
-    interval_seconds: 300
+    interval_seconds: 420
 
-  - name: Pokémon Center · new releases
+  - name: Pokémon Center · Elite Trainer Boxes
     type: retail_search
     store: pokemon
     products: pokemon
-    url: https://www.pokemoncenter.com/category/new-releases
+    url: https://www.pokemoncenter.com/category/elite-trainer-box?sort=launch_date%2Bdesc
     browser: true
     channel: pokemon
     alert_new_listed: true
     verify_pages: 1
-    interval_seconds: 600
+    interval_seconds: 900
+
+  - name: Pokémon Center · boxed sets
+    type: retail_search
+    store: pokemon
+    products: pokemon
+    url: https://www.pokemoncenter.com/category/boxed-sets?sort=launch_date%2Bdesc
+    browser: true
+    channel: pokemon
+    alert_new_listed: true
+    verify_pages: 1
+    interval_seconds: 900
 
   # ===== STORES: every Pokémon / sports-card product on their search pages.
   # Pings only when a card product is in stock (new, or back in stock), with picture, price and cart links.
@@ -128,7 +141,7 @@ targets:
     type: retail_search
     store: walmart
     products: pokemon
-    url: https://www.walmart.com/search?q=pokemon+trading+cards&sort=new
+    url: https://www.walmart.com/search?q=pokemon+trading+cards&sort=new&facet=retailer_type%3AWalmart
     browser: true
     channel: walmart
     interval_seconds: 240
@@ -137,7 +150,7 @@ targets:
     type: retail_search
     store: walmart
     products: sports
-    url: https://www.walmart.com/search?q=sports+trading+cards&sort=new
+    url: https://www.walmart.com/search?q=sports+trading+cards&sort=new&facet=retailer_type%3AWalmart
     browser: true
     channel: walmart
     interval_seconds: 300
@@ -286,22 +299,13 @@ targets:
     verify_pages: 1
     interval_seconds: 420
 
-  - name: Barnes & Noble · Pokémon cards
+  # B&N's Pokémon pages are books / LEGO / DVDs (it doesn't sell Pokémon cards online), so it has ONE scan:
+  # the collectible-card-games collection, keeping Pokémon and sports cards from it.
+  - name: Barnes & Noble · trading cards
     type: retail_search
     store: barnes
     cards_only: true
-    products: pokemon
-    url: https://www.barnesandnoble.com/b/pokemon/_/N-2jle
-    browser: true
-    channel: barnes
-    verify_pages: 1
-    interval_seconds: 360
-
-  - name: Barnes & Noble · sports cards
-    type: retail_search
-    store: barnes
-    cards_only: true
-    products: sports
+    products: cards
     url: https://www.barnesandnoble.com/collections/toys-games/games/collectible-card-games-1
     browser: true
     channel: barnes

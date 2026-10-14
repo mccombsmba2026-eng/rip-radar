@@ -442,33 +442,64 @@ TCG_SEALED = ("elite trainer box", "booster", "collection", "tin", "bundle", "de
 RE_GRADED = re.compile(r"\b(?:psa|bgs|cgc|sgc|beckett|tag)\s*(?:gem\s*)?(?:mint\s*)?\d{1,2}(?:\.\d)?\b|\bgraded\b|"
                        r"\bslab(?:bed)?\b|\bgem mint\b", re.I)
 RE_LOT = re.compile(r"\blot\s+of\b|\bcards?\s+lot\b|\bbulk\b|\brandom\b|\bmystery\b|\brepack|\bgrab\s*bag\b|"
-                    r"\bassorted\b|\b\d{2,4}\s*\+?\s*(?:pok[eé]mon\s+)?(?:trading\s+)?cards\b(?!\s+game)", re.I)
+                    r"\bautograph(?:ed)?\b|\bauthenticated\b|\bpsa\s*/\s*dna\b|\bmemorabilia\b|\b\d{2,4}\s*\+?\s*(?:pok[eé]mon\s+)?(?:trading\s+)?cards\b(?!\s+game)", re.I)
 RE_DECK_ONLY = re.compile(r"\b(?:theme|battle|league\s+battle|ex\s+battle|starter)\s+decks?\b", re.I)
 RE_SINGLE = re.compile(r"\b\d{1,3}/\d{2,3}\b|\bholo\b|full\s+art|\bpromo\b|illustration\s+rare|secret\s+rare|"
                        r"\bsingle\s+card\b|\b(?:ex|gx|v|vmax|vstar)\s+#?\d{1,3}\b", re.I)
 
 
 # single cards (pulled from packs and relisted, almost always by marketplace resellers) - never wanted
+# 1.0.46: a card NUMBER or a RARITY / condition word = a single card, unless a real sealed FORMAT is named
+# ("Mega Zeraora", "Hot Box #179" or "Pikachu VMAX" don't make a single sealed)
 RE_SINGLE_CARD = re.compile(
-    r"\b\d{1,3}/\d{2,3}\b|\bsingle\s+card\b|\bholo(?:foil)?\s+rare\b|full\s+art|illustration\s+rare|secret\s+rare|"
-    r"\bhyper\s+rare\b|\bpromo\s+card\b(?!s)|\btopps\s+now\b|\brookie\s+card\b|\b(?:rc|auto|autograph|patch|refractor|"
-    r"parallel|\d+/\d+\s*serial)\b|#\s?\d{1,4}\b", re.I)
-RE_SEALED_WORDS = re.compile(r"\b(?:pack|packs|box|boxes|bundle|blister|tin|collection|case|display|elite trainer|etb|"
-                             r"upc|hanger|blaster|mega|hobby|jumbo|cello|kit|chest|binder collection)\b", re.I)
+    r"#\s?[a-z]{0,5}-?\d{1,4}\b|\b[a-z]{0,4}\d{1,3}/[a-z]{0,4}\d{2,3}\b|\b[a-z]{2,4}-\d{1,4}\b(?!\s*(?:pack|count|ct))|"
+    r"\bsingle\s+card\b|\bholo(?:foil)?\b|\b(?:ultra|secret|hyper|double|gold|illustration|special\s+illustration|"
+    r"art|shiny|amazing|rainbow|radiant|ace\s+spec|trainer\s+gallery)\s+rare\b|\brare\s+holo\b|full\s+art|"
+    r"\b(?:rr|ur|sar|sir|csr|chr)\b|\bnear\s+mint\b|\bnm(?:-m)?\b|\blp\b|\bmint\s+condition\b|"
+    r"\bpromo\s+card\b(?!s)|\btopps\s+now\b|\brookie\s+(?:reprint\s+)?card\b|\b(?:rc|auto|autograph(?:ed)?|patch|"
+    r"refractor|x-?fractor|serial(?:ed)?(?:\s+numbered)?)\b|\bcard\s+by\s+(?:topps|panini|bowman|upper\s+deck)\b|"
+    r"\b(?:baseball|football|basketball|hockey|pokemon|pok[eé]mon)(?:\s+tcg)?(?:\s+trading)?\s+card(?:\s*\(english\))?\s*$",
+    re.I)
+RE_SEALED_WORDS = re.compile(
+    r"elite\s+trainer|\betbs?\b|\bbooster\b|\bblaster\b|\bhobby\s+(?:box|case|tin)|\bmega\s+box|\bvalue\s+(?:box|pack)|"
+    r"\bhanger\b|\bfat\s+pack|\bcello\b|\bjumbo\b|\btins?\b|\bblisters?\b|\bbundles?\b|\bdisplay\b|\bcase\b|"
+    r"premium\s+collection|ultra[\s-]*premium|\bupc\b|\bcollection\s+box|\bspecial\s+collection|\bpacks\b|"
+    r"(?<!hot\s)\b(?:inner\s+|retail\s+|sealed\s+)?(?:pack|box)\b(?!\s*#)|\bfactory\s+sealed\b|\bchest\b|"
+    r"\bbinder\s+collection\b|\bcollector\s+kit\b|\btriple\s+pack\b", re.I)
 
 
 def is_single_card(text):
-    """'Charizard ex 199/165 Special Illustration Rare', 'Topps Chrome Ohtani #1 RC', 'Topps NOW Card #593' -
-    one card on its own. A sealed product that merely includes promo cards ('... + 3 promo cards') doesn't count."""
-    t = text or ""
+    """'Charizard ex 199/165 Special Illustration Rare', 'Pikachu VMAX Gold Rare UR #TG29/TG30', 'BDC-178 Sean Gamble
+    Baseball Card by Topps', 'Gold Hot Box #179 Burton Rocks' - one card on its own. A sealed product that merely
+    includes promo cards ('2 Packs, 1 Promo Card and one Coin') doesn't count."""
+    t = re.sub(r"https?://\S+", " ", text or "")     # judge the NAME (the link's slug repeats it, minus the '#')
     return bool(RE_SINGLE_CARD.search(t)) and not RE_SEALED_WORDS.search(t)
+
+
+# books, DVDs, games, toys and crafts that say "Pokémon" or "Topps" - never card product unless the name itself says
+# TCG / trading card ("Pokémon TCG: 30th Celebration Figure Collection" is a real card product)
+RE_MEDIA = re.compile(
+    r"\bbooks?\b|\bbox\s+set\b|\bhardcover\b|\bpaperback\b|\bchapter\s+book|\bstorybook\b|\bnovel\b|\bmanga\b|"
+    r"\bvol(?:s|ume)?\.?\s*\d|\bvols?\.|\bguide\b|\bhandbook\b|\bencyclopedia\b|\bdvd\b|\bblu-?ray\b|\bdiscs?\b|"
+    r"\bmovies?\b|\bseason\s+\d|\bcomplete\s+collection\b|\bthe\s+series\b|\bepisodes?\b|\bcalendar\b|\bcolou?ring\b|"
+    r"\bcrayola\b|\bcrochet\b|\bcraft\b|\bactivity\b|\bpuzzle\b|\bmodel\s+kit\b|\bbandai\b|\bplush\b|\bpinball\b|"
+    r"\bnintendo\b|\bswitch\b|\begift\b|\bgift\s+cards?\b|\bdigital\s+code\b|\bdog\s+toys?\b|\bpet\b|"
+    r"\bplaying\s+cards\b|\bjournal\b|\bnotebook\b|\blego\b|\bmega\s+(?:construx|bloks)\b|\bfunko\b|\bvinyl\b|"
+    r"\bsquishmallows?\b|\bcostume\b|\bvideo\s+game\b|\bdouble\s+pack\b|\bscarlet\s+&\s+pok[eé]mon\s+violet\b|"
+    r"\bdetective\s+pikachu\b|\bscorecard\b|\bjersey\b|\bbobblehead\b|\bfigure\b|\bfigurine\b|\bornament\b", re.I)
+RE_SAYS_CARDS = re.compile(r"\btcg\b|trading\s+card|\bcard\s+game\b|\bbooster\b|elite\s+trainer", re.I)
+
+
+def is_media_or_toy(text):
+    t = re.sub(r"https?://\S+", " ", text or "")
+    return bool(RE_MEDIA.search(t)) and not RE_SAYS_CARDS.search(t)
 
 
 def is_excluded_listing(text):
     """Graded slabs (PSA 10...), card lots / repacks / mystery boxes, booster-less battle / theme decks, and
     single cards."""
     t = text or ""
-    if is_single_card(t):
+    if is_single_card(t) or is_media_or_toy(t):
         return True
     if RE_DECK_ONLY.search(t) and not re.search(r"booster|pack|bundle|collection|box", RE_DECK_ONLY.sub("", t), re.I):
         return True
@@ -503,7 +534,7 @@ CARD_BRANDS = ("topps", "bowman", "panini", "donruss", "prizm", "select", "mosai
                "allen and ginter", "finest", "chrome", "absolute", "phoenix", "certified", "prestige", "origins")
 CARD_SEALED = ("hobby box", "hobby", "blaster", "mega box", "mega", "hanger", "value box", "value pack", "fat pack",
                "cello", "jumbo", "tin", "retail box", "booster", "pack", "box", "collector", "trading card",
-               "trading cards", "sapphire", "breaker", "case")
+               "trading cards", "sapphire", "breaker", "case", "collection")
 CARD_ACCESSORY = ("sleeve", "top loader", "toploader", "card saver", "one-touch", "one touch", "magnetic",
                   "display case", "binder", "storage box", "card holder", "graded card", "psa ", "bgs ", "sgc ",
                   "screwdown", "penny", "album", "frame", "stand", "protector")
@@ -699,7 +730,7 @@ def parse_retail_tiles(html, base_url, store, live_if_price=False):
     for pid, f in found.items():
         node = _card_node(f["anchors"][0], key_of)
         text = " ".join(node.get_text(" ").split())
-        name = best_name(f["texts"])
+        name = best_name(f["texts"]) or slug_name(f["href"])
         if not name:
             continue
         status, live = tile_status(text, live_if_price)
@@ -741,6 +772,7 @@ NAME_NOISE = [re.compile(x, re.I) for x in (
     r"\s+(?:shipping|free shipping|ships|delivery|pickup|arrives|get it)\b.*$",
     r"^(?:sponsored|new|new arrival|best ?seller|only at target|only at walmart|deal|clearance|popular pick|"
     r"top rated|highly rated|rollback|reduced price|limited time|exclusive|pre-?order)\b[\s:·-]*",
+    r"^\(\d[\d,]*\)\s*", r"^(?:shipping available|not available to|available to ship|in stock at)\b.*$",
     r"\bcurrent price\b.*$", r"\bwas \$.*$", r"\s*\bmfr\s*#?\s*[\w.-]+.*$", r"\boptions? available\b.*$", r"\b\d+ options?\b.*$")]
 
 
@@ -757,6 +789,18 @@ def clean_name(text):
         if t == before:
             break
     return BUTTON_NOISE.sub("", RE_PRICE.sub("", t)).strip(" -|·:")
+
+
+def slug_name(href):
+    """Product name from its link when the tile has no usable title (Dick's: '/p/2026-topps-holiday-mega-box-26topu…')."""
+    path = urlparse(href or "").path
+    segs = [x for x in path.split("/") if x.count("-") >= 2]
+    if not segs:
+        return ""
+    words = [w for w in max(segs, key=len).split("-")
+             if not (len(w) >= 8 and re.search(r"\d", w) and re.search(r"[a-z]", w, re.I)) and not re.fullmatch(r"\d{6,}", w)]
+    name = humanize_handle("-".join(words).lower())
+    return name if len(name) >= 6 else ""
 
 
 def best_name(texts):
@@ -1244,6 +1288,10 @@ def watch_match(w, name, store=""):
 def is_accessory_only(text):
     """Sleeves, binders, playmats, deck boxes, toploaders... with no cards in them."""
     t = " " + re.sub(r"[-_/]+", " ", (text or "").lower()) + " "
+    if re.search(r"\bultra\s*pro\b|\bgrading\s+submission\b", t):
+        return True                        # Ultra PRO makes sleeves / binders / playmats, never cards
+    # "(Pack of 2)" / "2 pack" is a quantity, not a booster pack
+    t = re.sub(r"\bpack\s+of\s+\d+|\b\d+\s*(?:pk|pack|count|ct)\b|\(\s*\d+\s*(?:pk|pack)\s*\)", " ", t)
     has = lambda words: any(re.search(r"\b" + re.escape(w) + r"s?\b", t) for w in words)
     acc = has(TCG_ACCESSORY) or any(w in t for w in CARD_ACCESSORY if w.strip() not in ("psa", "bgs", "sgc"))
     return acc and not has(SEALED_RESCUE)

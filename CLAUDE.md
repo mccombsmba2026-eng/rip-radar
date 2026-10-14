@@ -119,6 +119,15 @@ captchas, and never automates purchases. Keep it that way.
   paused 30 min (the normal page checks continue). Startup message line "⚡ Topps fast check" (`topps_fast_health`).
   Costco / Sam's Club sign-in was tried in 1.0.44 and REMOVED in 1.0.45 at M's request: Costco posts are links only
   (no member price / stock).
+- 1.0.46 (M's 10/14 2:48 PM diagnostics; `python tools/diag_filter.py <unzipped dir> [--cut]` replays every saved
+  store page through the app's own parser + `Engine._keep_filter`): `purge_unwanted_cards()` at launch + every 6 h takes
+  down every product post the CURRENT rules reject (old singles / toys / books from before a filter change, ❌'d items)
+  and posts for products no longer tracked (removed sources). Back-in-stock FLICKER guard: out < 10 min then back
+  (`rec["oos_since"]`) = no new ping (Hot Topic flapped twice in 2 min). Pokémon Center scans = sealed categories only
+  (new-releases?category=trading-card-game 420 s, elite-trainer-box 900 s, boxed-sets 900 s; never sped up by the
+  3-browser halving) - /category/tcg-cards is all sleeves/binders/playmats. Queue protection: queue blocked 2+ checks
+  in a row -> Pokémon Center product scans pause; 3+ -> queue every 120 s (8+ -> 180 s, drop mode 60 s) until it
+  gets through. Barnes & Noble = ONE scan (collectible-card-games, products: cards): its Pokémon pages are books/toys.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

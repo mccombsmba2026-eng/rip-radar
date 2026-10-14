@@ -309,7 +309,7 @@ def test_new_store_product_links_and_shared_pharmacy_channel(engine):
     assert cards.hook("cvs") == cards.hook("walgreens") == "https://ph"
     names = {t["name"] for t in engine.targets()}
     assert {"Costco · Pokémon cards", "Sam's Club · sports cards", "CVS · trading cards", "Walgreens · trading cards",
-            "Ace Hardware · Pokémon cards", "Barnes & Noble · Pokémon cards"} <= names
+            "Ace Hardware · Pokémon cards", "Barnes & Noble · trading cards"} <= names
 
 
 def test_new_store_etb_gets_everyone(engine):
@@ -698,6 +698,7 @@ def test_general_stores_are_cards_only(engine):
         if t.get("store") in ("barnes", "hottopic", "amazon", "gamestop", "dicks", "costco"):
             assert t.get("cards_only"), t["name"]
             stores.setdefault(t["store"], set()).add(t.get("products"))
+    assert stores.pop("barnes") == {"cards"}                     # B&N: one scan, both (its Pokémon pages are books)
     assert all(v == {"pokemon", "sports"} for v in stores.values()), stores     # one Pokémon + one sports scan each
 
 
@@ -773,3 +774,77 @@ def test_topps_fast_check_trips(engine, monkeypatch):
     engine._tfast_checked = {}
     engine.topps_fast_tick(http=Blocked())
     assert engine.TOPPS_FAST["on"] is False and "403" in engine.topps_fast_health()
+
+
+def test_diagnostics_1014_noise_is_cut():
+    """Real listings from M's 10/14 2:48 PM diagnostics."""
+    from rip_radar.parsing import is_card_product, is_pokemon_product, is_sports_card_product, is_accessory_only
+    cut = [
+        "Collectible 2022 Lost Origin Pikachu VMAX Gold Rare UR CSR #TG29/TG30 Pokemon Trading Card (English)",
+        "Collectible 2026 Pitch Black Mega Zeraora EX Holo Double Rare RR #27/84 English Pokemon TCG Trading Card",
+        "Collectible 2025 Near Mint Or Better Mega Evolution Mega Kangaskhan ex Holo Ultra Rare #164 Pokemon Trading Ca",
+        "Collectible Oranguru 119/159 Crown Zenith Rare NM-M Pokemon TCG English Trading Card",
+        "Collectible 2023 Crown Zenith Deoxys VMAX SAR FA Holo Rare #GG45/GG70 Pokemon Trading Card",
+        "Collectible 2019 Topps Allen and Ginter Gold Hot Box #179 Burton Rocks Sports Agent and Author MLB Baseball "
+        "Parallel Trading Card https://www.walmart.com/ip/Collectible-2019-Topps-Gold-Hot-Box-179/1",
+        "Collectible 2025 Bowman Draft Chrome BDC-178 Sean Gamble Royals Baseball Card by Topps Kansas City Royals MLB",
+        "Tom Brady Autographed 2000 SPx Rookie Card #130 New England Patriots - PSA/DNA Authenticated",
+        "Quick Add Pokémon Deluxe Character Guide Limited Edition Box Set Collection Pikachu Press",
+        "Pokémon Adventures Gold & Silver Box Set (Set Includes Vols. 8-14)",
+        "Pokemon: Indigo League - Season 1: The Complete Collection [9 Discs]",
+        "Pokemon Diamond and Pearl: 4-Movie Collection",
+        "Pokemon Halloween Calendar 13 Pack",
+        "Pokémon Storybook Collection, Hardcover",
+        "Pokémon Crochet Snorlax Kit, Mixed Media",
+        "Crayola Coloring Kit, Pokemon & Bluey",
+        "Bandai Hobby - Pokémon - 08 Mimikyu, Bandai Spirits Pokémon Model Kit",
+        "Pokémon Scarlet & Pokémon Violet Double Pack",
+        "Pokémon Squeaky Dog Toys, 3-count",
+    ]
+    for n in cut:
+        assert not is_card_product(n), n
+    assert is_accessory_only("Ultra Pro Pokemon Pikachu 2'' 3-Ring Binder,(Pack of 2)")
+    keep_poke = [
+        "Pokemon TCG Trading Card Game Mega Evolutions Ascended Heroes 2 Packs, 1 Promo Card and one Coin",
+        "Pokemon Trading Card Game: 30th Celebration Figure Collection (Styles May Vary)",
+        "Pokémon TCG: Mega Evolution - Ascended Heroes Assorted Blind Tin",
+        "Pokemon SV6 Scarlet & Violet Twilight Masquerade Checklane Blister | Toxel",
+        "Pokemon TCG: 30th Celebration Tech Sticker Collection - Lucario",
+        "Collectible 2025 Pokemon Scarlet & Violet Prismatic Evolutions Trading Card Game Poster Collection Box",
+        "Pokemon 2023 Trick or Trade Mimikyu & Pikachu | 6 Mini Booster Packs",
+    ]
+    for n in keep_poke:
+        assert is_pokemon_product(n), n
+    for n in ("2026 TOPPS NFL Flagship Collection", "Collectible 26 TOPPS ALLEN AND GINTER BASEBALL INNER PACK",
+              "Collectible 2026 Topps Holiday Baseball - Factory Sealed - Hobby Tins"):
+        assert is_sports_card_product(n), n
+
+
+def test_dicks_junk_names_fall_back_to_link():
+    from rip_radar.parsing import clean_name, slug_name
+    assert clean_name("(218) Not Available to Ship Not Available to") == ""
+    assert slug_name("/p/2026-topps-mlb-holiday-mega-box-26topufangzgqajhnr7nqa/26topufangzgqajhnr7nqa") \
+        == "2026 Topps MLB Holiday Mega Box"
+
+
+def test_purge_takes_down_old_unwanted_posts(engine, monkeypatch):
+    """Posts made before a filter changed (singles, toys, books) and posts for products we no longer track go."""
+    retired = []
+    monkeypatch.setattr(engine.cards, "retire", lambda s, p: retired.append((s, p)))
+    t = next(t for t in engine.targets() if t.get("store") == "walmart" and t["type"] == "retail_search")
+    items = engine.state.setdefault("targets", {}).setdefault(t["name"], {}).setdefault("items", {})
+    items["111"] = {"name": "Collectible Jirachi EX RR #102/128 Holo Double Rare Pokemon Trading Card", "carded": True}
+    items["222"] = {"name": "Pokemon Battle Figure Multipack Assortment", "carded": True}
+    items["333"] = {"name": "Pokémon TCG: Prismatic Evolutions Elite Trainer Box", "carded": True,
+                    "url": "https://www.walmart.com/ip/x/333"}
+    engine.state["product_cards"] = {"walmart:111": {"id": "1"}, "walmart:222": {"id": "2"},
+                                     "walmart:333": {"id": "3"}, "barnes:9780": {"id": "4"}}
+    assert engine.purge_unwanted_cards() == 3
+    assert sorted(retired) == [("barnes", "9780"), ("walmart", "111"), ("walmart", "222")]
+    assert items["333"]["carded"] and not items["111"]["carded"]
+
+
+def test_pokemon_center_scans_sealed_only_and_slow(engine):
+    pc = [t for t in engine.targets() if t.get("store") == "pokemon" and t["type"] == "retail_search"]
+    assert pc and all("tcg-cards" not in t["url"] for t in pc)
+    assert all(t["interval_seconds"] >= 420 for t in pc)
