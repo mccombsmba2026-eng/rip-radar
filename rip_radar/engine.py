@@ -24,7 +24,7 @@ from .parsing import (CT, blocked_by, shopify_product_js, name_from_title, focus
                       parse_topps_product_page, humanize_handle, tile_status, drawing_window, next_data, sport_of, stock_hint,
                       title_tiles)
 from .cards import ProductCards
-from .stock import page_data_stock, target_key_in, target_stock, target_stock_text
+from .stock import page_data_stock, parse_target_pdp, target_key_in, target_pdp, target_stock, target_stock_text
 
 log = logging.getLogger("rip_radar")
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -281,12 +281,97 @@ class Engine:
                 break
         return tripped
 
+    # ------------------------------------------------------------ Target ID watch: `watch tcin 12345678` in #watch
+    TCIN_PHASES = ["not loaded", "loaded", "drawing", "in stock"]
+    MAX_TCINS = 15
+
+    @staticmethod
+    def tcin_in(text):
+        """'watch tcin 94681234' / a target.com link (…/A-94681234) / a bare 8-digit number -> '94681234' or ''."""
+        m = re.search(r"(?:\btcin\s*#?\s*|/A-)(\d{6,10})\b", text or "", re.I) or \
+            re.fullmatch(r"\s*(\d{8,9})\s*", text or "")
+        return m.group(1) if m else ""
+
+    def _tcin_check(self, tcin):
+        """One look at a Target product ID -> (phase, info). Two small requests from the hidden Target window."""
+        status, data = target_pdp(tcin, browser_json=self.stock_json,
+                                  session=getattr(self.fetcher, "s", None) or requests.Session(),
+                                  key=self.state.get("target_key", ""))
+        info = parse_target_pdp(data, status)
+        info["status_code"] = status
+        if not info["loaded"]:
+            known = status in (404, 410) or (status == 200 and data is not None)
+            return ("not loaded" if known else "unknown"), info
+        stock = target_stock(getattr(self.fetcher, "s", None) or requests.Session(), tcin, "",
+                             self.state.get("target_key", ""), browser_json=self.stock_json)
+        st_txt = ((stock or {}).get("online_status") or "").upper()
+        live = bool(stock) and ((stock.get("online") or 0) > 0 or st_txt in ("IN_STOCK", "LIMITED_STOCK",
+                                                                             "PRE_ORDER_SELLABLE"))
+        info["online"] = (stock or {}).get("online")
+        info["online_status"] = st_txt.replace("_", " ").title()
+        return ("in stock" if live else "drawing" if info["drawing"] else "loaded"), info
+
+    def tcin_watch_tick(self, now=None):
+        """Every watched Target ID, about every 90 s (slower when many are watched: ≤ ~240 requests/h in total).
+        @everyone in #watch when one moves up: not loaded -> LOADED -> DRAWING -> IN STOCK."""
+        tcins = list(settings_mod.load().get("watch_tcins") or [])[: self.MAX_TCINS]
+        if not tcins or settings_mod.load().get("paused"):
+            return 0
+        now = now or time.time()
+        every = max(90, 30 * len(tcins))
+        watch = self.state.setdefault("tcin_watch", {})
+        posted = 0
+        for tcin in tcins:
+            rec = watch.setdefault(tcin, {})
+            if now - rec.get("checked", 0) < every:
+                continue
+            rec["checked"] = now
+            phase, info = self._tcin_check(tcin)
+            if phase == "unknown":                    # Target didn't answer: try again next round, no change
+                continue
+            if info.get("loaded"):
+                rec.update({k: info[k] for k in ("name", "price", "image", "limit", "street_date") if info.get(k)})
+            prev = rec.get("phase")
+            rec["phase"] = phase
+            if prev is None:
+                continue                              # first look = baseline (the command already said where it is)
+            order = self.TCIN_PHASES
+            if order.index(phase) > order.index(prev) or (phase == "in stock" and prev != "in stock"):
+                if blocked_by(rec.get("name", ""), self._blocklist()):
+                    continue
+                self._tcin_alert(tcin, rec, phase, info)
+                posted += 1
+        return posted
+
+    def _tcin_alert(self, tcin, rec, phase, info):
+        url = f"https://www.target.com/p/-/A-{tcin}"
+        name = rec.get("name") or f"Target item {tcin}"
+        head = {"loaded": "🆕 LOADED ON TARGET (watched ID)", "drawing": "🎟️ TARGET DRAWING / INVITE SET UP",
+                "in stock": "🟢 IN STOCK AT TARGET (watched ID)"}[phase]
+        fields = {"TCIN": tcin, "Price": rec.get("price"), "Limit": rec.get("limit"),
+                  "Release date": rec.get("street_date"),
+                  "Online": (f"{info['online']} available" if info.get("online") else info.get("online_status")),
+                  "Drawing text": info.get("drawing_text") if phase == "drawing" else ""}
+        self.notify.send("urgent", f"{head}: {name}"[:250], url, fields, image=rec.get("image", ""),
+                         links=[("Open on Target", url)], store="target", product=True, ping=True, channel="watch",
+                         copy_to=["drawings"] if phase == "drawing" else None)
+
+    def _tcin_line(self, tcin, phase, info):
+        icon = {"not loaded": "⚪", "loaded": "🆕", "drawing": "🎟️", "in stock": "🟢", "unknown": "❔"}[phase]
+        name = info.get("name") or "(nothing at this ID yet)"
+        price = f" · {info['price']}" if info.get("price") else ""
+        return f"{icon} `{tcin}` **{phase}** · {name[:80]}{price}"
+
     def _target_tripwire_loop(self):
         while not self._stop.is_set():
             try:
                 self.target_tripwire_tick()
             except Exception as e:
                 log.warning("target tripwire: %s", e)
+            try:
+                self.tcin_watch_tick()
+            except Exception as e:
+                log.warning("target id watch: %s", e)
             self._stop.wait(20)
 
     @property
@@ -350,7 +435,7 @@ class Engine:
             self._stop.wait(max(5, every - (time.time() - started)))
 
     def _queue_blocked_streak(self):
-        t = next((t for t in self.targets() if t.get("track_duration")), None)
+        t = next((t for t in self.targets() if t.get("track_duration") and "pokemoncenter" in t.get("url", "")), None)
         return (self.state.get("targets", {}).get(t["name"], {}).get("blocked_streak", 0)) if t else 0
 
     def _apply_keep_awake(self):
@@ -691,14 +776,16 @@ class Engine:
             except Exception as e:
                 log.info("queue second look: %s", e)
         was = st.get("active")
-        self._save_debug("pokemon-center-queue-last-check", f"<!-- {final} -->\n" + (html or ""))
-        self._watch_bot_check(t, st, wall_kind(status, html) if (blocked and not active) else "", now)
+        site, slug = self._queue_site(t)
+        self._save_debug(f"{slug}-queue-last-check", f"<!-- {final} -->\n" + (html or ""))
+        if slug == "pokemon-center":                 # bot-check posts: Pokémon Center only
+            self._watch_bot_check(t, st, wall_kind(status, html) if (blocked and not active) else "", now)
         if active:
-            self._save_debug("pokemon-center-queue-page", f"<!-- {final} -->\n" + (html or ""))
+            self._save_debug(f"{slug}-queue-page", f"<!-- {final} -->\n" + (html or ""))
         if blocked and not active:
             st["blocked_streak"] = st.get("blocked_streak", 0) + 1
             if was is not True:
-                self._queue_watch(t, st, f"⚠️ **Couldn't check the Pokémon Center queue** at {self._clock(now)} CT · the "
+                self._queue_watch(t, st, f"⚠️ **Couldn't check the {site} queue** at {self._clock(now)} CT · the "
                                          f"site turned the check away. Retrying every minute.")
             return ("blocked" if looks_blocked(status, html) else "error"), status
         st["blocked_streak"] = 0
@@ -734,7 +821,7 @@ class Engine:
                              channel=t.get("channel"), record=True)
 
     def test_queue_alert(self):
-        t = next((x for x in self.targets() if x.get("track_duration")), {"url": "https://www.pokemoncenter.com/",
+        t = next((x for x in self.targets() if x.get("track_duration") and "pokemoncenter" in x.get("url", "")), {"url": "https://www.pokemoncenter.com/",
                                                                             "channel": ["pokemon_queue", "pokemon"]})
         now = datetime.now(CT)
         return self.notify.send("urgent", "🧪 TEST · 🚨 POKÉMON CENTER QUEUE IS LIVE", t["url"],
@@ -821,9 +908,16 @@ class Engine:
         except (requests.RequestException, ValueError, KeyError) as e:
             log.warning("queue status line: %s", e)
 
+    @staticmethod
+    def _queue_site(t):
+        """-> (display name, file slug) of the site a queue watcher watches (Pokémon Center, Crunchyroll...)."""
+        site = t.get("site") or "Pokémon Center"
+        return site, re.sub(r"[^a-z0-9]+", "-", site.lower().replace("é", "e")).strip("-")
+
     def _track_queue(self, t, st, active, was, detected):
         now = datetime.now(CT)
-        history = self.state.setdefault("queue_history", [])
+        site, slug = self._queue_site(t)
+        history = self.state.setdefault("queue_history" if slug == "pokemon-center" else f"queue_history_{slug}", [])
         if active and was is not True:
             st["live_since"] = now.isoformat()
             st.pop("session_msg", None)
@@ -831,7 +925,7 @@ class Engine:
                              {"Went up (CT)": self._clock(now), "Detected": detected},
                              links=[("Join the queue", t["url"])], ping=True)
             if settings_mod.load().get("open_browser_on_queue", True):
-                # open Pokémon Center in M's own Chrome right away, so the line is already up on screen when he
+                # open the site in M's own Chrome right away, so the line is already up on screen when he
                 # gets to the PC - he joins it himself (the app never enters queues)
                 try:
                     from .winsys import open_in_chrome
@@ -843,7 +937,7 @@ class Engine:
             left = self.drop_mode()
             mode = (f"\n🚨 **DROP MODE** until {self._clock(now + timedelta(seconds=left))} CT · checking every 30 s"
                     if left else "\n-# Checked every minute.")
-            self._queue_watch(t, st, f"⚪ **No Pokémon Center queue right now** · last checked {self._clock(now)} CT"
+            self._queue_watch(t, st, f"⚪ **No {site} queue right now** · last checked {self._clock(now)} CT"
                                      f"{mode} You'll get an @everyone the moment a queue goes up.",
                               repost=was is True)
         else:
@@ -851,20 +945,20 @@ class Engine:
                                      f"· see the alert below")
         if active:
             since = datetime.fromisoformat(st.get("live_since") or now.isoformat())
-            self._queue_live_message(t, st, f"🟢 **Pokémon Center queue is LIVE** · up for **{self._dur(now - since)}** "
+            self._queue_live_message(t, st, f"🟢 **{site} queue is LIVE** · up for **{self._dur(now - since)}** "
                                             f"(since {self._clock(since)} CT)\n-# Last checked {self._clock(now)} CT")
         elif was is True:
             since = datetime.fromisoformat(st.pop("live_since", now.isoformat()))
             dur = self._dur(now - since)
             history.insert(0, {"start": since.isoformat(), "end": now.isoformat(), "minutes": int((now - since).total_seconds() // 60)})
             del history[20:]
-            self._queue_live_message(t, st, f"⚪ Pokémon Center queue closed · was up **{dur}** "
+            self._queue_live_message(t, st, f"⚪ {site} queue closed · was up **{dur}** "
                                             f"({self._clock(since)}–{self._clock(now)} CT)")
             st.pop("session_msg", None)
             recent = "\n".join(f"• {datetime.fromisoformat(h['start']):%a %b} {datetime.fromisoformat(h['start']).day}: "
                                f"{self._clock(datetime.fromisoformat(h['start']))}–{self._clock(datetime.fromisoformat(h['end']))}"
                                f" ({self._dur(timedelta(minutes=h['minutes']))})" for h in history[:5])
-            self.notify.send("normal", f"⚪ Pokémon Center queue closed · was up {dur}", t["url"],
+            self.notify.send("normal", f"⚪ {site} queue closed · was up {dur}", t["url"],
                              {"Went up (CT)": self._clock(since), "Closed (CT)": self._clock(now), "Up for": dur},
                              desc=f"Recent queues:\n{recent}")
 
@@ -1362,7 +1456,9 @@ class Engine:
                   "• `check focus` → is each 🔥 focus set / @everyone product actually matching anything\n"
                   "• Every product post comes with ✅ ❌ already on it: tap ❌ → deleted and never posts again (same item "
                   "at other stores too) · tap ✅ → kept (`kept` lists them)\n"
-                  "• `block funko` → block by words · `blocked` → the list · `unblock 3` → undo")
+                  "• `block funko` → block by words · `blocked` → the list · `unblock 3` → undo\n"
+                  "• `watch tcin 94681234` or paste a Target link → that exact Target product ID, checked every ~90 s: "
+                  "@everyone when it gets LOADED, a DRAWING is set up, or it's IN STOCK · `unwatch tcin 94681234`")
 
     # ---------------------------------------------------------------- ❌ on a post = never show it (or its twins)
     def _blocklist(self):
@@ -1522,8 +1618,17 @@ class Engine:
         if low in ("help", "?", "commands"):
             return [self.WATCH_HELP]
         if low in ("watching", "list", "watchlist"):
+            ids = settings_mod.load().get("watch_tcins") or []
+            tw = self.state.get("tcin_watch", {})
+            id_lines = "\n".join(self._tcin_line(i, tw.get(i, {}).get("phase") or "unknown", tw.get(i, {}))
+                                 for i in ids)
+            if ids and not terms:
+                return ["**Watching Target IDs:**\n" + id_lines]
+            if ids:
+                return ["**Watching** (@everyone in this channel when any store has a match):\n" +
+                        "\n".join(f"`{i}` {q}" for i, q in enumerate(terms, 1)) + "\n\n**Target IDs:**\n" + id_lines]
             if not terms:
-                return ["Not watching anything yet. Try `watch prismatic bundle`."]
+                return ["Not watching anything yet. Try `watch prismatic bundle` or `watch tcin 94681234`."]
             return ["**Watching** (@everyone in this channel when any store has a match):\n" +
                     "\n".join(f"`{i}` {q}" for i, q in enumerate(terms, 1))]
         if low in ("check focus", "focus", "check focus list", "focus check"):
@@ -1546,6 +1651,29 @@ class Engine:
             return out + [cur]
         cmd, _, rest = msg.partition(" ")
         cmd = cmd.lower()
+        tc = self.tcin_in(rest) if cmd in ("watch", "add", "unwatch", "remove", "stop") else self.tcin_in(msg)
+        if tc and cmd in ("unwatch", "remove", "stop"):
+            ids = [x for x in (settings_mod.load().get("watch_tcins") or []) if x != tc]
+            settings_mod.update({"watch_tcins": ids})
+            self.state.get("tcin_watch", {}).pop(tc, None)
+            return [f"🗑️ Stopped watching Target ID `{tc}`."]
+        if tc and (cmd in ("watch", "add") or msg.strip() == tc or "target.com" in msg.lower()):
+            ids = list(settings_mod.load().get("watch_tcins") or [])
+            if tc not in ids:
+                if len(ids) >= self.MAX_TCINS:
+                    return [f"Already watching {self.MAX_TCINS} Target IDs (the most that stays safe for your "
+                            "connection). `unwatch tcin <id>` one first."]
+                ids.append(tc)
+                settings_mod.update({"watch_tcins": ids})
+            phase, info = self._tcin_check(tc) if self.stock_json else ("unknown", {})
+            if phase != "unknown":
+                self.state.setdefault("tcin_watch", {}).setdefault(tc, {}).update(
+                    {"phase": phase, "checked": time.time(),
+                     **{k: info[k] for k in ("name", "price", "image", "limit", "street_date") if info.get(k)}})
+            return [f"✅ **Watching Target ID `{tc}`** · checked about every 90 s. @everyone here when it gets "
+                    f"loaded, set up as a drawing / invite, or comes in stock.\nRight now: "
+                    + (self._tcin_line(tc, phase, info) if phase != "unknown" else "couldn't ask Target yet "
+                       "(it'll keep trying)")]
         if cmd == "block" and rest:
             return [self.block_name(rest, typed=True)]
         if cmd == "unblock" and rest:

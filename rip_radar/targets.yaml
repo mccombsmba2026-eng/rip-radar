@@ -71,6 +71,24 @@ targets:
                "keep this window open", "do not refresh"]
     alert_on_end: true
 
+  # Crunchyroll Store queue (waiting room for big drops) -> #hottopic: @everyone when it's up, a line that keeps
+  # counting how long, and the total when it closes. Runs in the queue browser alongside the Pokémon Center one.
+  - name: Crunchyroll queue
+    type: keywords
+    site: Crunchyroll Store
+    url: https://store.crunchyroll.com/
+    browser: true
+    channel: hottopic
+    track_duration: true
+    interval_seconds: 60
+    category: Pokémon
+    alert_title: "🚨 CRUNCHYROLL STORE QUEUE IS LIVE"
+    url_contains: [queue-it, queue., waitingroom, waiting-room]
+    keywords: ["you are now in line", "in line to enter", "your turn to enter", "virtual queue", "waiting room",
+               "estimated wait", "your place in line", "you are in the queue", "you're in line", "users ahead of you",
+               "keep this window open", "do not refresh", "number in line", "queue is paused"]
+    alert_on_end: true
+
   # Pokémon Center: SEALED categories only (its general TCG page is sleeves / binders / playmats). Kept light on
   # purpose - fewer Pokémon Center page loads = the queue check gets turned away less (these never speed up).
   - name: Pokémon Center · new TCG releases
@@ -344,6 +362,20 @@ targets:
     channel: hottopic
     verify_pages: 1
     interval_seconds: 300
+
+  # Crunchyroll Store (shares the Hot Topic channel + webhook). Sells Pokémon TCG, no sports cards: one scan of its
+  # trading-cards collection (search is robots-blocked), plus a queue watcher like Pokémon Center's.
+  - name: Crunchyroll · Pokémon cards
+    type: retail_search
+    store: crunchyroll
+    cards_only: true
+    products: pokemon
+    url: https://store.crunchyroll.com/collections/trading-cards
+    browser: true
+    channel: hottopic
+    alert_new_listed: true
+    verify_pages: 1
+    interval_seconds: 360
 
   - name: Hot Topic · Pokémon cards
     type: retail_search

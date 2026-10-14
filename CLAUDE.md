@@ -133,6 +133,18 @@ captchas, and never automates purchases. Keep it that way.
   `notify.send` posts (`?wait=true` -> channel_id/id). `ProductCards.react_existing()` adds them once to older posts.
   M tapping ❌ (2nd reaction) -> block; ✅ -> `engine.keep_product` (state["kept_products"], `kept` in #watch, undoes
   a matching ❌ block). The bot ignores its own reactions. Needs Add Reactions + Read Message History.
+- 1.0.48: TARGET ID WATCH (#watch: `watch tcin 94681234`, a target.com link, or a bare 8-9 digit ID; `unwatch tcin
+  …`; ≤15 IDs; `settings["watch_tcins"]`, `state["tcin_watch"]`). `tcin_watch_tick` (Target tripwire thread) asks
+  redsky pdp_client_v1 (public product data the product page loads; `stock.target_pdp` / `parse_target_pdp`, via the
+  hidden Target window) + product_fulfillment, each ID every max(90, 30×IDs) s. Phases not loaded -> loaded -> drawing
+  (DRAWING_WORDS outside product copy) -> in stock; moving up = @everyone in #watch (drawing also #drawings).
+  First look = baseline. NO ID enumeration / guessing ranges (M's home IP; only IDs he pastes). Target search
+  sources already sortBy=newest.
+  CRUNCHYROLL STORE (store key `crunchyroll`, shares #hottopic via STORE_CHANNEL; ids /products/<slug>-<UPC>.html):
+  one Pokémon scan of /collections/trading-cards (search is robots-blocked) + "Crunchyroll queue" watcher
+  (`site: Crunchyroll Store`, channel hottopic) in the queue browser. Queue code is generic via `_queue_site(t)`
+  (messages, debug file names, history key `queue_history_<slug>`); bot-check posts and the blocked-queue
+  protection stay Pokémon Center only.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

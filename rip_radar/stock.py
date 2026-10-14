@@ -167,3 +167,77 @@ def page_data_stock(data):
         if stock is not None and limit is not None:
             break
     return stock, limit
+
+
+# ---------------------------------------------------------------- Target ID watch (1.0.48)
+# The same public product data Target's own product page loads (pdp_client_v1). A product ID ("TCIN") answers
+# here as soon as Target sets the product up - often before it's searchable or linked anywhere.
+DRAWING_WORDS = ("drawing", "sweepstake", "raffle", "lottery", "registration", "enter for a chance",
+                 "chance to buy", "invite only", "invitation", "request an invite")
+
+
+def target_pdp(tcin, browser_json=None, session=None, key="", store_id="3991", timeout=15):
+    """-> (status, json or None). Asked from inside the hidden Target window (browser_json) when available."""
+    from urllib.parse import urlencode
+    params = {"key": key or TARGET_KEY, "tcin": tcin, "is_bot": "false", "store_id": store_id,
+              "pricing_store_id": store_id, "has_pricing_store_id": "true", "has_financing_options": "true",
+              "include_obsolete": "true", "skip_personalized": "true", "skip_variation_hierarchy": "true",
+              "channel": "WEB", "page": f"/p/A-{tcin}"}
+    url = f"{REDSKY}/pdp_client_v1?" + urlencode(params)
+    try:
+        if browser_json:
+            status, text = browser_json(url)
+        else:
+            r = session.get(url, timeout=timeout, headers={"Accept": "application/json",
+                                                           "Origin": "https://www.target.com"})
+            status, text = r.status_code, r.text
+    except Exception as e:
+        LAST_ERROR["text"] = f"pdp: {type(e).__name__}: {e}"[:200]
+        return 0, None
+    try:
+        return status, json.loads(text) if text and text.strip().startswith("{") else None
+    except ValueError:
+        return status, None
+
+
+def _strip_descriptions(o):
+    """Product copy (bullets, descriptions) can say 'drawing' innocently - leave it out of the drawing check."""
+    if isinstance(o, dict):
+        return {k: _strip_descriptions(v) for k, v in o.items()
+                if k not in ("product_description", "bullet_descriptions", "downstream_description",
+                             "soft_bullets", "marketing_description", "reviews", "ratings_and_reviews",
+                             "questions", "wellness_merchandise_attributes")}
+    if isinstance(o, list):
+        return [_strip_descriptions(v) for v in o]
+    return o
+
+
+def parse_target_pdp(data, status=200):
+    """pdp_client_v1 JSON -> {loaded, name, price, image, drawing, drawing_text, limit, street_date}."""
+    out = {"loaded": False, "name": "", "price": "", "image": "", "drawing": False, "drawing_text": "",
+           "limit": "", "street_date": ""}
+    if not isinstance(data, dict) or status == 404:
+        return out
+    product = ((data.get("data") or {}).get("product")) or {}
+    item = product.get("item") or {}
+    title = ((item.get("product_description") or {}).get("title")) or ""
+    if not title:
+        return out
+    import html as _html
+    out["loaded"] = True
+    out["name"] = _html.unescape(title)
+    price = product.get("price") or {}
+    out["price"] = price.get("formatted_current_price") or ""
+    imgs = (item.get("enrichment") or {}).get("images") or {}
+    out["image"] = imgs.get("primary_image_url") or ""
+    for d in _walk(product):
+        if not out["limit"] and _num(d.get("purchase_limit")):
+            out["limit"] = str(_num(d.get("purchase_limit")))
+        if not out["street_date"] and isinstance(d.get("street_date"), str):
+            out["street_date"] = d["street_date"][:10]
+    blob = json.dumps(_strip_descriptions(product)).lower()
+    hit = next((w for w in DRAWING_WORDS if w in blob), "")
+    if hit:
+        i = blob.find(hit)
+        out["drawing"], out["drawing_text"] = True, blob[max(0, i - 60): i + 80]
+    return out

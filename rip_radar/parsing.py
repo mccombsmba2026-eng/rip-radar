@@ -588,6 +588,8 @@ RETAIL_STORES = {
     "barnes": {"label": "Barnes & Noble", "id": r"/w/(?:[^/?#]+/)?(\d{6,})"},
     "gamestop": {"label": "GameStop", "id": r"/products/[^/?#]+/(\d{6,})\.html"},
     "hottopic": {"label": "Hot Topic", "id": r"/product/[^/?#]+/(\d{6,})\.html"},
+    # store.crunchyroll.com/products/<name>-<UPC>.html (the name part can be empty: /products/-0196214132474.html)
+    "crunchyroll": {"label": "Crunchyroll Store", "id": r"/products/[^/?#]*?(\d{10,14})\.html"},
 }
 LIVE_WORDS = ("add to cart", "add to bag", "add for shipping", "add for pickup", "add for delivery", "buy now",
               "ship it", "pick it up", "deliver it", "add to basket")

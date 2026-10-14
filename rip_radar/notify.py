@@ -14,7 +14,7 @@ COLORS = {"urgent": 0xE0342B, "normal": 0x2350C8, "system": 0x8A8F9E}
 STORE_COLORS = {"target": 0xCC0000, "walmart": 0x0071CE, "bestbuy": 0x0046BE, "amazon": 0xFF9900,
                 "dicks": 0x006B54, "pokemon": 0xFFCB05, "topps": 0xE31837, "costco": 0xE31837, "samsclub": 0x0067A0,
                 "cvs": 0xCC0000, "walgreens": 0xE31837, "ace": 0xD40029, "barnes": 0x2A5934,
-                "gamestop": 0xE4002B, "hottopic": 0x111111}
+                "gamestop": 0xE4002B, "hottopic": 0x111111, "crunchyroll": 0xF47521}
 
 
 # One Discord channel per store. Key -> label shown in the app. Webhooks live in settings["webhooks"].
@@ -22,7 +22,7 @@ CHANNELS = {"topps": "Topps products (formats, in stock)", "topps_calendar": "To
             "pokemon": "Pokémon Center products", "pokemon_queue": "Pokémon Center queue",
             "walmart": "Walmart", "target": "Target", "dicks": "Dick's", "amazon": "Amazon", "bestbuy": "Best Buy",
             "costco": "Costco", "samsclub": "Sam's Club", "pharmacy": "CVS & Walgreens", "ace": "Ace Hardware",
-            "barnes": "Barnes & Noble", "gamestop": "GameStop", "hottopic": "Hot Topic",
+            "barnes": "Barnes & Noble", "gamestop": "GameStop", "hottopic": "Hot Topic + Crunchyroll (store + queue)",
             "instore": "Mat local (in-store restocks near your ZIP)",
             "lookup": "In store look up (type a ZIP)",
             "watch": "Watch by name (@everyone · type watch / test / watching)",
@@ -31,9 +31,10 @@ CHANNELS = {"topps": "Topps products (formats, in stock)", "topps_calendar": "To
 STORE_NAMES = {"topps": "Topps", "pokemon": "Pokémon Center", "walmart": "Walmart", "target": "Target",
                "dicks": "Dick's", "amazon": "Amazon", "bestbuy": "Best Buy", "costco": "Costco",
                "samsclub": "Sam's Club", "cvs": "CVS", "walgreens": "Walgreens", "ace": "Ace Hardware",
-               "barnes": "Barnes & Noble", "gamestop": "GameStop", "hottopic": "Hot Topic"}
+               "barnes": "Barnes & Noble", "gamestop": "GameStop", "hottopic": "Hot Topic",
+               "crunchyroll": "Crunchyroll Store"}
 # stores that share a Discord channel (store key -> channel key); everything else posts to its own key
-STORE_CHANNEL = {"cvs": "pharmacy", "walgreens": "pharmacy"}
+STORE_CHANNEL = {"cvs": "pharmacy", "walgreens": "pharmacy", "crunchyroll": "hottopic"}   # Crunchyroll shares #hottopic
 
 
 def channel_of(store):
@@ -49,6 +50,7 @@ STORE_WORDS = [("pokemon", ("pokémon center", "pokemon center", "pokemoncenter"
                ("cvs", ("cvs",)), ("walgreens", ("walgreens",)), ("ace", ("ace hardware", "acehardware")),
                ("barnes", ("barnes & noble", "barnes and noble", "barnesandnoble")), ("gamestop", ("gamestop", "game stop")),
                ("hottopic", ("hot topic", "hottopic")),
+               ("crunchyroll", ("crunchyroll",)),
                ("topps", ("topps", "bowman"))]
 
 

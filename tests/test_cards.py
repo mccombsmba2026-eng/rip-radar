@@ -886,3 +886,71 @@ def test_reactions_worker_puts_both(monkeypatch):
             break
         time.sleep(0) or __import__("threading").Event().wait(0.01)
     assert [c.rsplit("/reactions/", 1)[1] for c in calls] == ["%E2%9C%85/@me", "%E2%9D%8C/@me"]
+
+
+PDP = {"data": {"product": {"tcin": "94681234", "price": {"formatted_current_price": "$49.99"},
+                            "item": {"product_description": {"title": "Pok&#233;mon TCG: Destined Rivals Elite Trainer Box",
+                                                             "bullet_descriptions": ["Great for drawing fans"]},
+                                     "enrichment": {"images": {"primary_image_url": "https://target.scene7.com/x"}},
+                                     "fulfillment": {"purchase_limit": 2}}}}}
+
+
+def test_parse_target_pdp():
+    from rip_radar.stock import parse_target_pdp
+    i = parse_target_pdp(PDP)
+    assert i["loaded"] and i["name"] == "Pokémon TCG: Destined Rivals Elite Trainer Box"
+    assert i["price"] == "$49.99" and i["limit"] == "2" and not i["drawing"]      # 'drawing' in bullets ignored
+    import copy
+    d = copy.deepcopy(PDP)
+    d["data"]["product"]["item"]["eligibility_rules"] = {"drawing": {"is_active": True}}
+    assert parse_target_pdp(d)["drawing"]
+    assert not parse_target_pdp({"errors": [{"message": "No product found"}]}, 404)["loaded"]
+
+
+def test_tcin_in():
+    from rip_radar.engine import Engine
+    assert Engine.tcin_in("tcin 94681234") == "94681234"
+    assert Engine.tcin_in("https://www.target.com/p/pokemon-etb/-/A-94681234#lnk=sametab") == "94681234"
+    assert Engine.tcin_in("94681234") == "94681234"
+    assert Engine.tcin_in("prismatic bundle") == ""
+
+
+def test_tcin_watch_flow(engine, monkeypatch):
+    import copy
+    from rip_radar import settings as settings_mod
+    store = {"watch_tcins": []}
+    monkeypatch.setattr(settings_mod, "load", lambda: dict(store))
+    monkeypatch.setattr(settings_mod, "update", lambda d: store.update(d))
+    sent = []
+    engine.notify.send = lambda level, title, url="", fields=None, **kw: sent.append((title, kw.get("ping"),
+                                                                                       kw.get("copy_to")))
+    phase = {"v": ("not loaded", {"loaded": False})}
+    monkeypatch.setattr(engine, "_tcin_check", lambda t: phase["v"])
+    engine.stock_json = lambda url: (200, "{}")
+    reply = engine.handle_watch_command("watch tcin 94681234")[0]
+    assert "Watching Target ID `94681234`" in reply and "not loaded" in reply and store["watch_tcins"] == ["94681234"]
+    phase["v"] = ("loaded", {"loaded": True, "name": "Pokémon TCG: Destined Rivals ETB", "price": "$49.99"})
+    assert engine.tcin_watch_tick(now=time_now() + 100) == 1
+    assert sent[-1][0].startswith("🆕 LOADED ON TARGET") and sent[-1][1] is True
+    phase["v"] = ("drawing", {"loaded": True, "drawing": True, "drawing_text": "drawing"})
+    assert engine.tcin_watch_tick(now=time_now() + 300) == 1
+    assert sent[-1][0].startswith("🎟️ TARGET DRAWING") and sent[-1][2] == ["drawings"]
+    assert engine.tcin_watch_tick(now=time_now() + 500) == 0                # same phase: no repeat
+    assert "Target IDs" in engine.handle_watch_command("watching")[0]
+    assert "Stopped" in engine.handle_watch_command("unwatch tcin 94681234")[0] and store["watch_tcins"] == []
+
+
+def time_now():
+    import time
+    return time.time()
+
+
+def test_crunchyroll_store_and_queue(engine):
+    from rip_radar.notify import channel_of
+    assert channel_of("crunchyroll") == "hottopic"
+    q = [t for t in engine.targets() if t.get("track_duration")]
+    cr = next(t for t in q if "crunchyroll" in t["url"])
+    assert engine._queue_site(cr) == ("Crunchyroll Store", "crunchyroll-store") and cr["channel"] == "hottopic"
+    pc = next(t for t in q if "pokemoncenter" in t["url"])
+    assert engine._queue_site(pc) == ("Pokémon Center", "pokemon-center")
+    assert any(t.get("store") == "crunchyroll" and t["type"] == "retail_search" for t in engine.targets())
