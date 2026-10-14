@@ -211,6 +211,8 @@ details summary{cursor:pointer;font-weight:600}
     <h1>Sources</h1>
     <p class="lede">What Rip Radar checks. Store searches ping only when a Pokémon or sports-card product is in stock or a drawing opens. Switch off anything you don't want. "Blocked" means the site turned the scanner away; it usually recovers on its own. If a store shows 0 products for a while, use Settings → Save diagnostics.</p>
     <div class="row"><button class="btn" id="qTest">🧪 Test queue alert</button><span class="msg" id="qTestMsg" role="status"></span></div>
+    <div class="row"><button class="btn" id="signCostco">🔑 Sign in to Costco</button><button class="btn" id="signSams">🔑 Sign in to Sam's Club</button><span class="msg" id="signMsg" role="status"></span></div>
+    <p class="hint">Costco hides prices and stock unless you're signed in. This opens the store's own sign-in page in a window; sign in, then close it. The scanners use that sign-in from their next check (they only read pages, never add to cart). If prices disappear again weeks later, sign in again.</p>
     <p class="hint">The Pokémon Center queue is checked every minute. This sends a sample of the alert to your queue channel (marked TEST, no @everyone) so you know exactly what you'll get.</p>
     <h2>What it checks</h2>
     <div class="tablewrap"><table>
@@ -582,6 +584,12 @@ $("#sFocusCheck").onclick = async () => {
   const r = await api.focus_report();
   $("#sFocusOut").hidden = false; $("#sFocusOut").textContent = r.text;
 };
+async function signIn(store){
+  const r = await api.store_sign_in(store);
+  msg($("#signMsg"), r.ok ? `Sign in to ${r.label} in the window that opened, then close it.` : "Couldn't open the window.", r.ok?"good":"bad");
+}
+$("#signCostco").onclick = () => signIn("costco");
+$("#signSams").onclick = () => signIn("samsclub");
 $("#qTest").onclick = async () => {
   msg($("#qTestMsg"),"Sending…");
   const r = await api.test_queue_alert();

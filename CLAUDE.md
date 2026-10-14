@@ -112,6 +112,13 @@ captchas, and never automates purchases. Keep it that way.
   `parsing.blocked_by`: all words of the blocked name (one may differ for 5+ words) = the same item at any store;
   "=words" entries come from typing `block <words>` in #watch. `blocked` / `unblock N` in #watch. Applied to store
   scans, Topps formats, Walmart drawings, restocks and #watch alerts.
+- 1.0.44: Topps FAST CHECK (`Engine.topps_fast_tick`, own thread): hot Topps formats (`_hot_topps_items`: not live, and
+  dropping within 48 h / new in 3 days / focus / @everyone / #watch) -> plain-HTTP GET topps.com/products/<handle>.js
+  (Shopify product JSON, `parsing.shopify_product_js`) every 60 s each, ≤240/h. Available -> `rec["force"]` + Topps
+  sitemap source due now -> that page is opened first and the normal card/@everyone goes out. 403/429 or 10 fails ->
+  paused 30 min (the normal page checks continue). Startup message line "⚡ Topps fast check" (`topps_fast_health`).
+  Sources → "Sign in to Costco / Sam's Club" (`Api.store_sign_in`): a visible window on the store's own sign-in page;
+  all windows share one WebView2 profile, so the hidden scanners get the member session. Never store passwords.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

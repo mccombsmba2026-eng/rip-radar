@@ -738,3 +738,38 @@ def test_react_x_blocks_product(engine, monkeypatch):
     assert store["blocked_products"] == []
     engine.handle_watch_command("block funko")
     assert store["blocked_products"] == ["=funko"]
+
+
+def test_topps_fast_check_trips(engine, monkeypatch):
+    import json, time
+    from datetime import datetime, timedelta
+    from rip_radar.parsing import CT
+    t = engine._topps_source()
+    assert t, "topps sitemap source missing"
+    soon = (datetime.now(CT) + timedelta(hours=2)).isoformat()
+    known = engine.state.setdefault("targets", {}).setdefault(t["name"], {}).setdefault("products", {})
+    known["2025-topps-chrome-football-hobby-box"] = {"name": "2025 Topps Chrome Football Hobby Box", "status": "Upcoming",
+                                                     "live": False, "when": soon, "first_seen": 0, "baseline": True}
+    known["old-thing"] = {"name": "2024 Topps Series 1 Blaster", "status": "Sold out", "live": False, "first_seen": 0}
+    assert [h for h, _ in engine._hot_topps_items()] == ["2025-topps-chrome-football-hobby-box"]
+
+    class R:
+        def __init__(self, code, body): self.status_code, self.text = code, body
+
+    class H:
+        calls = []
+        def get(self, url, **kw):
+            self.calls.append(url)
+            return R(200, json.dumps({"title": "x", "available": True, "variants": [{"id": 1, "available": True,
+                                                                                   "price": 29999}]}))
+    h = H()
+    assert engine.topps_fast_tick(http=h) == 1
+    assert h.calls == ["https://www.topps.com/products/2025-topps-chrome-football-hobby-box.js"]
+    assert known["2025-topps-chrome-football-hobby-box"]["force"] and engine.next_due[t["name"]] == 0
+    assert engine.topps_fast_tick(http=h) == 0              # not again within 60 s
+
+    class Blocked:
+        def get(self, url, **kw): return R(403, "nope")
+    engine._tfast_checked = {}
+    engine.topps_fast_tick(http=Blocked())
+    assert engine.TOPPS_FAST["on"] is False and "403" in engine.topps_fast_health()

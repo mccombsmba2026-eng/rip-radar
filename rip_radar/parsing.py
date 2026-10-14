@@ -1306,3 +1306,34 @@ def name_from_title(title):
     if after_dot and (not after_colon or len(head_dot) < len(head_colon)):
         return after_dot.strip()
     return (after_colon or t).strip()
+
+
+# ---------------------------------------------------------------- Topps fast check (1.0.44)
+def shopify_product_js(text):
+    """topps.com/products/<handle>.js (Shopify's small product JSON) -> {available, price, variant, name, image}
+    or None. Accepts the JSON as text, or wrapped in a browser's <pre>."""
+    t = text or ""
+    if not t.lstrip().startswith("{"):
+        t = BeautifulSoup(t, "html.parser").get_text()
+    i = t.find("{")
+    if i < 0:
+        return None
+    try:
+        d = json.loads(t[i:t.rfind("}") + 1])
+    except ValueError:
+        return None
+    if not isinstance(d, dict) or "variants" not in d:
+        return None
+    variants = [v for v in d.get("variants") or [] if isinstance(v, dict)]
+    avail = [v for v in variants if v.get("available")]
+    first = (avail or variants or [{}])[0]
+    cents = first.get("price", d.get("price"))
+    try:
+        price = f"${int(cents) / 100:,.2f}" if cents not in (None, "") else ""
+    except (TypeError, ValueError):
+        price = ""
+    image = d.get("featured_image") or ""
+    if image.startswith("//"):
+        image = "https:" + image
+    return {"available": bool(d.get("available")) or bool(avail), "price": price,
+            "variant": str(first.get("id") or ""), "name": d.get("title") or "", "image": image}

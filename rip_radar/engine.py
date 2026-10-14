@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 from . import __version__, paths, settings as settings_mod
 from .msrp import msrp_text, price_check
 from .notify import CHANNELS, STORE_NAMES, ChatBot, LiveBoard, Notifier, StatusBoard, store_in
-from .parsing import (CT, blocked_by, name_from_title, focus_match, is_accessory_only, is_card_only, og_image, parse_watch, watch_match, wall_kind, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
+from .parsing import (CT, blocked_by, shopify_product_js, name_from_title, focus_match, is_accessory_only, is_card_only, og_image, parse_watch, watch_match, wall_kind, best_time_for, is_topps_sealed, parse_topps_item_page, topps_handle, topps_product_urls,
                       topps_sitemap_numbers, LIVE_STATUSES, RETAIL_STORES, categorize, extract_when, fmt_when, gcal_link, is_card_product,
                       is_etb_or_upc, is_pokemon_product, is_sports_card_product, is_tcg_product, looks_blocked, parse_retail_tiles, parse_topps_calendar,
                       parse_topps_product_page, humanize_handle, tile_status, drawing_window, next_data, sport_of, stock_hint,
@@ -109,6 +109,7 @@ class Engine:
                            drop_mode=lambda hours: self.set_drop_mode(hours), watch=self.handle_watch_command,
                            block=self.block_product)
         self.started = datetime.now(CT)
+        self.TOPPS_FAST = {"state": "starting", "fails": 0}
         self.last_scan = None
         self.health = {}           # name -> {"health","code","at","type","url"}
         self.topps = self.state.get("topps_products", [])
@@ -135,6 +136,102 @@ class Engine:
             self._queue_thread.start()
         if self.stock_json:
             threading.Thread(target=self._target_tripwire_loop, daemon=True, name="target-tripwire").start()
+        threading.Thread(target=self._topps_fast_loop, daemon=True, name="topps-fast").start()
+
+    # ------------------------------------------------------------ Topps fast check: Shopify JSON every 60 s
+    TOPPS_FAST = {"state": "starting", "fails": 0}
+
+    def _topps_source(self):
+        return next((t for t in self.targets() if t.get("type") == "topps_sitemap"), None)
+
+    def _hot_topps_items(self, now=None):
+        """Topps formats worth a 60-second check: not on sale yet AND (dropping within 48 h / just announced /
+        🔥 focus or @everyone list / a #watch match)."""
+        t = self._topps_source()
+        if not t:
+            return []
+        now = now or time.time()
+        terms = [parse_watch(q) for q in settings_mod.load().get("watch_terms") or []]
+        known = self.state.get("targets", {}).get(t["name"], {}).get("products") or {}
+        out = []
+        for h, r in list(known.items()):
+            if r.get("live") or r.get("status") in ("Sold out", None, "") and not r.get("loaded_before_stock"):
+                continue
+            n = r.get("name", "")
+            soon = False
+            if r.get("when"):
+                try:
+                    soon = -3600 <= datetime.fromisoformat(r["when"]).timestamp() - now <= 48 * 3600
+                except ValueError:
+                    pass
+            fresh = now - r.get("first_seen", 0) < 3 * 86400 and not r.get("baseline")
+            if soon or fresh or r.get("focus") or self._focus(n)["ping"] or any(watch_match(w, n, "topps")
+                                                                                for w in terms):
+                out.append((h, r))
+        return out
+
+    def topps_fast_tick(self, every=60, per_hour=240, http=None):
+        """One tiny request per hot Topps format (Shopify's /products/<handle>.js, ~2 KB - no page load).
+        The moment one says available, that product page is opened by the Topps scanner right away and the
+        normal #topps card + @everyone go out."""
+        if settings_mod.load().get("paused") or not self.TOPPS_FAST.get("on", True):
+            return 0
+        t = self._topps_source()
+        if not t:
+            return 0
+        now = time.time()
+        recent = self.__dict__.setdefault("_tfast_log", [])
+        recent[:] = [x for x in recent if now - x < 3600]
+        checked = self.__dict__.setdefault("_tfast_checked", {})
+        http = http or self.__dict__.setdefault("_tfast_http", requests.Session())
+        tripped = 0
+        for h, r in sorted(self._hot_topps_items(now), key=lambda hr: checked.get(hr[0], 0)):
+            if len(recent) >= per_hour or now - checked.get(h, 0) < every:
+                continue
+            checked[h] = now
+            recent.append(now)
+            try:
+                resp = http.get(f"https://www.topps.com/products/{h}.js", timeout=12,
+                                headers={"User-Agent": UA, "Accept": "application/json"})
+                code, body = resp.status_code, resp.text
+            except requests.RequestException as e:
+                code, body = 0, str(e)
+            info = shopify_product_js(body) if code and code < 400 else None
+            if info is None:
+                self.TOPPS_FAST["fails"] += 1
+                self.TOPPS_FAST["state"] = f"❌ topps.com answered {code or 'nothing'}"
+                if code in (403, 429) or self.TOPPS_FAST["fails"] >= 10:
+                    # turned away: stop for 30 min so we never hammer it; the normal page checks carry on
+                    self.TOPPS_FAST["resume"] = now + 1800
+                    self.TOPPS_FAST["on"] = False
+                    log.info("Topps fast check paused 30 min (HTTP %s)", code)
+                    break
+                continue
+            self.TOPPS_FAST.update({"fails": 0, "state": "✅ working", "at": now})
+            if info["available"] and not r.get("live"):
+                tripped += 1
+                log.info("Topps fast check: %s is available - opening it now", r.get("name", h)[:60])
+                r["force"] = True
+                self.next_due[t["name"]] = 0
+                self._wake.set()
+        return tripped
+
+    def _topps_fast_loop(self):
+        while not self._stop.is_set():
+            try:
+                if not self.TOPPS_FAST.get("on", True) and time.time() >= self.TOPPS_FAST.get("resume", 0):
+                    self.TOPPS_FAST["on"], self.TOPPS_FAST["fails"] = True, 0
+                self.topps_fast_tick()
+            except Exception as e:
+                log.warning("topps fast check: %s", e)
+            self._stop.wait(15)
+
+    def topps_fast_health(self):
+        hot = len(self._hot_topps_items())
+        st = self.TOPPS_FAST.get("state", "starting")
+        if not self.TOPPS_FAST.get("on", True):
+            st += " · paused 30 min, normal Topps checks still running"
+        return f"⚡ Topps fast check: {st} · {hot} upcoming format{'s' if hot != 1 else ''} checked every 60 s"
 
     # ------------------------------------------------------------ Target tripwire: hot items checked every 90 s
     def _hot_target_items(self):
@@ -362,7 +459,7 @@ class Engine:
                     ok = sum(1 for v in report.values() if v.startswith("ok"))
                     bad = [f"❌ **{k}**: {v}" for k, v in report.items() if not v.startswith("ok")]
                     self.notify.send("system", f"🟢 Rip Radar {__version__} is running · all channels synced",
-                                     desc=f"{ok}/{len(report)} sources working.\n{self.stock_health()}\n"
+                                     desc=f"{ok}/{len(report)} sources working.\n{self.stock_health()}\n{self.topps_fast_health()}\n"
                                           + "\n".join(bad)[:3400])
                 else:
                     self.notify.send("normal", "🔄 All channels synced", desc="Each channel has a fresh board with "
@@ -1856,7 +1953,7 @@ class Engine:
         hot_every, idle_every = t.get("hot_seconds", 120), t.get("idle_minutes", 30) * 60
 
         def due(rec):
-            if not rec.get("checked"):
+            if not rec.get("checked") or rec.get("force"):
                 return True
             fresh = now - rec.get("first_seen", now) < 3 * 86400
             near = False
@@ -1866,7 +1963,8 @@ class Engine:
             wait = hot_every if (near or (fresh and not rec.get("live"))) else idle_every
             return now - rec["checked"] >= wait
         order = sorted((h for h, r in known.items() if due(r)),
-                       key=lambda h: (known[h].get("baseline", False), bool(known[h].get("checked")),
+                       key=lambda h: (not known[h].get("force"), known[h].get("baseline", False),
+                                      bool(known[h].get("checked")),
                                       known[h].get("checked", 0)))
         opened = 0
         use_cards = self.cards.enabled("topps")
@@ -1874,6 +1972,7 @@ class Engine:
             rec = known[h]
             ps, pf, ph = self._fetch({"name": t["name"], "url": rec["url"], "browser": t.get("browser", False)}, st)
             rec["checked"] = now
+            rec.pop("force", None)
             if looks_blocked(ps, ph) or ps >= 400:
                 continue
             opened += 1
