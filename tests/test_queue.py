@@ -119,3 +119,18 @@ def test_drop_mode_only_from_urgent_channel(monkeypatch):
     assert bot.drop_mode_allowed("urgent-only", 555) and not bot.drop_mode_allowed("alerts", 777)
     bot2 = notify.ChatBot(lambda: "", lambda: {})
     assert bot2.drop_mode_allowed("urgent-only", 1) and not bot2.drop_mode_allowed("app-status", 2)
+
+
+def test_keep_awake_is_off_unless_turned_on(engine, monkeypatch):
+    from rip_radar import settings, winsys
+    calls = []
+    monkeypatch.setattr(winsys, "keep_awake", lambda on=True: calls.append(on) or True)
+    engine._apply_keep_awake()
+    assert calls == []                                   # default: off, nothing asked of Windows
+    settings.update({"keep_awake": True})
+    engine._apply_keep_awake()
+    engine._apply_keep_awake()
+    assert calls == [True]                               # once, not every loop
+    settings.update({"keep_awake": False})
+    engine._apply_keep_awake()
+    assert calls == [True, False]                        # switching off releases it right away

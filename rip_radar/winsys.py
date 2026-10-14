@@ -195,3 +195,18 @@ def open_in_chrome(url):
         log.warning("couldn't open browser: %s", e)
         return False
 
+
+
+def keep_awake(on=True):
+    """While on: ask Windows not to sleep (the same request a video player makes). Doesn't change any Windows
+    setting; the screen can still turn off; closing the lid still sleeps. Lasts as long as the calling thread
+    or until called with on=False. Windows only."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+    try:
+        return bool(ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if on else 0)))
+    except Exception as e:
+        log.warning("keep awake: %s", e)
+        return False

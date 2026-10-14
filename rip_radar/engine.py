@@ -153,6 +153,15 @@ class Engine:
             every = 30 if self.drop_mode() else 60
             self._stop.wait(max(5, every - (time.time() - started)))
 
+    def _apply_keep_awake(self):
+        """Settings → 'Keep this PC awake while Rip Radar runs' (OFF unless M turns it on). Applied from the scanner
+        thread, which lives as long as the app; switching it off releases the request right away."""
+        want = bool(settings_mod.load().get("keep_awake", False))
+        if want != getattr(self, "_awake_on", False):
+            from .winsys import keep_awake
+            keep_awake(want)
+            self._awake_on = want
+
     def _queue_has_own_loop(self):
         return bool(self._queue_thread and self._queue_thread.is_alive())
 
@@ -202,6 +211,7 @@ class Engine:
             self.bot.start(s["bot_token"])
         default_iv = self.builtin.get("default_interval_seconds", 90)
         while not self._stop.is_set():
+            self._apply_keep_awake()
             if settings_mod.load().get("paused"):
                 self._wake.wait(5)
                 self._wake.clear()

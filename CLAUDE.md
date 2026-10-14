@@ -95,8 +95,10 @@ captchas, and never automates purchases. Keep it that way.
 - Hot Topic (1.0.33): store key/channel `hottopic`, ids /product/<slug>/<id>.html, trading-cards category + search.
 - Queue live -> `winsys.open_in_chrome` opens pokemoncenter.com in M's own Chrome (setting `open_browser_on_queue`,
   default on). He joins the line himself; the app never clicks anything there.
-- Rip Radar NEVER touches the PC's power, sleep, lid, battery, Windows Update or network-adapter settings - M sets
-  those himself in Windows (keep-awake was removed in 1.0.34 at his request). Don't add features for them.
+- Rip Radar NEVER changes the PC's power, sleep, lid, battery, Windows Update or network-adapter settings - M sets
+  those himself in Windows. The one exception M asked back for (1.0.35): Settings → "Keep this PC awake while Rip
+  Radar runs", OFF by default (`settings["keep_awake"]`); `Engine._apply_keep_awake` calls `winsys.keep_awake`
+  (SetThreadExecutionState, a temporary request, no settings changed) from the scanner thread each loop.
 - GameStop (1.0.25): store key/channel `gamestop`, product ids from /products/<slug>/<id>.html, search pages.
 - In-store restock tracker (1.0.25, Target only - the one store publishing per-store counts): `_refresh_target_stock`
   checks EVERY Target card product (incl. sold out online) - stores within `settings["restock_miles"]` (30) of

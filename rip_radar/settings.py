@@ -27,6 +27,7 @@ DEFAULTS = {
     "restock_miles": 30,
     "drop_mode_until": 0,            # Pokémon Center drop mode: queue every 30 s until this time
     "open_browser_on_queue": True,   # queue goes live -> open pokemoncenter.com in Chrome on this PC
+    "keep_awake": False,             # OFF unless M turns it on: ask Windows not to sleep while Rip Radar runs
     "topps_all_products": True,      # Topps: every product line (Disney, F1, soccer...) - not just your sports
     "start_with_windows": True,
     "keep_running_when_closed": False,   # False: the X quits. True: closing hides to the tray and keeps scanning
