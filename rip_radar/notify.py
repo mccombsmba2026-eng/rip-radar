@@ -515,10 +515,14 @@ class ChatBot:
                              "(discord.com/developers → your app → Bot) and save")
                 return
             hooks = s.get("webhooks") or {}
+            log.info("bot heard %s (channel %s): %r", where, getattr(msg.channel, "id", ""), msg.content[:60])
             for key, handler in (("prices", bot.prices), ("watch", bot.watch)):
                 if not handler or not msg.content:
                     continue
                 cid = await loop_.run_in_executor(None, bot.channel_id_of, hooks.get(key) or "")
+                if not cid:
+                    log.info("bot: the %s webhook's channel couldn't be read (webhook set: %s)", key,
+                             str(hooks.get(key) or "").startswith("http"))
                 if not cid or str(getattr(msg.channel, "id", "")) != cid:
                     continue
                 try:

@@ -194,6 +194,11 @@ captchas, and never automates purchases. Keep it that way.
   request (1) jumps a waiting background lookup (2). Price list shows the AVERAGE sold price (`summarize` adds "avg";
   history stores avg), one check per item per day; when eBay isn't answering the list says so at the top.
   #price-list `status` = eBay health + refresh progress.
+- 1.0.58 diagnostics: the last eBay page is saved as debug/ebay-last-lookup.html (`ResaleChecker.debug_save`, header
+  comment = query + HTTP + browser/http); "eBay answered but no sold listings matched" lands in `stats["last_page"]`;
+  the bot logs every message it hears (channel + id) and when a watch/prices webhook's channel can't be read;
+  status.json in the zip adds bot state, which webhook keys are set (never URLs), channels the bot resolves, resale
+  stats and price-refresh progress (`Api._diag_extra`).
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

@@ -126,6 +126,7 @@ class ResaleChecker:
         self.state, self.get_settings, self.pace, self.ttl = state, get_settings, pace, ttl_hours * 3600
         # eBay turns plain Python requests away (HTTP 403): ask through a hidden real-browser window when we have one
         self.browser_fetch = browser_fetch
+        self.debug_save = None               # (name, html): the last eBay page goes into Save diagnostics
         self.stats = {"ok": 0, "priced": 0, "fail": 0, "fail_streak": 0, "last_error": "", "last_ok": 0,
                       "via": ""}
         self.cache = state.setdefault("resale", {})
@@ -232,6 +233,11 @@ class ResaleChecker:
 
     def check(self, q):
         status, html, how = self._get(search_url(q))
+        if self.debug_save:
+            try:
+                self.debug_save("ebay-last-lookup", f"<!-- {q} | HTTP {status} via {how} -->\n" + (html or ""))
+            except Exception:
+                pass
         res = {"at": time.time(), "q": q, "ok": status < 400}
         if status < 400:
             self.stats.update({"ok": self.stats["ok"] + 1, "fail_streak": 0, "last_ok": time.time(), "via": how})
@@ -239,6 +245,8 @@ class ResaleChecker:
             if got:
                 res.update(got)
                 self.stats["priced"] += 1
+            else:
+                self.stats["last_page"] = f"eBay answered but no sold listings matched \"{q}\""
         else:
             self._failed(f"eBay HTTP {status}")
             log.info("resale: eBay HTTP %s (%s)", status, how)

@@ -82,6 +82,7 @@ class Engine:
         self._resale_posts = {}               # resale key -> {(store, pid): rec} waiting for a value
         self.resale = ResaleChecker(self.state, settings_mod.load, on_result=self._resale_ready,
                                     browser_fetch=resale_fetch)
+        self.resale.debug_save = lambda name, html: self._save_debug(name, html)
         self._queue_thread = None
         self.notify = Notifier(settings_mod.load, on_alert=self._record_alert)
         self.board = StatusBoard(settings_mod.load, self.status_text, self.state)

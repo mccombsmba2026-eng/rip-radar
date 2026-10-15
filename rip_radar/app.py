@@ -296,12 +296,30 @@ class Api:
                         z.write(f, f.name)
                 snap = self._app.engine.snapshot()
                 z.writestr("status.json", json.dumps({"version": snap["version"], "health": snap["health"],
-                                                      "topps": snap["topps"], "topps_formats": snap["topps_formats"]},
+                                                      "topps": snap["topps"], "topps_formats": snap["topps_formats"],
+                                                      **self._diag_extra()},
                                                      indent=1, default=str))
         except OSError as e:
             return {"ok": False, "error": f"Couldn't save: {e}"}
         winsys.reveal(out)
         return {"ok": True, "path": str(out)}
+
+    def _diag_extra(self):
+        """Bot / eBay state for diagnostics - which channels are set and seen, never the webhook URLs or token."""
+        e = self._app.engine
+        hooks = settings.load().get("webhooks") or {}
+        out = {"bot_state": getattr(e.bot, "state", ""), "bot_token_set": bool(settings.load().get("bot_token")),
+               "webhooks_set": sorted(k for k, v in hooks.items() if str(v).startswith("http")),
+               "resale": {k: v for k, v in e.resale.stats.items()}, "resale_health": e.resale.health(),
+               "price_refresh": {k: (len(v) if isinstance(v, list) else v)
+                                 for k, v in (e.state.get("price_refresh") or {}).items()},
+               "price_history_items": len(e.state.get("price_history") or {})}
+        try:
+            out["channels_seen"] = {k: bool(e.bot.channel_id_of(hooks.get(k) or "")) for k in ("watch", "prices",
+                                                                                               "lookup")}
+        except Exception as ex:
+            out["channels_seen"] = str(ex)
+        return out
 
     def hide_window(self):
         self._app.hide()
