@@ -111,9 +111,11 @@ class Engine:
         self.startup_sync = False
         self.bot = ChatBot(self.status_text, settings_mod.load, self.bot_reply, zip_lookup=self.zip_lookup,
                            drop_mode=lambda hours: self.set_drop_mode(hours), watch=self.handle_watch_command,
-                           block=self.block_product, keep=self.keep_product, prices=self.handle_prices_command)
+                           block=self.block_product, keep=self.keep_product, prices=self.handle_prices_command,
+                           restart=self.request_restart)
         self.started = datetime.now(CT)
         self.TOPPS_FAST = {"state": "starting", "fails": 0}
+        self.restart_hook = None              # set by the app: restart Rip Radar (Discord `restart`, queue self-heal)
         self.last_scan = None
         self.health = {}           # name -> {"health","code","at","type","url"}
         self.topps = self.state.get("topps_products", [])
@@ -431,12 +433,54 @@ class Engine:
                     except Exception as e:
                         log.warning("queue watch: %s", e)
             every = 30 if self.drop_mode() else 60
+            try:
+                self._queue_self_heal()
+            except Exception as e:
+                log.warning("queue self-heal: %s", e)
             streak = self._queue_blocked_streak()
             if streak >= 3:
                 # Pokémon Center keeps turning the check away: check less often so its bot check cools off
                 # (the product scans there are already paused) - hammering it keeps us blocked longer
                 every = 60 if self.drop_mode() else (180 if streak >= 8 else 120)
             self._stop.wait(max(5, every - (time.time() - started)))
+
+    SELF_HEAL_STREAK = 5          # ~10 min of blocked checks (they slow to 2 min apart once blocked)
+    SELF_HEAL_EVERY = 45 * 60     # at most one automatic restart per 45 min
+
+    def _queue_self_heal(self):
+        """Pokémon Center keeps turning the queue check away -> restart Rip Radar (a fresh start cleared it every
+        time on 10/14). Never while a queue is live, at most once per 45 min, and the restart is announced."""
+        if not self.restart_hook or self._queue_blocked_streak() < self.SELF_HEAL_STREAK:
+            return False
+        t = next((t for t in self.targets() if t.get("track_duration") and "pokemoncenter" in t.get("url", "")), None)
+        if not t or self.state.get("targets", {}).get(t["name"], {}).get("active"):
+            return False
+        if time.time() - self.state.get("last_self_heal", 0) < self.SELF_HEAL_EVERY:
+            return False
+        self.state["last_self_heal"] = time.time()
+        self.state.setdefault("targets", {}).setdefault(t["name"], {})["blocked_streak"] = 0
+        self._save_state()
+        self.notify.send("system", "♻️ Restarting Rip Radar to clear Pokémon Center's block on the queue check",
+                         "https://www.pokemoncenter.com/",
+                         {"Why": f"{self.SELF_HEAL_STREAK} queue checks in a row were turned away",
+                          "Back in": "about 1-2 minutes (a fresh start cleared it every time yesterday)"})
+        threading.Thread(target=self._restart_soon, daemon=True).start()
+        return True
+
+    def _restart_soon(self, delay=3):
+        time.sleep(delay)
+        try:
+            self.restart_hook()
+        except Exception as e:
+            log.warning("restart: %s", e)
+
+    def request_restart(self):
+        """Discord `restart` (urgent channel only)."""
+        if not self.restart_hook:
+            return "Restart only works in the installed app."
+        self._save_state()
+        threading.Thread(target=self._restart_soon, daemon=True).start()
+        return "♻️ Restarting Rip Radar now · back in about 1-2 minutes (#app-status will say when it's running)."
 
     def _queue_blocked_streak(self):
         t = next((t for t in self.targets() if t.get("track_duration") and "pokemoncenter" in t.get("url", "")), None)

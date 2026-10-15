@@ -182,6 +182,11 @@ captchas, and never automates purchases. Keep it that way.
 - 1.0.55: commands in #watch / #price-list never go silent: `ChatBot._reply` posts as the bot, else through that
   channel's webhook (and `bot.state` names the missing permission); a handler exception is answered with the error;
   `channel_id_of` no longer caches an empty / failed webhook lookup.
+- 1.0.56 QUEUE SELF-HEAL (10/14 log: the PC queue check recovered right after every app restart): `_queue_self_heal`
+  (queue thread) - 5 blocked PC queue checks in a row (~7-10 min), no queue live, ≥45 min since the last one
+  (`state["last_self_heal"]`) -> #app-status "♻️ Restarting Rip Radar…" -> `restart_hook` = `updater.restart_self`
+  (cmd script waits for this PID to exit, then `start RipRadar.exe --background`, via launch_new_copy). Discord
+  `restart` in the urgent-only channel (`engine.request_restart`) does the same on demand.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

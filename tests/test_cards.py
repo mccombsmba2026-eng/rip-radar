@@ -1103,3 +1103,30 @@ def test_walmart_page_prices_match_what_walmart_shows():
     html = f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(nd)}</script>'
     j = walmart_json_items(html)[0]
     assert j["price"] == "$49.99" and j["seller"] == "Walmart.com"
+
+
+def test_queue_self_heal_restarts_once(engine, monkeypatch):
+    import time
+    restarts = []
+    engine.restart_hook = lambda: restarts.append(1)
+    monkeypatch.setattr(engine, "_restart_soon", lambda delay=3: engine.restart_hook())
+    monkeypatch.setattr(engine, "_save_state", lambda: None)
+    sent = []
+    engine.notify.send = lambda level, title, *a, **k: sent.append(title)
+    t = next(t for t in engine.targets() if t.get("track_duration") and "pokemoncenter" in t["url"])
+    st = engine.state.setdefault("targets", {}).setdefault(t["name"], {})
+    st["blocked_streak"] = 2
+    assert not engine._queue_self_heal()                       # not blocked long enough
+    st["blocked_streak"] = 5
+    st["active"] = True
+    assert not engine._queue_self_heal()                       # never while a queue is live
+    st["active"] = False
+    assert engine._queue_self_heal()
+    for _ in range(50):
+        if restarts:
+            break
+        time.sleep(0.01)
+    assert restarts and sent and "Restarting Rip Radar" in sent[0] and st["blocked_streak"] == 0
+    st["blocked_streak"] = 9
+    assert not engine._queue_self_heal()                       # at most once per 45 min
+    assert "Restarting Rip Radar now" in engine.request_restart()

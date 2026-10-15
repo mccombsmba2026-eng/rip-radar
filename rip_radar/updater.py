@@ -71,3 +71,30 @@ def download_and_restart(info, quit_app):
     launch_new_copy(["cmd", "/c", str(script)])   # the script's `start` inherits the clean environment
     log.info("update %s downloaded; restarting", info["version"])
     quit_app()
+
+
+def restart_self(quit_app, wait_seconds=4):
+    """Start a fresh copy of the installed app a few seconds after this one exits (used by the `restart` command and
+    the queue self-heal). Same clean-environment launch as updates."""
+    if not paths.FROZEN or os.name != "nt":
+        raise RuntimeError("Restart only works for the installed Windows app.")
+    exe = Path(sys.executable)
+    script = Path(tempfile.gettempdir()) / "ripradar_restart.cmd"
+    pid = os.getpid()
+    # wait until THIS copy has fully exited (otherwise the new one sees it running and steps aside), max ~90 s
+    script.write_text(
+        "@echo off\r\n"
+        "set n=0\r\n"
+        f"ping -n {int(wait_seconds) + 1} 127.0.0.1 >nul\r\n"
+        ":wait\r\n"
+        f'tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul || goto go\r\n'
+        "ping -n 2 127.0.0.1 >nul\r\n"
+        "set /a n+=1\r\n"
+        "if %n% lss 90 goto wait\r\n"
+        ":go\r\n"
+        f'start "" "{exe}" --background\r\n'
+        'del "%~f0"\r\n', encoding="ascii")
+    from .winsys import launch_new_copy
+    launch_new_copy(["cmd", "/c", str(script)])
+    log.info("restarting (fresh copy in %ss)", wait_seconds)
+    quit_app()

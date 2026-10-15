@@ -358,7 +358,7 @@ class ChatBot:
     TRIGGERS = {"still running", "running", "status", "you up", "alive"}
 
     def __init__(self, status_text, get_settings=None, reply_text=None, zip_lookup=None, drop_mode=None, watch=None,
-                 block=None, keep=None, prices=None):
+                 block=None, keep=None, prices=None, restart=None):
         self.status_text = status_text
         self.get_settings = get_settings or (lambda: {})
         self.reply_text = reply_text or (lambda: status_text())
@@ -368,6 +368,7 @@ class ChatBot:
         self.block = block                    # (message_id, title) -> reply | None: someone reacted ❌ to a post
         self.keep = keep                      # (message_id): someone reacted ✅ - a product they want
         self.prices = prices                  # (text) -> [replies]: `refresh` / `prices` in the price-list channel
+        self.restart = restart                # () -> reply: `restart` in the urgent-only channel
         self._lookup_channel = {}             # webhook url -> channel id
         self.token = None
         self.state = "off"   # off | connecting | online | error: ...
@@ -530,6 +531,13 @@ class ChatBot:
                     await bot._reply(msg.channel, c[:1990], hooks.get(key) or "")
                 bot.state = f"online · last {where} command: {msg.content[:40]}"
                 return
+            if bot.restart and msg.content.strip().lower() in ("restart", "restart rip radar", "reboot",
+                                                               "restart app"):
+                allowed = await loop_.run_in_executor(None, bot.drop_mode_allowed, getattr(msg.channel, "name", ""),
+                                                      getattr(msg.channel, "id", ""))
+                if allowed:
+                    await bot._reply(msg.channel, bot.restart(), s.get("discord_webhook_urgent") or "")
+                    return
             dm = drop_mode_command(msg.content)
             if dm is not None and bot.drop_mode:
                 allowed = await loop_.run_in_executor(None, bot.drop_mode_allowed, getattr(msg.channel, "name", ""),

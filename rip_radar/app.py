@@ -499,6 +499,8 @@ class App:
     # --- lifecycle
     def _on_started(self):
         self._start_tray()
+        from . import updater as _upd
+        self.engine.restart_hook = lambda: _upd.restart_self(self.quit)   # `restart` in Discord / queue self-heal
         self.engine.start()
         threading.Thread(target=self._report_finished_update, daemon=True).start()
         threading.Thread(target=self._update_loop, daemon=True, name="updater").start()
