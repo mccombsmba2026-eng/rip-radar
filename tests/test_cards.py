@@ -549,7 +549,7 @@ def test_resale_parses_ebay_sold_listings_and_skips_junk():
     prices = parse_sold(html, q)
     assert sorted(prices) == [55.0, 58.0, 61.5]
     r = summarize(prices)
-    assert r == {"median": 58.0, "n": 3, "low": 55.0, "high": 61.5}
+    assert r == {"median": 58.0, "avg": 58.17, "n": 3, "low": 55.0, "high": 61.5}
     rc = ResaleChecker({}, lambda: {})
     txt = rc.text({**r, "q": q}, "$49.99")
     assert txt.startswith("[$58 median of 3 sold](https://www.ebay.com/sch/i.html?_nkw=") and "🟢 +$8 (+16%)" in txt
@@ -1130,3 +1130,28 @@ def test_queue_self_heal_restarts_once(engine, monkeypatch):
     st["blocked_streak"] = 9
     assert not engine._queue_self_heal()                       # at most once per 45 min
     assert "Restarting Rip Radar now" in engine.request_restart()
+
+
+NEW_EBAY = """<ul class="srp-results">""" + "".join(
+    f'<li class="su-card-container"><a href="https://www.ebay.com/itm/12345678{i}0"><span>Pokemon Prismatic '
+    f'Evolutions Elite Trainer Box Sealed</span></a><div><span>Sold Oct 12</span><span>${p}</span>'
+    f'<span>+$5.99 delivery</span></div></li>' for i, p in enumerate((88, 92, 95, 90, 99))) + "</ul>"
+
+
+def test_resale_reads_new_ebay_layout():
+    from rip_radar.resale import ResaleChecker, parse_sold, parse_sold_generic
+    q = "Pokémon Prismatic Evolutions Elite Trainer Box"
+    assert parse_sold(NEW_EBAY, q) == []                           # old reader sees nothing...
+    assert sorted(parse_sold_generic(NEW_EBAY, q)) == [88, 90, 92, 95, 99]    # ...the fallback reads it (no +$5.99)
+    rc = ResaleChecker({}, lambda: {"resale_check": True}, browser_fetch=lambda url: (200, url, NEW_EBAY))
+    assert rc.check(q)["median"] == 92
+
+
+def test_price_list_lookup_jumps_the_background_line():
+    from rip_radar.resale import ResaleChecker
+    rc = ResaleChecker({}, lambda: {"resale_check": True})
+    rc._start = lambda: None
+    rc.lookup("Pokémon Prismatic Evolutions Elite Trainer Box")              # background (2)
+    rc.lookup("Pokémon Prismatic Evolutions Elite Trainer Box", priority=1)  # price list asks again
+    pris = sorted(item[0] for item in list(rc.q.queue))
+    assert pris == [1, 2]

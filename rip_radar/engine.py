@@ -2558,7 +2558,8 @@ class Engine:
         hist = self.state.setdefault("price_history", {}).setdefault(key, {})
         day = datetime.now(CT).date().isoformat()
         if result.get("median"):
-            hist[day] = {"median": result["median"], "n": result.get("n", 0)}
+            hist[day] = {"median": result["median"], "avg": result.get("avg") or result["median"],
+                         "n": result.get("n", 0)}
         for d in sorted(hist)[:-30]:                  # keep a month
             hist.pop(d, None)
         self._prices_dirty = True
@@ -2612,10 +2613,17 @@ class Engine:
             n = self.price_list_tick(force=True, reason="refresh")
             return [f"🔄 Checking eBay again for {n} items · about {max(2, n * 8 // 60)} min. "
                     "A new price list posts here when it's done."]
+        if low in ("status", "ebay", "health", "why"):
+            run = self.state.get("price_refresh") or {}
+            st = self.resale.stats
+            return [f"{self.resale.health()}\n"
+                    f"Refresh running: {'yes · ' + str(len(run.get('pending', []))) + ' lookups left' if run else 'no'}\n"
+                    f"Last eBay answer: {st.get('last_page') or ('ok' if st.get('ok') else 'none yet')} · "
+                    f"last error: {st.get('last_error') or 'none'} · via {st.get('via') or '-'}"]
         if low in ("prices", "list", "show", "price list"):
             return [f"**{t}**\n{d}"[:1990] for t, d in self._render_prices()]
-        return ["Type `refresh` to check eBay again now (a new list posts here when done), or `prices` to see the "
-                "current list. It also posts a new list by itself every morning."]
+        return ["Type `refresh` to check eBay again now (a new list posts here when done), `prices` to see the "
+                "current list, or `status` to see whether eBay is answering. A new list also posts every morning."]
 
     def _price_cell(self, key, retail=None):
         hist = self.state.get("price_history", {}).get(key) or {}
@@ -2623,9 +2631,10 @@ class Engine:
         if not days:
             hit = self.resale.cache.get(key) or {}
             return "—" if hit.get("ok") else "⏳"
-        cur = hist[days[-1]]["median"]
+        val = lambda d: hist[d].get("avg") or hist[d]["median"]      # average sale price (outliers dropped)
+        cur = val(days[-1])
         cell = f"**${cur:,.0f}**"
-        prev = next((hist[d]["median"] for d in reversed(days[:-1])), None)
+        prev = next((val(d) for d in reversed(days[:-1])), None)
         if prev:
             pct = (cur - prev) / prev * 100
             if abs(pct) >= 1:
@@ -2642,11 +2651,17 @@ class Engine:
         poke = [f"🔥 **{label}** · " + " · ".join(cells) for (sec, label), cells in rows.items() if sec == "pokemon"]
         hoops = [f"🟢 **{label}** · " + " · ".join(cells) for (sec, label), cells in rows.items() if sec == "sports"]
         day = self.state.get("price_list_day") or "not run yet"
-        foot = (f"\n-# eBay SOLD listings, median of recent sales (lots / graded / empty boxes left out) · refreshed "
-                f"daily at {int(settings_mod.load().get('price_list_hour', 8)) % 12 or 12} "
+        foot = (f"\n-# Average eBay SOLD price of recent sales (lots / graded / empty boxes and far-off prices left out) · "
+                f"checked once a day at {int(settings_mod.load().get('price_list_hour', 8)) % 12 or 12} "
                 f"{'AM' if int(settings_mod.load().get('price_list_hour', 8)) < 12 else 'PM'} CT · last: {day} · "
                 f"▲▼ = change since the previous day · — = no recent sales found · ⏳ = looking it up")
         out = []
+        health = self.resale.health()
+        if "❌" in health or self.resale.stats.get("last_page"):
+            warn = health + (f" · last answer: {self.resale.stats['last_page']}" if self.resale.stats.get("last_page")
+                             and "❌" in health else "")
+            if "❌" in health:
+                poke = [f"**{warn}**"] + poke
         if poke:
             out.append(("💸 Price list · 🔥 Pokémon focus sets", "\n".join(poke)))
         if hoops:

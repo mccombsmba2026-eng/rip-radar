@@ -187,6 +187,13 @@ captchas, and never automates purchases. Keep it that way.
   (`state["last_self_heal"]`) -> #app-status "♻️ Restarting Rip Radar…" -> `restart_hook` = `updater.restart_self`
   (cmd script waits for this PID to exit, then `start RipRadar.exe --background`, via launch_new_copy). Discord
   `restart` in the urgent-only channel (`engine.request_restart`) does the same on demand.
+- 1.0.57 PRICE LIST FIX (M: "price list not working"): `resale.parse_sold_generic` fallback reads any eBay layout
+  (every /itm/<id> link + first price in its box, shipping / "was" removed, ranges skipped) when the s-item / s-card
+  reader finds nothing; `_get` accepts a browser page with listing links / "results for" as an answer and names bot
+  checks ("pardon our interruption") in `stats["last_page"]`; `queued` is now key -> priority so a price-list
+  request (1) jumps a waiting background lookup (2). Price list shows the AVERAGE sold price (`summarize` adds "avg";
+  history stores avg), one check per item per day; when eBay isn't answering the list says so at the top.
+  #price-list `status` = eBay health + refresh progress.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

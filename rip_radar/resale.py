@@ -69,6 +69,44 @@ def parse_sold(html, query):
     return prices
 
 
+RE_ITM = re.compile(r"/itm/(?:[^/?#\"']+/)?(\d{9,15})")
+
+
+def parse_sold_generic(html, query):
+    """Fallback when eBay changes its result markup: every link to a listing (/itm/<id>) with its title, and the
+    first price in the box around it (not shipping, not 'was')."""
+    want = key_words(query)
+    soup = BeautifulSoup(html or "", "html.parser")
+    prices, seen = [], set()
+    for a in soup.find_all("a", href=True):
+        m = RE_ITM.search(a["href"])
+        if not m or m.group(1) in seen:
+            continue
+        box = a
+        for _ in range(6):                                  # climb to the listing's own box
+            if box.parent is None or len(box.parent.find_all("a", href=RE_ITM)) > 3:
+                break
+            box = box.parent
+        title = " ".join((a.get_text(" ") or "").split()).lower()
+        if len(title) < 10:
+            h = box.find(["h3", "h2", "span"], string=True)
+            title = " ".join((h.get_text(" ") if h else "").split()).lower()
+        if not title or "shop on ebay" in title or any(re.search(r"\b" + w + r"\b", title) for w in EXCLUDE):
+            continue
+        have = sum(1 for w in want if w in title)
+        if want and have < max(1, round(len(want) * 0.75)):
+            continue
+        text = " ".join(box.get_text(" ").split())
+        text = re.sub(r"(?:\+|was|shipping|delivery)\s*\$\s?[\d,.]+", " ", text, flags=re.I)
+        if re.search(r"\$\s?[\d,.]+\s+to\s+\$", text):         # a price range = several variations: skip
+            continue
+        pm = RE_MONEY.search(text)
+        if pm:
+            seen.add(m.group(1))
+            prices.append(float(pm.group(1).replace(",", "")))
+    return prices
+
+
 def summarize(prices):
     if len(prices) < 3:
         return None
@@ -77,7 +115,8 @@ def summarize(prices):
     keep = [p for p in prices if med / 3 <= p <= med * 3]      # drop obvious mismatches (singles, cases)
     if len(keep) < 3:
         return None
-    return {"median": round(statistics.median(keep), 2), "n": len(keep), "low": keep[0], "high": keep[-1]}
+    return {"median": round(statistics.median(keep), 2), "avg": round(statistics.mean(keep), 2), "n": len(keep),
+            "low": keep[0], "high": keep[-1]}
 
 
 class ResaleChecker:
@@ -92,7 +131,7 @@ class ResaleChecker:
         self.cache = state.setdefault("resale", {})
         self.q = queue.PriorityQueue()       # live drops (priority 0) jump ahead of background valuing (1)
         self.on_result = on_result or (lambda key, result: None)
-        self.queued = set()
+        self.queued = {}                     # key -> best priority it's waiting at
         self.s = requests.Session()
         self.s.headers.update({"User-Agent": UA, "Accept-Language": "en-US,en;q=0.9"})
         self._thread = None
@@ -110,11 +149,13 @@ class ResaleChecker:
         hit = self.cache.get(key)
         if hit and time.time() - hit.get("at", 0) < (self.ttl if hit.get("ok", "median" in hit) else self.FAIL_TTL):
             return hit if hit.get("median") else None
+        pri = 0 if urgent else (priority if priority is not None else 2)
         with self._lock:
-            if key not in self.queued or urgent:
-                self.queued.add(key)
-                # 0 = live drop (no wait) · 1 = daily price list · 2 = background valuing
-                self.q.put((0 if urgent else (priority if priority is not None else 2), time.time(), q))
+            # 0 = live drop (no wait) · 1 = daily price list · 2 = background valuing. Already waiting at a lower
+            # priority? Put it in again at the better one (the later copy is skipped as already done).
+            if key not in self.queued or pri < self.queued[key]:
+                self.queued[key] = pri
+                self.q.put((pri, time.time(), q))
         self._start()
         return hit if hit and hit.get("median") else None
 
@@ -142,7 +183,7 @@ class ResaleChecker:
             fresh = self.cache.get(key)
             if fresh and fresh.get("median") and time.time() - fresh.get("at", 0) < self.ttl:
                 with self._lock:
-                    self.queued.discard(key)
+                    self.queued.pop(key, None)
                 self.on_result(key, fresh)          # already known (a duplicate urgent request): just use it
                 continue
             try:
@@ -153,7 +194,7 @@ class ResaleChecker:
                 self.cache[key] = {"at": time.time(), "q": q, "ok": False}
             finally:
                 with self._lock:
-                    self.queued.discard(key)
+                    self.queued.pop(key, None)
             try:
                 self.on_result(key, self.cache[key])  # put the value on the post right away
             except Exception as e:
@@ -175,10 +216,15 @@ class ResaleChecker:
         if self.browser_fetch:
             try:
                 status, _, html = self.browser_fetch(url)
-                if html and any(k in html for k in ("s-item", "s-card", "srp-results")):
-                    return status, html, "browser"
-                if html and ("captcha" in html.lower() or "pardon our interruption" in html.lower()):
+                low = (html or "").lower()
+                if html and ("pardon our interruption" in low or "/splashui/captcha" in low
+                             or "verify yourself" in low):
+                    self.stats["last_page"] = "eBay showed a bot check"
                     return 403, html, "browser"
+                if html and (any(k in html for k in ("s-item", "s-card", "srp-results")) or RE_ITM.search(html)
+                             or "no exact matches found" in low or "results for" in low):
+                    return status, html, "browser"
+                self.stats["last_page"] = f"unexpected eBay page ({len(html or '')} bytes)"
             except Exception as e:
                 log.info("resale browser: %s", e)
         r = self.s.get(url, timeout=20)
@@ -189,7 +235,7 @@ class ResaleChecker:
         res = {"at": time.time(), "q": q, "ok": status < 400}
         if status < 400:
             self.stats.update({"ok": self.stats["ok"] + 1, "fail_streak": 0, "last_ok": time.time(), "via": how})
-            got = summarize(parse_sold(html, q))
+            got = summarize(parse_sold(html, q)) or summarize(parse_sold_generic(html, q))
             if got:
                 res.update(got)
                 self.stats["priced"] += 1
