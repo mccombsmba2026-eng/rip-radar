@@ -2516,6 +2516,8 @@ class Engine:
     # ------------------------------------------------------------ 💸 daily price list (🔥 sets + @everyone products)
     POKEMON_FORMATS = (("Booster Box", "Box"), ("Booster Bundle", "Bundle"), ("Elite Trainer Box", "ETB"))
     SPORTS_FORMATS = (("Hobby Box", "Hobby"), ("Mega Box", "Mega"), ("Blaster Box", "Blaster"))
+    HOBBY_ONLY = ("impeccable", "national treasures", "crown royale", "court kings", "contenders", "flawless",
+                  "immaculate", "noir", "spectra", "one and one", "eminence", "prizm draft picks", "university")
 
     def price_list_items(self):
         """-> [(section, row label, column label, eBay query, retail)] for every 🔥 focus set and @everyone product.
@@ -2543,8 +2545,11 @@ class Engine:
             if key in seen:
                 continue
             seen.add(key)
+            if not re.sub(r"\b(?:19|20)\d{2}(?:-\d{2,4})?\b", "", key).strip():
+                continue                              # just a year + Topps ("2025-26 Topps") = the Flagship row
             label = re.sub(r"\s+basketball$", "", phrase, flags=re.I)
-            for fmt, col in self.SPORTS_FORMATS:
+            hobby_only = any(w in phrase.lower() for w in self.HOBBY_ONLY)
+            for fmt, col in self.SPORTS_FORMATS[:1] if hobby_only else self.SPORTS_FORMATS:
                 q = f"{phrase} {fmt}"
                 if "basketball" not in q.lower():
                     q = f"{phrase} Basketball {fmt}"
@@ -2572,13 +2577,21 @@ class Engine:
         now = datetime.now(CT)
         run = self.state.get("price_refresh")
         if run:
-            if not run.get("pending") or time.time() - run.get("started", 0) > 1200:
+            if not run.get("pending") or time.time() - run.get("started", 0) > 2700:
                 self.state.pop("price_refresh", None)
                 self._post_price_list(run.get("reason", "daily"))
             return 0
         hour = int(settings_mod.load().get("price_list_hour", 8))
         due = hour >= 0 and now.hour >= hour and self.state.get("price_list_day") != now.date().isoformat()
         if not force and not due:
+            # items eBay didn't answer for: ask again every 30 min (in the background, ahead of other valuing)
+            if time.time() - getattr(self, "_price_retry_at", 0) > 1800:
+                self._price_retry_at = time.time()
+                for *_, q, _ in self.price_list_items():
+                    hit = self.resale.cache.get(self.resale.key(q)) or {}
+                    if hit.get("ok") is False and time.time() - hit.get("at", 0) > 1800:
+                        self.resale.cache.pop(self.resale.key(q), None)
+                        self.resale.lookup(q, priority=1)
             if getattr(self, "_prices_dirty", False):         # a late answer: edit today's list
                 self._prices_dirty = False
                 self.prices_board.tick(self._render_prices, force=True)
@@ -2631,7 +2644,11 @@ class Engine:
         days = sorted(hist)
         if not days:
             hit = self.resale.cache.get(key) or {}
-            return "—" if hit.get("ok") else "⏳"
+            if hit.get("ok"):
+                return "—"                                   # eBay answered: no matching sales
+            if hit and hit.get("ok") is False:
+                return "⚠️"                                  # eBay didn't answer (blocked / error)
+            return "⏳"                                      # not looked up yet
         val = lambda d: hist[d].get("avg") or hist[d]["median"]      # average sale price (outliers dropped)
         cur = val(days[-1])
         cell = f"**${cur:,.0f}**"
@@ -2652,11 +2669,21 @@ class Engine:
         poke = [f"🔥 **{label}** · " + " · ".join(cells) for (sec, label), cells in rows.items() if sec == "pokemon"]
         hoops = [f"🟢 **{label}** · " + " · ".join(cells) for (sec, label), cells in rows.items() if sec == "sports"]
         day = self.state.get("price_list_day") or "not run yet"
+        cells = [self._price_cell(self.resale.key(q), None) for *_, q, _ in items]
+        n_ok = sum(1 for c in cells if c.startswith("**"))
+        n_none = cells.count("—")
+        n_fail = cells.count("⚠️")
+        n_wait = cells.count("⏳")
+        run = self.state.get("price_refresh") or {}
+        progress = (f"**{n_ok} priced · {n_none} no recent sales · {n_fail} eBay didn't answer · {n_wait} waiting**"
+                    + (f" · refresh running, {len(run.get('pending', []))} left" if run else ""))
         foot = (f"\n-# Average eBay SOLD price of recent sales (lots / graded / empty boxes and far-off prices left out) · "
                 f"checked once a day at {int(settings_mod.load().get('price_list_hour', 8)) % 12 or 12} "
                 f"{'AM' if int(settings_mod.load().get('price_list_hour', 8)) < 12 else 'PM'} CT · last: {day} · "
-                f"▲▼ = change since the previous day · — = no recent sales found · ⏳ = looking it up")
-        out = []
+                f"▲▼ = change since the previous day · — = no recent sales found · ⚠️ = eBay didn't answer (retries "
+                f"in 30 min) · ⏳ = not looked up yet")
+        out = [("💸 Price list · status", progress + (f"\n⚠️ eBay: {self.resale.stats.get('last_page') or self.resale.stats.get('last_error')}"
+                                                      if n_fail else ""))]
         health = self.resale.health()
         if "❌" in health or self.resale.stats.get("last_page"):
             warn = health + (f" · last answer: {self.resale.stats['last_page']}" if self.resale.stats.get("last_page")

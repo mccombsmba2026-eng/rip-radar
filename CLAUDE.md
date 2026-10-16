@@ -199,6 +199,11 @@ captchas, and never automates purchases. Keep it that way.
   the bot logs every message it hears (channel + id) and when a watch/prices webhook's channel can't be read;
   status.json in the zip adds bot state, which webhook keys are set (never URLs), channels the bot resolves, resale
   stats and price-refresh progress (`Api._diag_extra`).
+- 1.0.59 price list (M pasted a list of all ⏳): cells now say ⚠️ when eBay didn't answer (cache ok=False) vs ⏳ not
+  looked up yet vs — no matching sales; a "💸 Price list · status" block on top counts priced / no sales / failed /
+  waiting (+ the last eBay problem); failed items re-asked every 30 min (`_price_retry_at`); a refresh waits up to 45
+  min before posting; fewer rows: high-end lines (`HOBBY_ONLY`: Impeccable, National Treasures, Crown Royale, Court
+  Kings, Contenders, Prizm Draft Picks, Bowman University...) get Hobby only, and a bare "2025-26 Topps" row is dropped.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT
