@@ -1,4 +1,5 @@
 import time
+from datetime import datetime, timedelta
 
 from rip_radar import settings
 from rip_radar.parsing import is_etb_or_upc
@@ -82,3 +83,48 @@ def test_topps_calendar_changes_ping_everyone(engine):
     (repost, content), = posted
     assert repost and content.startswith("@everyone · Topps calendar updated") and "2026 Bowman Draft Baseball" in content
     assert not [t for t, _ in sent if "calendar" in t.lower()]
+
+
+def test_topps_calendar_only_reposts_for_new_products(engine):
+    engine.notify.send = lambda *a, **kw: None
+    posted = []
+    engine.topps_board.hook = lambda: "https://tcal"
+    engine.topps_board.tick = lambda render, force=False, repost=False, content=None: posted.append((repost, content))
+    st = {}
+    engine.fetcher = FakeFetch(page())
+    engine.check_topps_calendar(dict(TOPPS), st, True)
+    soon = [list(c) for c in SOON]
+    soon[4][1] = "Wednesday, Nov 18"                       # a date moves -> board edited in place, no ping
+    engine.fetcher = FakeFetch(page([tuple(c) for c in soon], AVAIL))
+    engine.check_topps_calendar(dict(TOPPS), st, False)
+    assert posted == [(False, None)]
+    posted.clear()
+    engine.fetcher = FakeFetch(page([tuple(c) for c in soon[:-1]], AVAIL))     # one drops off the page
+    engine.check_topps_calendar(dict(TOPPS), st, False)
+    engine.fetcher = FakeFetch(page([tuple(c) for c in soon], AVAIL))          # ...and comes back: not new
+    engine.check_topps_calendar(dict(TOPPS), st, False)
+    assert all(not rp for rp, _ in posted)
+    posted.clear()
+    soon.append(("topps-midnight-football", "Monday, Oct 12", "2026 Topps Midnight Football", "Pre-order"))
+    engine.fetcher = FakeFetch(page([tuple(c) for c in soon], AVAIL))
+    engine.check_topps_calendar(dict(TOPPS), st, False)
+    (rp, content), = posted
+    assert rp and "Midnight Football" in content
+
+
+def test_drop_calendar_reposts_only_for_new_links(engine):
+    from rip_radar.engine import CT
+    engine.first_pass_done = True
+    engine._boards_tick = lambda repost=False: None
+    posted = []
+    engine.cal_board.tick = lambda render, force=False, repost=False, content=None: posted.append(repost)
+    d = datetime.now(CT) + timedelta(days=3)
+    engine._add_event("Walmart drawing: ETB", "https://walmart.com/ip/1", d, True, "drawing", "walmart")
+    engine.calendar_tick()                                  # first look = baseline
+    assert posted == []
+    engine._add_event("Walmart drawing: ETB", "https://walmart.com/ip/1", d + timedelta(days=1), True, "drawing", "walmart")
+    engine.calendar_tick()                                  # same product, new date: not new
+    assert posted == []
+    engine._add_event("Walmart drawing: UPC", "https://walmart.com/ip/2", d, True, "drawing", "walmart")
+    engine.calendar_tick()
+    assert posted == [True]

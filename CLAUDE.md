@@ -219,6 +219,14 @@ captchas, and never automates purchases. Keep it that way.
   `resale_off_1061` sets resale_check False); the price list still runs (`lookup(force=True)`); price-list pace
   `LIST_PACE` 45 s; an eBay bot-check page pauses all lookups 1 h (`stats["paused_until"]`); health ❌ when failures
   outnumber answers, ⏸️ while paused. Never solve / click through either check - wait it out.
+- 1.0.62 CALENDARS QUIET + HEALTH CHECK: #topps-calendar / #drop-calendar move to the bottom (+ @everyone for Topps) ONLY
+  when a drop that was never on them is added (Topps: `st["ever"]` slugs; drop calendar: `state["cal_seen_urls"]` by
+  product link, 60 days). Status / time / moved / removed = board edited in place (`_quiet_topps_calendar`), no ping.
+  Launch / update / "Sync all channels" no longer re-post the two calendar boards (edit in place). 🩺 DAILY HEALTH
+  CHECK (`health_tick` / `render_health`, setting `health_hour` 9 AM CT, -1 off; `health` in #watch): every source
+  ✅ / 🟡 loads-but-found-nothing for 24 h (`st["last_found_at"]`: health "ok (N" with N>0, or ok without a count) /
+  ❌ failing (since `bad_since`, last worked `last_ok_at`), plus queue, Target counts, Topps fast check, eBay, price
+  list, bot, alerts in 24 h.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

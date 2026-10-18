@@ -308,3 +308,34 @@ def test_raffles_post_to_store_and_drawings_everywhere(engine):
     engine.fetcher = FakeFetch("<button>Enter drawing</button>" + "x" * 25000, page["url"])
     engine.check_keywords(page, {}, False)
     assert got == [("🚨 DICK'S ENTRY OPEN: Dick's ETB", None, ["drawings"])]
+
+
+def test_health_check_report(engine):
+    import time as _t
+    engine.targets = lambda: [{"name": "Walmart Pokémon", "type": "retail_search", "url": "https://walmart.com/s"},
+                              {"name": "Dick's cards", "type": "retail_search", "url": "https://dickssportinggoods.com/s"},
+                              {"name": "CVS cards", "type": "retail_search", "url": "https://cvs.com/s"}]
+    ts = engine.state.setdefault("targets", {})
+    ts["Walmart Pokémon"] = {"health": "ok (12 card products · 2 in stock)", "last_ok_at": _t.time(),
+                             "last_found_at": _t.time(), "since": _t.time() - 99999}
+    ts["Dick's cards"] = {"health": "empty", "bad_since": _t.time() - 3 * 86400, "last_ok_at": 0, "since": 0}
+    ts["CVS cards"] = {"health": "ok (0 card products, 4 other items skipped)", "last_ok_at": _t.time(),
+                       "last_found_at": _t.time() - 2 * 86400, "since": _t.time() - 9 * 86400}
+    title, desc = engine.render_health()
+    assert title.startswith("🩺 Daily health check")
+    assert "1 of 3 sources working" in desc
+    assert "❌ **Dick's cards**" in desc and "last worked never" in desc
+    assert "🟡 **CVS cards**" in desc and "2d" in desc
+    assert "✅ Walmart Pokémon" in desc
+    assert engine.handle_watch_command("health")[0].startswith("**🩺")
+
+
+def test_run_target_records_last_found(engine):
+    engine.check_fake = lambda t, st, first: ("ok (0 card products)", 200)
+    t = {"name": "X", "type": "fake", "url": "https://x.com"}
+    engine._run_target(t, {})
+    st = engine.state["targets"]["X"]
+    assert st.get("last_ok_at") and not st.get("last_found_at")
+    engine.check_fake = lambda t, st, first: ("ok (3 card products)", 200)
+    engine._run_target(t, {})
+    assert st.get("last_found_at")

@@ -633,8 +633,9 @@ class Engine:
             self._clock_ticks()
             try:
                 self.recap_tick()
+                self.health_tick()
             except Exception as e:
-                log.warning("recap: %s", e)
+                log.warning("recap / health: %s", e)
             try:
                 self.price_list_tick()
             except Exception as e:
@@ -667,6 +668,12 @@ class Engine:
             self.notify.set_channel(None)
         st["initialized"] = True
         st["health"] = health
+        st.setdefault("since", time.time())
+        if health.startswith("ok"):           # for the daily health check: working vs actually finding something
+            st["last_ok_at"] = time.time()
+            m = re.match(r"ok \((\d+)", health)
+            if not m or int(m.group(1)) > 0:
+                st["last_found_at"] = time.time()
         now = datetime.now(CT)
         with self._lock:
             self.health[t["name"]] = {"health": health, "code": code, "at": now.isoformat(),
@@ -1589,7 +1596,8 @@ class Engine:
                   "• `value prismatic etb` → what it sells for on eBay right now · `resale` → is eBay answering\n"
                   "• `prices` → the 💸 daily price list (🔥 sets + @everyone products) · `prices refresh` → update now\n"
                   "• `watch tcin 94681234` or paste a Target link → that exact Target product ID, checked every ~90 s: "
-                  "@everyone when it gets LOADED, a DRAWING is set up, or it's IN STOCK · `unwatch tcin 94681234`")
+                  "@everyone when it gets LOADED, a DRAWING is set up, or it's IN STOCK · `unwatch tcin 94681234`\n"
+                  "• `health` → the 🩺 health check: every source ✅ / 🟡 / ❌ and when it last worked")
 
     # ---------------------------------------------------------------- ❌ on a post = never show it (or its twins)
     def _blocklist(self):
@@ -1762,6 +1770,15 @@ class Engine:
                 return ["Not watching anything yet. Try `watch prismatic bundle` or `watch tcin 94681234`."]
             return ["**Watching** (@everyone in this channel when any store has a match):\n" +
                     "\n".join(f"`{i}` {q}" for i, q in enumerate(terms, 1))]
+        if low in ("health", "health check", "status check"):
+            title, desc = self.render_health()
+            out, cur = [], f"**{title}**"
+            for ln in desc.split("\n"):
+                if len(cur) + len(ln) > 1900:
+                    out.append(cur)
+                    cur = ""
+                cur += "\n" + ln
+            return out + [cur]
         if low in ("check focus", "focus", "check focus list", "focus check"):
             return self.focus_report()
         if low in ("kept", "keepers", "liked"):
@@ -2159,7 +2176,11 @@ class Engine:
 
         # calendar changes don't post one by one: the whole #topps-calendar board is re-posted fresh at the
         # bottom with @everyone and a one-line list of what changed. Drop alerts (live / 15 min / open) go to #topps.
-        changes = []
+        # 1.0.62: only a product Topps has NEVER listed before counts as new (one that drops off the page for a
+        # check and comes back is not new). New products = fresh board + @everyone; every other change (status,
+        # time, removed) just edits the board in place, quietly.
+        ever = set(st.get("ever") or []) | set(known)
+        changes, added = [], []
         for p in products:
             d = datetime.fromisoformat(p["when"]) if p["when"] else None
             fields = {"When (CT)": self._when_text(p), "Store": "Topps", "Sport": p["sport"], "Status": p["status"]}
@@ -2169,7 +2190,8 @@ class Engine:
             if first:
                 continue
             if old is None:
-                changes.append(f"🆕 added **{p['name']}** · {self._when_text(p)}")
+                if p["slug"] not in ever:
+                    added.append(f"🆕 added **{p['name']}** · {self._when_text(p)}")
                 continue
             if p["status"] != old.get("status"):
                 if p["status"] in LIVE_STATUSES:
@@ -2187,8 +2209,11 @@ class Engine:
                                    f"{self._when_text(p)}")
         gone = [v.get("name", k) for k, v in known.items() if k not in {p["slug"] for p in products}] if not first else []
         changes += [f"➖ removed **{n}**" for n in gone[:5]]
-        if changes:
-            self._post_topps_calendar(changes, t)
+        st["ever"] = list(ever | {p["slug"] for p in products})[-1500:]
+        if added:
+            self._post_topps_calendar(added + changes, t)
+        elif changes:
+            self._quiet_topps_calendar(changes, t)
 
         # heads-up before each timed drop, and again the minute it opens - both link straight to the page
         lead = int(t.get("remind_minutes_before", 15))
@@ -2228,6 +2253,15 @@ class Engine:
         else:   # no #topps-calendar webhook: one message with the changes to #topps / main instead
             self.notify.send("urgent", "📅 Topps calendar updated", t["url"], desc="\n".join(changes)[:3900],
                              channel=["topps", "main"], ping=True, record=False)
+
+    def _quiet_topps_calendar(self, changes, t):
+        """Status / time / removed changes: the board is edited where it is - no new post, no ping."""
+        for c in changes:
+            self._record_alert({"level": "normal", "title": "Topps calendar: " + re.sub(r"\*\*", "", c), "url": t["url"],
+                                "fields": {}, "desc": "", "image": "", "links": [], "channel": "topps_calendar",
+                                "at": datetime.now(timezone.utc).isoformat()})
+        if self.topps_board.hook().startswith("http"):
+            self.topps_board.tick(self._render_topps_board, force=True)
 
     def check_topps_products(self, t, st, first):
         """Open each calendar product's Topps page and track every format on it (Hobby, Mega, Blaster...).
@@ -2733,6 +2767,71 @@ class Engine:
         title, desc = out[-1]
         out[-1] = (title, desc + foot)
         return out
+    # ------------------------------------------------------------ daily health check (1.0.62)
+    HEALTH_NOTHING_HOURS = 24      # a source that loads but hasn't found a single product for this long gets 🟡
+
+    def health_tick(self):
+        """Once a day (Settings health_hour, 9 AM CT by default): one report card in #app-status."""
+        hour = int(settings_mod.load().get("health_hour", 9))
+        now = datetime.now(CT)
+        if hour < 0 or now.hour < hour or self.state.get("health_day") == now.date().isoformat():
+            return
+        if not self.first_pass_done:
+            return
+        self.state["health_day"] = now.date().isoformat()
+        title, desc = self.render_health(now)
+        self.notify.send("system", title, desc=desc, channel="status")
+
+    def render_health(self, now=None):
+        """Every source and feature: ✅ working and finding things · 🟡 loads but finds nothing · ❌ failing,
+        with the last time each one actually worked."""
+        now = now or datetime.now(CT)
+        t_now = time.time()
+        ago = lambda ts: (self._dur(timedelta(seconds=t_now - ts)) + " ago") if ts else "never"
+        tstate = self.state.get("targets", {})
+        bad, quiet, good = [], [], []
+        for t in self.targets():
+            st = tstate.get(t["name"], {})
+            h = st.get("health", "")
+            if not h:
+                continue
+            if h.split(" ")[0].rstrip(":") in ("blocked", "error", "empty"):
+                since = st.get("bad_since")
+                bad.append(f"❌ **{t['name']}** · {h[:90]} · failing for {self._dur(timedelta(seconds=t_now - since)) if since else '?'}"
+                           f" · last worked {ago(st.get('last_ok_at'))}")
+                continue
+            found = st.get("last_found_at")
+            running = t_now - st.get("since", t_now)
+            if (found and t_now - found > self.HEALTH_NOTHING_HOURS * 3600) or (
+                    not found and running > self.HEALTH_NOTHING_HOURS * 3600):
+                quiet.append(f"🟡 **{t['name']}** · page loads but nothing found · last found something {ago(found)}")
+            else:
+                good.append(t["name"])
+        total = len(bad) + len(quiet) + len(good)
+        lines = [f"**{len(good)} of {total} sources working** · {len(quiet)} finding nothing · {len(bad)} failing"]
+        if bad:
+            lines += ["", "**Needs a look**"] + bad
+        if quiet:
+            lines += ["", "**Loads, but finds nothing** (fine for a quiet store; days in a row = the page changed)"] + quiet
+        if good:
+            lines += ["", "✅ " + " · ".join(good)]
+        items = self.price_list_items()
+        cells = [self._price_cell(self.resale.key(q), None) for *_, q, _ in items]
+        n_priced = sum(1 for c in cells if c.startswith("**"))
+        qt = next((t for t in self.targets() if t.get("track_duration") and "pokemoncenter" in t.get("url", "")), None)
+        qst = tstate.get(qt["name"], {}) if qt else {}
+        day_ago = t_now - 86400
+        n_alerts = sum(1 for a in self.state.get("alerts", [])
+                       if datetime.fromisoformat(a["at"]).timestamp() >= day_ago and a.get("level") == "urgent")
+        lines += ["", "**Features**",
+                  f"🎟️ Pokémon Center queue check: {qst.get('health') or 'not run'} · last good check {ago(qst.get('last_ok_at'))}"
+                  + (f" · ⚠️ blocked {qst.get('blocked_streak')} in a row" if qst.get("blocked_streak") else ""),
+                  self.stock_health(), self.topps_fast_health(), self.resale.health(),
+                  f"💸 Price list: {n_priced} of {len(cells)} priced · last run {self.state.get('price_list_day') or 'never'}",
+                  f"🤖 Discord bot: {getattr(self.bot, 'state', '') or 'not started'}",
+                  f"📣 Alerts in the last 24 h: {n_alerts}"]
+        return f"🩺 Daily health check · {now:%a %b} {now.day}", "\n".join(lines)[:4000]
+
     def recap_tick(self):
         """Once a day (Settings recap_hour, 9 PM CT by default): what dropped today, how fast it sold out, by store."""
         hour = int(settings_mod.load().get("recap_hour", 21))
@@ -2782,13 +2881,19 @@ class Engine:
             return
         events = self.state.get("events", {})
         now = datetime.now(CT)
-        if self.state.get("cal_announced") is None:          # first run: everything already known is baseline
-            self.state["cal_announced"] = list(events)
-        ann = set(self.state["cal_announced"])
-        added = [ev for uid, ev in events.items()
-                 if uid not in ann and datetime.fromisoformat(ev["start"]) > now - timedelta(hours=1)]
-        ann |= set(events)
-        self.state["cal_announced"] = list(ann)[-3000:]
+        # 1.0.62: "new" = a product link the calendar has never had (a date that moves, or an entry that drops off
+        # and comes back, is not new). New -> fresh board at the bottom; anything else edits the board in place.
+        seen = self.state.get("cal_seen_urls")
+        if seen is None:                                      # first run / upgrade: everything known is baseline
+            seen = {ev["url"]: time.time() for ev in events.values()}
+        added = []
+        for ev in events.values():
+            if ev["url"] not in seen and datetime.fromisoformat(ev["start"]) > now - timedelta(hours=1):
+                added.append(ev)
+            seen[ev["url"]] = time.time()
+        cutoff = time.time() - 60 * 86400                     # forget links not on the calendar for 60 days
+        self.state["cal_seen_urls"] = {u: ts for u, ts in seen.items() if ts > cutoff}
+        self.state.pop("cal_announced", None)
         if added:
             # no separate "added" messages: the whole calendar is re-posted fresh at the bottom of #drop-calendar
             what = "\n".join(f"• {self.KIND_ICON.get(e.get('kind'), '⚡')} {e['title'][:120]}" for e in added[:10])
@@ -2826,9 +2931,12 @@ class Engine:
                     board.tick(render, force=True, repost=True)
                 except Exception as e:
                     log.warning("board %s: %s", board.channel, e)
+        calendars = (self.cal_board, self.topps_board)
         for board, render in self._all_boards():
             try:
-                board.tick(render, force=repost, repost=repost)
+                # calendars move to the bottom of their channel ONLY when a new drop is added (1.0.62): a launch,
+                # an update or "Sync all channels" just brings them up to date where they are
+                board.tick(render, force=repost, repost=repost and board not in calendars)
             except Exception as e:
                 log.warning("board %s: %s", board.channel, e)
 
