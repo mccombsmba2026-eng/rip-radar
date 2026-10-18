@@ -4,6 +4,7 @@ Read-only lookups, a handful per scan - nothing is added to a cart."""
 import json
 import logging
 import re
+import time
 
 log = logging.getLogger("rip_radar")
 
@@ -81,13 +82,53 @@ def parse_target_fulfillment(*payloads):
 
 LAST_ERROR = {"text": ""}           # why the last Target stock request failed (shown in look-up replies / Sources)
 
+# Target's bot protection (PerimeterX: HTTP 435 + a captcha script) flags a home connection that asks too often.
+# Every Target stock request goes through this guard: an hourly cap shared by every feature, and a pause (2 h, then
+# longer) the moment Target pushes back. The app never tries to get past the check - it waits it out.
+GUARD = {"pause_until": 0, "pauses": 0, "recent": [], "per_hour": 60}
 
-def target_stock(session, tcin, zip_code="", key="", timeout=15, miles=30, stores_only=False, browser_json=None):
+
+def target_paused():
+    return time.time() < GUARD["pause_until"]
+
+
+def _guard_ok(cost=1, urgent=False):
+    now = time.time()
+    if target_paused():
+        LAST_ERROR["text"] = (f"paused - Target's bot check blocked stock requests; trying again at "
+                              f"{time.strftime('%I:%M %p', time.localtime(GUARD['pause_until'])).lstrip('0')}")
+        return False
+    GUARD["recent"] = [t for t in GUARD["recent"] if now - t < 3600]
+    if not urgent and len(GUARD["recent"]) + cost > GUARD["per_hour"]:
+        LAST_ERROR["text"] = f"hourly limit reached ({GUARD['per_hour']} Target stock requests/hour) - waiting"
+        return False
+    GUARD["recent"].extend([now] * cost)
+    return True
+
+
+def _blocked_answer(status, text):
+    t = (text or "")[:600].lower()
+    return status in (403, 429, 435) or "px-cdn" in t or "perimeterx" in t or "captcha" in t
+
+
+def _trip(status, text):
+    GUARD["pauses"] += 1
+    hours = min(8, 2 * GUARD["pauses"])
+    GUARD["pause_until"] = time.time() + hours * 3600
+    LAST_ERROR["text"] = (f"Target's bot check (HTTP {status}) blocked stock requests - paused {hours} h, until "
+                          f"{time.strftime('%I:%M %p', time.localtime(GUARD['pause_until'])).lstrip('0')}")
+    log.info("Target stock: %s", LAST_ERROR["text"])
+
+
+def target_stock(session, tcin, zip_code="", key="", timeout=15, miles=30, stores_only=False, browser_json=None,
+                 urgent=False):
     """Exact counts for one Target item: shipping + nearby stores. None if Target didn't answer.
     browser_json(url) -> (status, text): asks from inside a hidden browser on target.com - with Target's own cookies,
     visitor id and current key, exactly like Target's product page does. Plain HTTP is only the fallback."""
     key = key or TARGET_KEY
     got = []
+    if not _guard_ok(cost=1 if (stores_only or not zip_code) else 2, urgent=urgent):
+        return None
     tries = [] if stores_only else [(f"{REDSKY}/product_fulfillment_v1",
                                      {"key": key, "tcin": tcin, "zip": zip_code, "channel": "WEB", "is_bot": "false",
                                       "page": f"/p/A-{tcin}"})]
@@ -102,6 +143,9 @@ def target_stock(session, tcin, zip_code="", key="", timeout=15, miles=30, store
                 status, text = browser_json(url + "?" + urlencode(params))
                 if status and status < 400 and text.strip().startswith("{"):
                     got.append(json.loads(text))
+                elif _blocked_answer(status, text):
+                    _trip(status, text)
+                    return None
                 else:
                     LAST_ERROR["text"] = f"{url.rsplit('/', 1)[-1]}: HTTP {status} {text[:120]!r}"
                     log.info("Target stock (browser) %s", LAST_ERROR["text"])
@@ -109,6 +153,8 @@ def target_stock(session, tcin, zip_code="", key="", timeout=15, miles=30, store
                 LAST_ERROR["text"] = f"browser: {type(e).__name__}: {e}"[:200]
                 log.info("Target stock (browser) %s: %s", tcin, e)
         if got:
+            if GUARD["pauses"] and time.time() - GUARD["pause_until"] > 6 * 3600:
+                GUARD["pauses"] = 0                     # quiet for 6 h after a pause: forgive it
             return parse_target_fulfillment(*got)
     for url, params in tries:
         try:
@@ -117,6 +163,9 @@ def target_stock(session, tcin, zip_code="", key="", timeout=15, miles=30, store
                                      "Referer": f"https://www.target.com/p/-/A-{tcin}"})
             if r.status_code < 400:
                 got.append(r.json())
+            elif _blocked_answer(r.status_code, r.text):
+                _trip(r.status_code, r.text)
+                return None
             else:
                 LAST_ERROR["text"] = f"{url.rsplit('/', 1)[-1]}: HTTP {r.status_code} {r.text[:120]!r}"
                 log.info("Target stock %s", LAST_ERROR["text"])
@@ -184,6 +233,8 @@ def target_pdp(tcin, browser_json=None, session=None, key="", store_id="3991", t
               "include_obsolete": "true", "skip_personalized": "true", "skip_variation_hierarchy": "true",
               "channel": "WEB", "page": f"/p/A-{tcin}"}
     url = f"{REDSKY}/pdp_client_v1?" + urlencode(params)
+    if not _guard_ok(cost=1):
+        return 0, None
     try:
         if browser_json:
             status, text = browser_json(url)
@@ -193,6 +244,9 @@ def target_pdp(tcin, browser_json=None, session=None, key="", store_id="3991", t
             status, text = r.status_code, r.text
     except Exception as e:
         LAST_ERROR["text"] = f"pdp: {type(e).__name__}: {e}"[:200]
+        return 0, None
+    if _blocked_answer(status, text) and not (text or "").strip().startswith("{"):
+        _trip(status, text)
         return 0, None
     try:
         return status, json.loads(text) if text and text.strip().startswith("{") else None

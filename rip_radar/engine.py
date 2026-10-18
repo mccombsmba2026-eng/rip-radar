@@ -116,6 +116,15 @@ class Engine:
                            restart=self.request_restart)
         self.started = datetime.now(CT)
         self.TOPPS_FAST = {"state": "starting", "fails": 0}
+        if not self.state.get("resale_off_1061"):
+            # M (10/18): per-product eBay lookups = hundreds a day = eBay blocks. Only the daily price list + `value`.
+            self.state["resale_off_1061"] = True
+            try:
+                settings_mod.update({"resale_check": False})
+            except Exception as e:
+                log.warning("resale default: %s", e)
+        from .stock import GUARD
+        GUARD.update({k: v for k, v in (self.state.get("target_guard") or {}).items() if k in ("pause_until", "pauses")})
         self.restart_hook = None              # set by the app: restart Rip Radar (Discord `restart`, queue self-heal)
         self.last_scan = None
         self.health = {}           # name -> {"health","code","at","type","url"}
@@ -258,7 +267,7 @@ class Engine:
                     out.append((pid, r))
         return out
 
-    def target_tripwire_tick(self, every=90, per_hour=120):
+    def target_tripwire_tick(self, every=300, per_hour=24):
         """A tiny stock check (one small request, no page load) on each hot Target item every ~90 s. When one flips
         to in stock, Target's search pages are re-scanned right away - the normal pipeline does the ping."""
         if settings_mod.load().get("paused"):
@@ -1301,7 +1310,7 @@ class Engine:
                 status)
 
     # ------------------------------------------------------------ stock counts
-    def _refresh_target_stock(self, html, changed, st, per_run=14, every=600):
+    def _refresh_target_stock(self, html, changed, st, per_run=4, every=3600, hot_every=900):
         """Exact counts from Target's stock service: online + stores near your ZIP. Just-changed items first."""
         key = target_key_in(html)
         if key:
@@ -1314,10 +1323,15 @@ class Engine:
             return
         now = time.time()
         # every card product, including ones sold out online: stores can have them when the website doesn't
-        todo = sorted(changed, key=lambda c: (not c[2], c[1].get("stock_at", 0)))
+        from .stock import target_paused
+        if target_paused():
+            return                                  # Target pushed back: wait the pause out (stock.GUARD)
+        hot = lambda r: bool(is_etb_or_upc(r.get("name", "")) or r.get("focus") or self._focus(r.get("name", ""))["ping"])
+        todo = sorted(changed, key=lambda c: (not c[2], not hot(c[1]), c[1].get("stock_at", 0)))
         n = 0
         for x, rec, event, _ in todo:
-            if n >= per_run or (not event and now - rec.get("stock_at", 0) < every):
+            wait = hot_every if hot(rec) else every
+            if n >= per_run or (not event and now - rec.get("stock_at", 0) < wait):
                 continue
             n += 1
             info = target_stock(session, x["id"], zip_code, self.state.get("target_key", ""), miles=miles,
@@ -1361,7 +1375,9 @@ class Engine:
 
     def stock_health(self):
         """One real Target store-count request, so the startup message says whether Mat local / look-ups work."""
-        from .stock import LAST_ERROR
+        from .stock import LAST_ERROR, target_paused
+        if target_paused():
+            return f"🏬 Target store counts: ⏸️ {LAST_ERROR.get('text')}"[:300]
         pid = next((pid for t in self.targets() if t.get("store") == "target"
                     for pid in (self.state.get("targets", {}).get(t["name"], {}).get("items") or {})), None)
         if not pid:
@@ -1373,7 +1389,7 @@ class Engine:
             return f"🏬 Target store counts: ✅ working ({len(info['stores'])} stores near {zip_code})"
         return f"🏬 Target store counts: ❌ not working · {LAST_ERROR.get('text') or 'no stores returned'}"[:300]
 
-    def zip_lookup(self, zip_code, miles=30, max_products=60):
+    def zip_lookup(self, zip_code, miles=30, max_products=20):
         """In store look up: every Target card product we know of, at every Target within `miles` of any ZIP.
         -> Discord messages (each under 2000 characters), stores nearest first, only products they have."""
         items = {}
@@ -1391,8 +1407,8 @@ class Engine:
         stores, dist, answered = {}, {}, 0
         for pid in order:
             info = target_stock(session, pid, zip_code, self.state.get("target_key", ""), miles=miles, stores_only=True,
-                                browser_json=self.stock_json)
-            time.sleep(0.25)
+                                browser_json=self.stock_json, urgent=True)
+            time.sleep(1.5)
             if not info:
                 continue
             answered += 1
@@ -2609,7 +2625,7 @@ class Engine:
                     hit = self.resale.cache.get(self.resale.key(q)) or {}
                     if hit.get("ok") is False and time.time() - hit.get("at", 0) > 1800:
                         self.resale.cache.pop(self.resale.key(q), None)
-                        self.resale.lookup(q, priority=1)
+                        self.resale.lookup(q, priority=1, force=True)
             if getattr(self, "_prices_dirty", False):         # a late answer: edit today's list
                 self._prices_dirty = False
                 self.prices_board.tick(self._render_prices, force=True)
@@ -2619,7 +2635,7 @@ class Engine:
         for *_, q, _ in self.price_list_items():
             k = self.resale.key(q)
             self.resale.cache.pop(k, None)
-            self.resale.lookup(q, priority=1)       # ahead of background valuing, behind live drops
+            self.resale.lookup(q, priority=1, force=True)       # ahead of background valuing, behind live drops
             if k not in pending:
                 pending.append(k)
         self.state["price_refresh"] = {"pending": pending, "started": time.time(), "reason": reason}
@@ -3054,6 +3070,8 @@ class Engine:
             return {"targets": {}, "events": {}, "alerts": []}
 
     def _save_state(self):
+        from .stock import GUARD
+        self.state["target_guard"] = {"pause_until": GUARD["pause_until"], "pauses": GUARD["pauses"]}
         data = None
         for _ in range(5):            # the queue / card threads may be changing a dict this instant: retry
             try:

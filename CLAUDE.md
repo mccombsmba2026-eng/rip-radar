@@ -210,6 +210,15 @@ captchas, and never automates purchases. Keep it that way.
   #presales copies ping once). Product cards (stores + Topps) post quietly; the engine sends the #watch copy.
   `_watch_alerts` posts count as that item's ping (and skip if it already pinged). Exceptions (`everyone_ok=True`):
   the queue-live alerts (Pokémon Center / Crunchyroll) and the Topps calendar re-post (LiveBoard content).
+- 1.0.61 (M's 10/18 startup message: "Target store counts ❌ fiats_v1 HTTP 435 PerimeterX captcha" and "Resale 0 priced
+  of 2, 25 failed"): TARGET GUARD in stock.py (`GUARD`, `_guard_ok`, `_trip`): every Target stock / pdp request shares
+  ≤60/h; a block (403/429/435 or px-cdn / captcha text) pauses ALL Target stock requests 2 h (4, 6, 8 h on repeats;
+  forgiven after 6 quiet h), persisted in `state["target_guard"]`. `_refresh_target_stock` 4/run, hot items
+  (ETB/UPC/focus) every 15 min, the rest hourly; tripwire every 5 min ≤24/h; ZIP look-up ≤20 products, 1.5 s apart,
+  `urgent=True` (skips the hourly cap, never the pause). EBAY: per-product lookups OFF (one-time migration
+  `resale_off_1061` sets resale_check False); the price list still runs (`lookup(force=True)`); price-list pace
+  `LIST_PACE` 45 s; an eBay bot-check page pauses all lookups 1 h (`stats["paused_until"]`); health ❌ when failures
+  outnumber answers, ⏸️ while paused. Never solve / click through either check - wait it out.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

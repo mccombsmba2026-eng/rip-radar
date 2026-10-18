@@ -121,6 +121,7 @@ def summarize(prices):
 
 class ResaleChecker:
     FAIL_TTL = 1800          # a failed lookup is retried after 30 min (not cached for a day)
+    LIST_PACE = 45           # the daily price list: one eBay search every ~45 s
 
     def __init__(self, state, get_settings, pace=15, ttl_hours=24, on_result=None, browser_fetch=None):
         self.state, self.get_settings, self.pace, self.ttl = state, get_settings, pace, ttl_hours * 3600
@@ -141,9 +142,10 @@ class ResaleChecker:
     def enabled(self):
         return self.get_settings().get("resale_check", True)
 
-    def lookup(self, name, urgent=False, priority=None):
-        """Cached result (or None) - and queue a fresh search when there isn't one."""
-        if not self.enabled() or not name:
+    def lookup(self, name, urgent=False, priority=None, force=False):
+        """Cached result (or None) - and queue a fresh search when there isn't one. force: the daily price list
+        (runs even with per-product lookups switched off)."""
+        if (not self.enabled() and not force) or not name:
             return None
         q = clean_query(name)
         key = q.lower()
@@ -177,8 +179,12 @@ class ResaleChecker:
         self._thread = threading.Thread(target=self._run, daemon=True, name="resale")
         self._thread.start()
 
+    BLOCK_PAUSE = 3600          # eBay showed a bot check: no lookups for an hour (retrying straight away makes it worse)
+
     def _run(self):
         while True:
+            while time.time() < self.stats.get("paused_until", 0):
+                time.sleep(30)
             pri, _, q = self.q.get()
             key = q.lower()
             fresh = self.cache.get(key)
@@ -201,7 +207,7 @@ class ResaleChecker:
             except Exception as e:
                 log.info("resale callback: %s", e)
             if pri:                                   # live drops (priority 0) go one after another, no pause
-                time.sleep(self.pace if pri >= 2 else 6)   # the price list (1) moves faster than background (2)
+                time.sleep(self.pace if pri >= 2 else self.LIST_PACE)   # spread out so it doesn't look like a bot
 
     @staticmethod
     def key(name):
@@ -221,6 +227,8 @@ class ResaleChecker:
                 if html and ("pardon our interruption" in low or "/splashui/captcha" in low
                              or "verify yourself" in low):
                     self.stats["last_page"] = "eBay showed a bot check"
+                    self.stats["paused_until"] = time.time() + self.BLOCK_PAUSE
+                    log.info("resale: eBay bot check - pausing eBay lookups for %d min", self.BLOCK_PAUSE // 60)
                     return 403, html, "browser"
                 if html and (any(k in html for k in ("s-item", "s-card", "srp-results")) or RE_ITM.search(html)
                              or "no exact matches found" in low or "results for" in low):
@@ -255,10 +263,12 @@ class ResaleChecker:
     def health(self):
         """One line for the startup message / status: is eBay answering?"""
         st = self.stats
-        if not self.enabled():
-            return "💸 Resale values: off (Settings)"
-        if st["fail_streak"] >= 5 and not st["ok"]:
-            return f"💸 Resale values: ❌ eBay is turning lookups away ({st['last_error']}) - retrying every 30 min"
+        if time.time() < st.get("paused_until", 0):
+            return (f"💸 Resale values: ⏸️ eBay showed a bot check - lookups paused until "
+                    f"{time.strftime('%I:%M %p', time.localtime(st['paused_until'])).lstrip('0')}")
+        if st["fail"] >= 5 and st["fail"] > st["ok"]:
+            return (f"💸 Resale values: ❌ eBay is turning lookups away ({st['fail']} failed, {st['ok']} answered · "
+                    f"{st.get('last_page') or st['last_error']})")
         if st["ok"]:
             return (f"💸 Resale values: ✅ working ({st['priced']} priced of {st['ok']} looked up since launch"
                     f"{', ' + str(st['fail']) + ' failed' if st['fail'] else ''})")

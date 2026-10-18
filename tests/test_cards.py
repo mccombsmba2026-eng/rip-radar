@@ -592,7 +592,7 @@ def test_deal_verdicts():
 
 
 def test_live_drop_value_is_edited_into_the_post(engine):
-    settings.update({"webhooks": {"target": "https://t"}})
+    settings.update({"webhooks": {"target": "https://t"}, "resale_check": True})   # (off by default since 1.0.61)
     posted = []
     engine.cards.request = lambda store, pid, rec, bump=False, ping=False, headline="": posted.append(
         (pid, bump, rec.get("resale", "")))
@@ -978,7 +978,9 @@ def test_resale_failure_is_retried_soon_and_reported():
     rc.s = type("S", (), {"get": lambda self, url, **kw: type("R", (), {"status_code": 403, "text": ""})()})()
     for _ in range(5):
         res = rc.check("Pokémon Prismatic Evolutions Booster Bundle")
-    assert res["ok"] is False and "❌" in rc.health() and "403" in rc.health()
+    assert res["ok"] is False and "⏸️" in rc.health() and rc.stats["paused_until"] > 0   # bot check = pause
+    rc.stats["paused_until"] = 0
+    assert "❌" in rc.health()
     key = rc.key("Pokémon Prismatic Evolutions Booster Bundle")
     rc.cache[key] = {"at": time.time() - 3600, "q": "x", "ok": False}       # an hour-old failure
     rc._start = lambda: None
@@ -1014,7 +1016,7 @@ def test_price_list(engine, monkeypatch):
     assert labels == {("pokemon", "Prismatic Evolutions"), ("sports", "2025-26 Topps Chrome"),
                       ("sports", "2025-26 NBA Hoops")}                   # Hoops once, Cooper Flagg (a name) left out
     queued = []
-    monkeypatch.setattr(engine.resale, "lookup", lambda q, urgent=False, priority=None: queued.append((q, priority)))
+    monkeypatch.setattr(engine.resale, "lookup", lambda q, urgent=False, priority=None, **kw: queued.append((q, priority)))
     assert engine.price_list_tick(force=True) == len(items) and all(p == 1 for _, p in queued)
     etb = engine.resale.key("Pokemon Prismatic Evolutions Elite Trainer Box")
     yday = (datetime.now(CT) - timedelta(days=1)).date().isoformat()
@@ -1030,7 +1032,7 @@ def test_price_list_posts_fresh_message_when_done(engine, monkeypatch):
     from rip_radar import settings as settings_mod
     s = dict(settings_mod.load(), focus_sets=["Prismatic Evolutions"], everyone_products=[])
     monkeypatch.setattr(settings_mod, "load", lambda: s)
-    monkeypatch.setattr(engine.resale, "lookup", lambda q, urgent=False, priority=None: None)
+    monkeypatch.setattr(engine.resale, "lookup", lambda q, urgent=False, priority=None, **kw: None)
     posts = []
     monkeypatch.setattr(engine.prices_board, "tick", lambda render, force=False, repost=False, content=None:
                         posts.append(content))
@@ -1174,3 +1176,26 @@ def test_everyone_only_in_watch(monkeypatch):
     n.send("urgent", "🚨 POKÉMON CENTER QUEUE IS LIVE", "https://www.pokemoncenter.com/", channel="walmart",
            ping=True, everyone_ok=True)
     assert posted[-1] == ("https://discord.com/api/webhooks/1/w", "@everyone")    # queue alerts keep their ping
+
+
+def test_target_bot_check_pauses_all_stock_requests():
+    from rip_radar import stock
+    saved = dict(stock.GUARD, recent=list(stock.GUARD["recent"]))
+    try:
+        stock.GUARD.update(pause_until=0, pauses=0, recent=[])
+        calls = []
+        px = '{"appId":"PXGWPp4wUS","blockScript":"https://captcha.px-cdn.net/PXGWPp4wUS/captcha.js"}'
+        bj = lambda url: calls.append(url) or (435, px)
+        assert stock.target_stock(None, "12345678", "77007", browser_json=bj) is None
+        assert stock.target_paused() and "paused 2 h" in stock.LAST_ERROR["text"]
+        n = len(calls)
+        assert stock.target_stock(None, "12345678", "77007", browser_json=bj) is None and len(calls) == n  # no asking
+        stock.GUARD.update(pause_until=0, recent=[])
+        stock.GUARD["per_hour"] = 2
+        ok = lambda url: (200, '{"data": {}}')
+        stock.target_stock(None, "1", "77007", browser_json=ok)                     # 2 requests: at the cap
+        assert stock.target_stock(None, "2", "77007", browser_json=ok) is None       # hourly cap holds
+        assert "hourly limit" in stock.LAST_ERROR["text"]
+    finally:
+        stock.GUARD.clear()
+        stock.GUARD.update(saved)
