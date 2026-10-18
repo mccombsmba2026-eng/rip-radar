@@ -485,3 +485,18 @@ def test_dropradar_archive(engine):
     w = titles["📰 TCG Drop Radar: Walmart drawing Oct 21 at 5pm ET — Delta Reign Elite Trainer Box"]
     assert w[2]["channel"] == ["walmart", "pokemon"] and w[2]["copy_to"] == ["drawings"] and w[2]["ping"] is True
     assert len(calls) == 2                                               # the pulls article is skipped
+
+
+def test_phone_alarm_only_for_queue(engine, monkeypatch):
+    from rip_radar import notify
+    posts = []
+    monkeypatch.setattr(notify.requests, "post", lambda url, **kw: posts.append((url, kw)) or type(
+        "R", (), {"status_code": 200, "json": lambda self: {"id": "1"}, "text": ""})())
+    settings.update({"ntfy_topic": "rr-test", "twilio": {"account_sid": "AC1", "auth_token": "t", "from": "+1", "to": "+2"}})
+    n = notify.Notifier(settings.load)
+    n.send("urgent", "IN STOCK: ETB", "https://x")
+    assert not [u for u, _ in posts if "ntfy" in u or "twilio" in u]          # a normal drop: no text, no alarm
+    n.send("urgent", "🚨 POKÉMON CENTER QUEUE IS LIVE", "https://www.pokemoncenter.com/", alarm=True)
+    ntfy = [kw for u, kw in posts if "ntfy.sh/rr-test" in u]
+    sms = [kw for u, kw in posts if "api.twilio.com" in u]
+    assert ntfy and ntfy[0]["headers"]["Priority"] == "max" and sms and "QUEUE IS LIVE" in sms[0]["data"]["Body"]

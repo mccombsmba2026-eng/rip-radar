@@ -260,6 +260,11 @@ captchas, and never automates purchases. Keep it that way.
   New post with drop words (`RE_DROP_POST`) -> `_dropradar_post`: "Pokémon Center … queue" = second opinion on our
   queue check -> #pokemon-queue, @everyone (#watch) only if our checker hasn't seen a queue in the last hour; drawing /
   raffle / invite -> store channel + #drawings (@everyone for ETB/UPC); restock / loaded -> store channel. Articles skipped.
+- 1.0.68 PHONE ALARM FOR THE QUEUE: `Notifier.send(alarm=True)` = also a Twilio text and a ntfy push (Priority max,
+  "🚨 QUEUE IS UP"). Only the Pokémon Center queue going live (`_track_queue`), the TCG Drop Radar queue post when our
+  checker missed it, and Sources → "Test queue alert" are alarms. Settings `sms_for` / `ntfy_for` default ["queue"]
+  (= alarms only; "urgent" / "all" widen it); one-time migration `alarm_1068` turns an old ["urgent"] sms_for into
+  ["queue"]. `notify.last_sms_error` keeps Twilio's last refusal.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

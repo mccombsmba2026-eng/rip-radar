@@ -289,7 +289,7 @@ details summary{cursor:pointer;font-weight:600}
 
       <details>
         <summary>Text messages (Twilio)</summary>
-        <p class="hint">Optional. Urgent alerts also arrive by SMS. Needs a Twilio account and number (about $1–2 a month plus under 1¢ per text).</p>
+        <p class="hint">Optional. A text the moment the Pokémon Center queue goes live (only that - no other alerts). Needs a Twilio account and number (about $1–2 a month plus under 1¢ per text; Twilio must verify the number before texts go through). Sources → "Test queue alert" sends a test text.</p>
         <div class="two">
           <label>Account SID <input type="text" id="sTwSid"></label>
           <label>Auth token <input type="password" id="sTwTok"></label>
@@ -314,7 +314,7 @@ details summary{cursor:pointer;font-weight:600}
       <p class="hint">Target posts show exact stock at the stores in this area, and the in-store restock tracker pings when one of them gets a card product.</p>
       <details>
         <summary>ntfy push (free)</summary>
-        <p class="hint">Optional. Install the ntfy app, subscribe to a long random topic name, and enter the same name here.</p>
+        <p class="hint">Free. A loud phone alarm the moment the Pokémon Center queue goes live (only that). Install the ntfy app, subscribe to a long random topic name, and enter the same name here. Sources → "Test queue alert" sends a test.</p>
         <label>Topic <input type="text" id="sNtfy"></label>
       </details>
       <div class="row"><button class="btn primary" id="sSave">Save settings</button><span class="msg" id="sSaveMsg" role="status"></span></div>

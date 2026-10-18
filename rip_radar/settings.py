@@ -14,7 +14,8 @@ DEFAULTS = {
                  "barnes": "", "gamestop": "", "hottopic": "", "watch": "", "presale": "", "prices": "", "instore": "", "drawings": "", "calendar": "", "status": ""},
     "ntfy_topic": "",
     "twilio": {"account_sid": "", "auth_token": "", "from": "", "to": ""},
-    "sms_for": ["urgent"],
+    "sms_for": ["queue"],            # texts: only the Pokémon Center queue going live ("urgent" = every urgent alert)
+    "ntfy_for": ["queue"],           # ntfy phone push: only the queue (loud, max priority); "urgent" / "all" = more
     "bot_token": "",
     # "still running?" bot: what it answers to, what it says, and where it listens (blank = every channel it can see)
     "bot_triggers": ["still running", "running", "status", "you up", "you on", "are you on", "alive"],

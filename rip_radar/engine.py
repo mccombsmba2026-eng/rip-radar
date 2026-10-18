@@ -117,6 +117,15 @@ class Engine:
                            restart=self.request_restart)
         self.started = datetime.now(CT)
         self.TOPPS_FAST = {"state": "starting", "fails": 0}
+        if not self.state.get("alarm_1068"):
+            # texts / ntfy used to fire for every urgent alert: now only the queue going live (M, 10/18)
+            self.state["alarm_1068"] = True
+            try:
+                cur = settings_mod.load()
+                if cur.get("sms_for") == ["urgent"]:
+                    settings_mod.update({"sms_for": ["queue"]})
+            except Exception as e:
+                log.warning("sms default: %s", e)
         if not self.state.get("resale_off_1061"):
             # M (10/18): per-product eBay lookups = hundreds a day = eBay blocks. Only the daily price list + `value`.
             self.state["resale_off_1061"] = True
@@ -956,7 +965,7 @@ class Engine:
         t = next((x for x in self.targets() if x.get("track_duration") and "pokemoncenter" in x.get("url", "")), {"url": "https://www.pokemoncenter.com/",
                                                                             "channel": ["pokemon_queue", "pokemon"]})
         now = datetime.now(CT)
-        return self.notify.send("urgent", "🧪 TEST · 🚨 POKÉMON CENTER QUEUE IS LIVE", t["url"],
+        return self.notify.send("urgent", "🧪 TEST · 🚨 POKÉMON CENTER QUEUE IS LIVE", t["url"], alarm=True, fields=
                                 {"Went up (CT)": self._clock(now), "Detected": "test message"},
                                 desc="This is what you'll get the moment a real queue goes up (with @everyone). "
                                      "Then one message keeps counting how long it's been up, and a last one says when "
@@ -1055,7 +1064,8 @@ class Engine:
             st.pop("session_msg", None)
             self.notify.send("urgent", t.get("alert_title", "🚨 POKÉMON CENTER QUEUE IS LIVE"), t["url"],
                              {"Went up (CT)": self._clock(now), "Detected": detected},
-                             links=[("Join the queue", t["url"])], ping=True, everyone_ok=True)
+                             links=[("Join the queue", t["url"])], ping=True, everyone_ok=True,
+                             alarm=slug == "pokemon-center")
             if settings_mod.load().get("open_browser_on_queue", True):
                 # open the site in M's own Chrome right away, so the line is already up on screen when he
                 # gets to the PC - he joins it himself (the app never enters queues)
@@ -2546,7 +2556,7 @@ class Engine:
                     f"⚠️ our checker has NOT seen it ({qst.get('health') or 'not run yet'}) - open Pokémon Center now")
             self.notify.send("urgent", f"📰 TCG Drop Radar: {title}"[:250], url,
                              {"Our queue check": ours, "Open": "[pokemoncenter.com](https://www.pokemoncenter.com/)"},
-                             channel=["pokemon_queue", "pokemon"], ping=not recent,
+                             channel=["pokemon_queue", "pokemon"], ping=not recent, alarm=not recent,
                              links=[("Open Pokémon Center", "https://www.pokemoncenter.com/")])
             return
         raffle = bool(re.search(r"drawing|raffle|lottery|invite", low))

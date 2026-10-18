@@ -99,12 +99,14 @@ class Notifier:
                          links=links, store=store, product=bool(store), ping=True, record=False, everyone_ok=True)
 
     def send(self, level, title, url="", fields=None, desc="", channel=None, image="", links=None, strict=False,
-             record=True, copy_to=None, store=None, product=False, ping=False, everyone_ok=False):
+             record=True, copy_to=None, store=None, product=False, ping=False, everyone_ok=False, alarm=False):
         """links: [(label, url)] shown as a row of clickable links (Add to cart, Buy now...). image: thumbnail.
         strict: only post if one of the wanted channels has its own webhook (never fall back to main).
         record: also show it in the app's alert list.
         copy_to: extra channels that ALSO get this alert if they have a webhook (e.g. raffles -> #drawings too).
-        ping: @everyone. Only for the Pokémon Center queue, Topps drops/changes, and ETB/UPC drops."""
+        ping: @everyone. Only for the Pokémon Center queue, Topps drops/changes, and ETB/UPC drops.
+        alarm: also a phone alert - text message (Twilio) and/or loud ntfy push. By default ONLY the Pokémon Center
+        queue going live is an alarm (settings sms_for / ntfy_for: ["queue"]; "urgent" / "all" = the old wider modes)."""
         fields = {k: v for k, v in (fields or {}).items() if v}
         links = [(lbl, u) for lbl, u in (links or []) if u]
         channel = channel or getattr(self._local, "channel", None)
@@ -162,15 +164,20 @@ class Notifier:
                 hooks.add(h)
         react = bool(product and url.startswith("http"))       # product posts get ✅ ❌ to tap
         results = [self._post_discord(h, payload, react) for h in hooks if h.startswith("http")]
-        if s.get("ntfy_topic") and level != "system":
+        def wants(key, default):
+            mode = s.get(key, default)
+            mode = [mode] if isinstance(mode, str) else list(mode or [])
+            return alarm or ("all" in mode and level != "system") or (level in mode and level != "system")
+        if s.get("ntfy_topic") and wants("ntfy_for", ["queue"]):
             try:
-                requests.post(f"https://ntfy.sh/{s['ntfy_topic']}", data=title.encode("utf-8"),
-                              headers={"Click": url, "Priority": "urgent" if level == "urgent" else "default"},
-                              timeout=15)
+                requests.post(f"https://ntfy.sh/{s['ntfy_topic']}", data=f"{title}\n{url}".encode("utf-8"),
+                              headers={"Click": url, "Title": "Rip Radar" if not alarm else "🚨 QUEUE IS UP",
+                                       "Priority": "max" if alarm else ("high" if level == "urgent" else "default"),
+                                       "Tags": "rotating_light" if alarm else "bell"}, timeout=15)
             except requests.RequestException as e:
                 log.warning("ntfy failed: %s", e)
         tw = s.get("twilio") or {}
-        if all(tw.get(k) for k in ("account_sid", "auth_token", "from", "to")) and level in s.get("sms_for", []):
+        if all(tw.get(k) for k in ("account_sid", "auth_token", "from", "to")) and wants("sms_for", ["queue"]):
             try:
                 r = requests.post(
                     f"https://api.twilio.com/2010-04-01/Accounts/{tw['account_sid']}/Messages.json",
@@ -178,8 +185,12 @@ class Notifier:
                     data={"From": tw["from"], "To": tw["to"], "Body": f"{title}\n{url}"[:600]}, timeout=15)
                 if r.status_code >= 400:
                     log.warning("Twilio error %s: %s", r.status_code, r.text[:200])
+                    self.last_sms_error = f"HTTP {r.status_code}: {r.text[:160]}"
+                else:
+                    self.last_sms_error = ""
             except requests.RequestException as e:
                 log.warning("Twilio failed: %s", e)
+                self.last_sms_error = str(e)[:160]
         return all(results) if results else False
 
     def _post_discord(self, hook, payload, react=False):
