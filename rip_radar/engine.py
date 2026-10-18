@@ -24,6 +24,7 @@ from .parsing import (CT, is_presale, is_raffle, blocked_by, shopify_product_js,
                       parse_topps_product_page, humanize_handle, tile_status, drawing_window, next_data, sport_of, stock_hint,
                       title_tiles)
 from .cards import ProductCards
+from . import releases as rel
 from .stock import page_data_stock, parse_target_pdp, target_key_in, target_pdp, target_stock, target_stock_text
 
 log = logging.getLogger("rip_radar")
@@ -2179,6 +2180,7 @@ class Engine:
         self.state["topps_products"] = products
         self._write_topps_csv(products)
         self._save_debug(t["name"], html)
+        self._note_eql_links(html)
 
         # calendar changes don't post one by one: the whole #topps-calendar board is re-posted fresh at the
         # bottom with @everyone and a one-line list of what changed. Drop alerts (live / 15 min / open) go to #topps.
@@ -2260,6 +2262,165 @@ class Engine:
             self.notify.send("urgent", "📅 Topps calendar updated", t["url"], desc="\n".join(changes)[:3900],
                              channel=["topps", "main"], ping=True, record=False)
 
+    # ------------------------------------------------------------ Pokémon release dates (1.0.64)
+    def _add_pokemon_release(self, name, when, url, source, store=""):
+        """An official / announced Pokémon release date -> the drop calendar (🎴). The same product from another
+        source (press site vs pokemon.com vs a drop tracker) is kept once."""
+        if when < datetime.now(CT) - timedelta(days=1) or blocked_by(name, self._blocklist()):
+            return False
+        if not is_card_only(name) and not re.search(r"booster|elite trainer|collection|tin|bundle|box|blister|deck",
+                                                      name, re.I):
+            return False
+        for ev in self.state.get("events", {}).values():
+            if ev.get("kind") == "pokemon" and ev["start"][:10] == when.date().isoformat() and \
+                    rel.similar(ev["title"].split(":", 1)[-1], name):
+                return False
+        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:60]
+        self._add_event(f"Pokémon release: {name}", f"{url}#{slug}", when, False, "pokemon", store or "pokemon")
+        return True
+
+    def check_pokemon_releases(self, t, st, first):
+        """pokemon.com's monthly 'Check Out Every Pokémon TCG Product Release in <Month>' round-up (this month and
+        next): every product with its release day goes on the drop calendar. The calendar re-posts when one is new."""
+        found, ok_pages, last = 0, 0, 0
+        for pair in rel.month_article_urls(months=int(t.get("months", 2))):
+            for url in pair:
+                status, final, html = self.fetcher.get(url, bool(t.get("browser", True)))
+                self._note_request(url)
+                last = status
+                if looks_blocked(status, html) or status >= 400 or len(html or "") < 2000:
+                    continue
+                ok_pages += 1
+                self._save_debug(f"{t['name']}-{url.rsplit('-in-', 1)[-1]}", html)
+                anchor = rel.article_anchor(url, html) or datetime.now(CT)
+                for item in rel.dated_products(html, final, anchor):
+                    found += self._add_pokemon_release(item["name"], item["when"], final, t["name"])
+                    st.setdefault("items", {})[item["name"][:100]] = item["when"].date().isoformat()
+                break                                   # one URL style answered: skip the other
+        st["items"] = dict(list(st.get("items", {}).items())[-200:])
+        if not ok_pages:
+            return ("blocked" if last in (403, 429) or not last else "error"), last
+        return (f"ok ({len(st['items'])} Pokémon releases known · {found} new)" if st.get("items")
+                else f"ok (0 dated products in {ok_pages} article(s) read)"), last
+
+    def check_release_schedule(self, t, st, first):
+        """A page listing product release dates: press.pokemon.com's Pokémon TCG product schedule, or a drop
+        tracker's month calendar (`grid: true`, pokemonrestock.com). Future dates -> the drop calendar."""
+        status, final, html = self._fetch(t, st)
+        if looks_blocked(status, html):
+            return "blocked", status
+        if status >= 400:
+            return "error", status
+        self._save_debug(t["name"], html)
+        now = datetime.now(CT)
+        if t.get("grid"):
+            items = rel.calendar_grid(html, now)
+            future = [i for i in items if i["when"].date() >= now.date()]
+            new = 0
+            for i in future:
+                label = f"{STORE_NAMES.get(i['store'], i['store'].title())}{' drawing' if i.get('walmart_draw') else ''}"
+                new += self._add_pokemon_release(f"{i['name']} ({label})", i["when"], final, t["name"], i["store"])
+            st["items"] = len(items)
+            return (f"ok ({len(items)} drops on the calendar · {len(future)} upcoming · {new} new)" if items
+                    else "ok (0 drops listed on the calendar)"), status
+        items = rel.dated_products(html, final, now - timedelta(days=30))
+        new = sum(self._add_pokemon_release(i["name"], i["when"], i["url"], t["name"]) for i in items)
+        future = [i for i in items if i["when"].date() >= now.date()]
+        latest = max((i["when"] for i in items), default=None)
+        st["latest"] = latest.date().isoformat() if latest else ""
+        return (f"ok ({len(items)} products · {len(future)} upcoming · latest {latest:%b} {latest.day} · {new} new)"
+                if items else "ok (0 dated products on the page)"), status
+
+    # ------------------------------------------------------------ Topps raffles on EQL (launches.topps.com)
+    def _note_eql_links(self, html):
+        """Any Topps page that links an EQL launch (product pages, the calendar): queue it, so a raffle is caught
+        even before it shows on the launch list."""
+        for u in rel.eql_launch_links(html or ""):
+            known = self.state.setdefault("eql_launches", {})
+            if u not in known:
+                self.state.setdefault("eql_found", {})[u] = time.time()
+
+    def check_eql_launches(self, t, st, first):
+        """launches.topps.com: Topps' entry-window raffles (EQL). Every launch page is opened for its name, price,
+        limit and entry window. New raffle = @everyone (#watch) + #topps + #drawings with the exact EQL link;
+        again when a coming-soon raffle opens, and 1 hour before entries close. Alert only: M enters himself."""
+        status, final, html = self._fetch(t, st)
+        if looks_blocked(status, html):
+            return "blocked", status
+        if status >= 400:
+            return "error", status
+        self._save_debug(t["name"], html)
+        known = self.state.setdefault("eql_launches", {})
+        listed = rel.eql_launch_links(html, final)
+        extra = self.state.pop("eql_found", {}) or {}
+        for u in list(listed) + [u for u in extra if u not in listed]:
+            if u not in known:
+                known[u] = {"first_seen": time.time(), "baseline": bool(first) and u in listed, "checked": 0,
+                            "name": listed.get(u) or u.rsplit("/", 1)[-1].replace("-", " ").title()}
+        now_ts, now = time.time(), datetime.now(CT)
+
+        def due(r):
+            if not r.get("checked"):
+                return True
+            if r.get("status") == "Closed":
+                return False
+            closes = datetime.fromisoformat(r["closes"]) if r.get("closes") else None
+            soon = closes and closes - now <= timedelta(hours=3)
+            return now_ts - r["checked"] >= (600 if soon else 1800)
+        opened = 0
+        for u in sorted((u for u, r in known.items() if due(r)), key=lambda u: bool(known[u].get("checked")))[:4]:
+            r = known[u]
+            ps, pf, ph = self._fetch({"name": t["name"], "url": u, "browser": t.get("browser", True)}, st)
+            r["checked"] = now_ts
+            if looks_blocked(ps, ph) or ps >= 400:
+                continue
+            opened += 1
+            info = rel.parse_eql_launch(ph, u)
+            prev = r.get("status")
+            r.update({"name": info["name"], "image": info["image"], "price": info["price"], "limit": info["limit"],
+                      "status": info["status"],
+                      "opens": info["opens"].isoformat() if info["opens"] else r.get("opens"),
+                      "closes": info["closes"].isoformat() if info["closes"] else r.get("closes")})
+            for key, label in (("opens", "opens"), ("closes", "closes")):
+                if r.get(key):
+                    self._add_event(f"Topps raffle {label}: {r['name']}", f"{u}#{key}", datetime.fromisoformat(r[key]),
+                                    True, "drawing", "topps")
+            if blocked_by(r["name"], self._blocklist()):
+                continue
+            event = ""
+            if not prev and not r.get("baseline") and info["status"] != "Closed":
+                event = "🎟️ NEW TOPPS RAFFLE (EQL)" + (" · OPEN NOW" if info["status"] == "Open" else " · coming soon")
+            elif prev == "Coming soon" and info["status"] == "Open":
+                event = "🟢 TOPPS RAFFLE OPEN NOW (EQL)"
+            if event:
+                self._eql_post(event, r, u)
+        for u, r in known.items():            # entries closing within the hour: one reminder
+            if r.get("closes") and r.get("status") != "Closed" and not r.get("reminded") and not r.get("baseline"):
+                c = datetime.fromisoformat(r["closes"])
+                if now <= c <= now + timedelta(minutes=60):
+                    r["reminded"] = True
+                    self._eql_post(f"⏳ Topps raffle closes in {max(1, int((c - now).total_seconds() // 60))} min", r, u)
+        # forget raffles closed for 30+ days
+        for u in [u for u, r in known.items() if r.get("closes") and
+                  datetime.fromisoformat(r["closes"]) < now - timedelta(days=30)]:
+            known.pop(u, None)
+        live = [r for r in known.values() if r.get("status") in ("Open", "Coming soon")]
+        if not listed and not live:
+            return "ok · no Topps raffles open right now", status
+        return f"ok ({len(listed)} launches listed · {len(live)} open / coming · {opened} pages opened)", status
+
+    def _eql_post(self, event, r, u):
+        fields = {"Price": r.get("price") or "see page", "Limit": f"{r['limit']} per person" if r.get("limit") else "",
+                  "Status": r.get("status", "")}
+        if r.get("opens"):
+            fields["Entries open (CT)"] = fmt_when(datetime.fromisoformat(r["opens"]), True)
+        if r.get("closes"):
+            fields["Entries close (CT)"] = fmt_when(datetime.fromisoformat(r["closes"]), True)
+        fields["How it works"] = "Raffle - enter any time before it closes (speed doesn't matter), winners are drawn"
+        self.notify.send("urgent", f"{event}: {r['name']}"[:250], u, {k: v for k, v in fields.items() if v},
+                         channel="topps", copy_to=["drawings"], ping=True, image=r.get("image", ""),
+                         links=[("🎟️ ENTER THE RAFFLE ON EQL", u)])
+
     def _quiet_topps_calendar(self, changes, t):
         """Status / time / removed changes: the board is edited where it is - no new post, no ping."""
         for c in changes:
@@ -2304,6 +2465,7 @@ class Engine:
                 continue
             checked += 1
             self._save_debug(f"topps-page-{p['slug']}", html)
+            self._note_eql_links(html)
             formats, page_when = parse_topps_product_page(html, final)
             self._remember_topps_time(p, BeautifulSoup(html, "html.parser").get_text(" "))
             old = pages.get(p["slug"], {})
@@ -2397,6 +2559,7 @@ class Engine:
             if looks_blocked(ps, ph) or ps >= 400:
                 continue
             opened += 1
+            self._note_eql_links(ph)
             item = parse_topps_item_page(ph, rec["url"])
             prev_status, was_live, new = rec.get("status"), rec.get("live"), not rec.get("status")
             rec.update({k: v for k, v in item.items() if v not in ("", None) or k in ("live",)})
@@ -2499,7 +2662,7 @@ class Engine:
         return "\n".join(f"• [{f['name']}]({f['url']}) {f['price']} · {f['status']}" for f in fmts[:10])
 
     # ------------------------------------------------------------ drop calendar
-    KIND_ICON = {"topps": "🃏", "drawing": "🎟️", "release": "⚡", "news": "⚡"}
+    KIND_ICON = {"topps": "🃏", "drawing": "🎟️", "release": "⚡", "news": "⚡", "pokemon": "🎴"}
 
     def upcoming_events(self, days=30, past_hours=2):
         now = datetime.now(CT)
@@ -2521,7 +2684,9 @@ class Engine:
     def _short(title):
         """'Topps: 2026 Topps Midnight Football' -> 'Midnight Football' (the icon already says Topps / sport)."""
         t = re.sub(r"[®™]", "", title or "")
-        t = re.sub(r"^(?:topps|walmart drawing|target|walmart|best buy|amazon|pokémon center)\s*:\s*", "", t, flags=re.I)
+        t = re.sub(r"^(?:topps|walmart drawing|target|walmart|best buy|amazon|pokémon center|pokémon release)\s*:\s*", "",
+                   t, flags=re.I)
+        t = re.sub(r"^pok[eé]mon (?:tcg|trading card game)\s*:\s*", "", t, flags=re.I)
         t = re.sub(r"^20\d\d(?:-\d\d)?\s+", "", t)
         t = re.sub(r"^topps\s+(?=\S)", "", t, flags=re.I)
         return " ".join(t.split())
@@ -2529,6 +2694,8 @@ class Engine:
     def _icon(self, e):
         if e.get("kind") == "drawing":
             return "🎟️"
+        if e.get("kind") == "pokemon":
+            return "🎴"
         if e.get("kind") == "topps" or "topps" in (e.get("url") or ""):
             return self.SPORT_ICON.get(sport_of(e.get("title", "")), "🃏")
         return "⚡"
@@ -2558,7 +2725,19 @@ class Engine:
 
     def _render_calendar(self):
         lines = self._day_lines(self.upcoming_events(days=14))
-        legend = "⚾🏀🏈🃏 Topps · 🎟️ drawing · ⚡ store product · times Central · *time TBA* = day announced, time not yet"
+        later = [e for e in self.upcoming_events(days=120) if e.get("kind") == "pokemon"
+                 and datetime.fromisoformat(e["start"]) > datetime.now(CT) + timedelta(days=14)]
+        if later:      # official Pokémon release dates further out: one line per day
+            by_day = {}
+            for e in later:
+                by_day.setdefault(e["start"][:10], []).append(self._short(e["title"]))
+            lines.append("\n__**🎴 Pokémon releases after that**__")
+            for day, items in list(by_day.items())[:8]:
+                d = datetime.fromisoformat(day)
+                shown = ", ".join(items[:4]) + (f" +{len(items) - 4} more" if len(items) > 4 else "")
+                lines.append(f"**{d:%a %b} {d.day}** · {shown}")
+        legend = ("⚾🏀🏈🃏 Topps · 🎟️ drawing · 🎴 Pokémon release (official date) · ⚡ store product · times Central · "
+                  "*time TBA* = day announced, time not yet")
         return "🗓️ Drop calendar · next 14 days", ("\n".join(lines).strip() + f"\n\n-# {legend}")
 
     def _render_topps_board(self):
@@ -3063,7 +3242,7 @@ class Engine:
         """Everything with a date lands here: the drop calendar (app tab, drops.ics, #drop-calendar)."""
         events = self.state.setdefault("events", {})
         uid = hashlib.sha1(f"{url}|{start.date()}".encode()).hexdigest()[:16]
-        if kind not in ("topps", "drawing") and not product:
+        if kind not in ("topps", "drawing", "pokemon") and not product:
             return
         if uid in events and events[uid]["start"] == start.isoformat() and events[uid].get("kind") == kind:
             return

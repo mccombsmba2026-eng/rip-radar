@@ -232,6 +232,20 @@ captchas, and never automates purchases. Keep it that way.
   "🎟️ TOPPS RAFFLE (EQL) open" in #topps + #drawings + @everyone (#watch). `listing` sources now take `label`,
   `link_label`, `ping`, `copy_to`, `debug` (saves the page for diagnostics) and respect the ❌ blocklist.
   "News · PokeBeach" RSS (Pokémon Center invite-only / lottery news first). News raffle words + "early access", "eql".
+- 1.0.64 POKÉMON RELEASE DATES + EQL RAFFLES (`releases.py`, pure + tested): `dated_products` (product names next to
+  dates: "X - Available Nov 6", a date heading + the products under it, a product + its "Release date" line / table
+  cell; `iter_when(horizon_days, past_hours)` widened), `calendar_grid` (month grid: "October 2026" + day cells
+  "16 Target …"), `eql_launch_links` / `parse_eql_launch` (name, og:image, price, "Maximum of N per customer",
+  opening/closing times from page data or text), `similar` (same product from two sources). Sources:
+  `pokemon_releases` (pokemon.com monthly round-up, this + next month, /us/news/ then /us/pokemon-news/, 6 h),
+  `release_schedule` (press.pokemon.com schedule, 6 h; `grid: true` = pokemonrestock.com calendar, 1 h) -> calendar
+  kind "pokemon" 🎴 via `_add_pokemon_release` (cards only, ❌ blocklist, deduped by day + `similar`); the drop
+  calendar board adds "🎴 Pokémon releases after that" (beyond 14 days). `eql_launches` ("Topps raffles (EQL)",
+  replaces the 1.0.63 listing source): every launch page opened (≤4/run, 30 min / 10 min near close), state
+  `state["eql_launches"]`; new / coming-soon -> open / 1 h before close = @everyone (#watch) + #topps + #drawings with
+  the exact EQL link ("🎟️ ENTER THE RAFFLE ON EQL"); open + close times on the drop calendar. `_note_eql_links` picks
+  launch links off Topps calendar / product pages too. EQL has no public all-brands list; its other card launches
+  are Australian Pokémon shops - not tracked.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

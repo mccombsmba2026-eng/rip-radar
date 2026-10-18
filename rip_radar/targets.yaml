@@ -51,22 +51,40 @@ targets:
     link_pattern: "/(products|pages)/"
     include: [basketball, baseball, football, bowman]
 
-  # Topps' raffle / entry site (EQL): Topps runs its most wanted hobby boxes here (SpongeBob Chrome, Chrome F1,
-  # Tribute, Pristine, Definitive...) - you ENTER during a window instead of racing checkout. A new launch page
-  # = @everyone (in #watch) + #topps + #drawings. Alert only: M enters himself.
-  - name: Topps launches (EQL raffles)
+  # Topps' raffle / entry site (EQL): Topps runs its most wanted boxes here (SpongeBob Chrome, Chrome F1, Tribute,
+  # Pristine, Definitive...) - you ENTER during a window instead of racing checkout. EQL has no public list of every
+  # store's raffles (each brand has its own launch site; the other card ones are Australian Pokémon shops), so this is
+  # the one to watch for US cards. Every launch page is opened for price / limit / entry window. New raffle, opens,
+  # and 1 h before close = @everyone (#watch) + #topps + #drawings with the exact EQL link. Topps product pages that
+  # link a launch are caught too. Alert only: M enters himself.
+  - name: Topps raffles (EQL)
     channel: topps
-    type: listing
+    type: eql_launches
     url: https://launches.topps.com/en-US/
     browser: true
     interval_seconds: 300
-    level: urgent
-    link_pattern: "/en-US/launch/[a-z0-9][a-z0-9-]+/?$"
-    label: "🎟️ TOPPS RAFFLE (EQL) open"
-    link_label: "ENTER ON TOPPS / EQL"
-    ping: true
-    copy_to: [drawings]
-    debug: true
+
+  # ===== POKEMON RELEASE DATES -> drop calendar (🎴) =====
+  # pokemon.com's monthly "Check Out Every Pokémon TCG Product Release in <Month> <Year>" (this month + next)
+  - name: Pokémon releases (pokemon.com monthly)
+    type: pokemon_releases
+    url: https://www.pokemon.com/us/news/
+    browser: true
+    months: 2
+    interval_seconds: 21600
+  # The Pokémon Company's press site: the official product schedule
+  - name: Pokémon product schedule (press site)
+    type: release_schedule
+    url: https://press.pokemon.com/en/Items/Schedule/Pokemon-Trading-Card-Game?types=3
+    browser: true
+    interval_seconds: 21600
+  # pokemonrestock.com's drop calendar (Target / Walmart / Walmart Draw / Pokémon Center) - drawn in the browser
+  - name: Drop tracker calendar (pokemonrestock.com)
+    type: release_schedule
+    grid: true
+    url: https://pokemonrestock.com/
+    browser: true
+    interval_seconds: 3600
 
   # ===== POKEMON CENTER =====
   # Checked every minute. @everyone the moment the queue (waiting room) is up, a message that keeps

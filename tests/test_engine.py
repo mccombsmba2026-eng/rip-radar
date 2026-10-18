@@ -341,21 +341,90 @@ def test_run_target_records_last_found(engine):
     assert st.get("last_found_at")
 
 
-def test_topps_launch_watcher_pings_new_raffle(engine):
-    import yaml
-    from rip_radar import paths as _p
-    src = next(t for t in yaml.safe_load(open("rip_radar/targets.yaml", encoding="utf-8"))["targets"] if t["name"].startswith("Topps launches"))
+class MapFetch:
+    def __init__(self, pages):
+        self.pages = pages
+
+    def get(self, url, browser=False):
+        html = self.pages.get(url)
+        return (200, url, html) if html is not None else (404, url, "")
+
+
+EQL = {"name": "Topps raffles (EQL)", "type": "eql_launches", "url": "https://launches.topps.com/en-US/",
+       "browser": True}
+SPONGE = "https://launches.topps.com/en-US/launch/2026-topps-chrome-spongebob-hobby-box"
+TRIB = "https://launches.topps.com/en-US/launch/2026-topps-tribute-baseball-hobby-box"
+
+
+def launch_page(name, closes="2030-10-22T16:00:00Z", opens="2020-10-20T16:00:00Z"):
+    return (f'<html><head><meta property="og:image" content="https://img/{name[:4]}.jpg"></head><body><h1>{name}</h1>'
+            f'<p>US$249.99</p><p>Maximum of 2 per customer</p>'
+            f'<script>{{"openingTime":"{opens}","closingTime":"{closes}"}}</script></body></html>')
+
+
+def test_eql_raffles(engine):
     calls = []
-    engine.notify.send = lambda level, title, url="", fields=None, desc="", **kw: calls.append((title, url, kw))
-    page1 = ('<a href="/en-US/">all</a><a href="/en-US/launch/2026-topps-tribute-baseball-hobby-box">Tribute</a>'
-             '<a href="/en-US/launch/2026-topps-tribute-baseball-hobby-box/login">log in</a>')
+    engine.notify.send = lambda level, title, url="", fields=None, desc="", **kw: calls.append((title, url, fields, kw))
     st = {}
-    engine.fetcher = FakeFetch(page1, "https://launches.topps.com/en-US/")
-    engine.check_listing(dict(src), st, True)
-    assert calls == []
-    engine.fetcher = FakeFetch(page1 + '<a href="/en-US/launch/2026-topps-chrome-spongebob-hobby-box">2026 Topps Chrome '
-                               'SpongeBob - Hobby Box</a>', "https://launches.topps.com/en-US/")
-    engine.check_listing(dict(src), st, False)
-    (title, url, kw), = calls
-    assert "TOPPS RAFFLE" in title and "SpongeBob" in title and url.endswith("spongebob-hobby-box")
-    assert kw["ping"] is True and kw["copy_to"] == ["drawings"]
+    engine.fetcher = MapFetch({EQL["url"]: f'<a href="{TRIB}">Tribute</a>', TRIB: launch_page("2026 Topps Tribute")})
+    assert engine.check_eql_launches(dict(EQL), st, True)[0].startswith("ok (1 launches")
+    assert calls == []                                        # already up when Rip Radar first looked: quiet
+    # a topps.com product page links a NEW launch before the list shows it
+    engine._note_eql_links(f'<a href="{SPONGE}">Enter the drawing</a>')
+    engine.fetcher = MapFetch({EQL["url"]: f'<a href="{TRIB}">Tribute</a>',
+                               SPONGE: launch_page("2026 Topps Chrome SpongeBob - Hobby Box")})
+    engine.check_eql_launches(dict(EQL), st, False)
+    (title, url, fields, kw), = calls
+    assert title.startswith("🎟️ NEW TOPPS RAFFLE (EQL) · OPEN NOW: 2026 Topps Chrome SpongeBob") and url == SPONGE
+    assert kw["ping"] and kw["copy_to"] == ["drawings"] and kw["links"] == [("🎟️ ENTER THE RAFFLE ON EQL", SPONGE)]
+    assert fields["Price"] == "$249.99" and fields["Limit"] == "2 per person" and "Entries close (CT)" in fields
+    assert any(e["title"].startswith("Topps raffle closes: 2026 Topps Chrome SpongeBob")
+               for e in engine.state["events"].values())
+    # closing within the hour: one reminder
+    calls.clear()
+    from rip_radar.engine import CT
+    engine.state["eql_launches"][SPONGE]["closes"] = (datetime.now(CT) + timedelta(minutes=40)).isoformat()
+    engine.state["eql_launches"][SPONGE]["checked"] = 10 ** 10
+    engine.check_eql_launches(dict(EQL), st, False)
+    engine.check_eql_launches(dict(EQL), st, False)
+    assert [c[0] for c in calls] == [f"⏳ Topps raffle closes in 39 min: 2026 Topps Chrome SpongeBob - Hobby Box"] or \
+        (len(calls) == 1 and calls[0][0].startswith("⏳ Topps raffle closes in"))
+
+
+def test_eql_empty_list_is_healthy(engine):
+    engine.fetcher = MapFetch({EQL["url"]: "<p>No live launches. Check back soon.</p>"})
+    assert engine.check_eql_launches(dict(EQL), {}, True)[0] == "ok · no Topps raffles open right now"
+
+
+def test_pokemon_release_sources_fill_calendar(engine):
+    from rip_radar.engine import CT
+    from rip_radar.releases import month_article_urls
+    d = datetime.now(CT) + timedelta(days=20)
+    day = f"{d:%B} {d.day}, {d.year}"
+    article = (f"<div><h2>Pokémon TCG: Mega Evolution—Delta Reign Elite Trainer Box</h2><p>Release date: {day}</p>"
+               f"<h2>Pokémon TCG: Delta Reign Plush Pikachu - {day}</h2></div><p>{'x' * 2500}</p>")
+    urls = month_article_urls()
+    engine.fetcher = MapFetch({urls[0][1]: article, urls[1][1]: article})    # second URL style answers
+    h, _ = engine.check_pokemon_releases({"name": "Pokémon releases", "type": "pokemon_releases"}, {}, True)
+    assert h.startswith("ok (1 Pokémon releases known · 1 new)"), h
+    press = {"name": "press", "type": "release_schedule", "url": "https://press.pokemon.com/s"}
+    engine.fetcher = MapFetch({press["url"]: f"<table><tr><td><a href='/i/1'>Pokémon TCG: Mega Evolution Delta Reign "
+                                             f"Elite Trainer Box</a></td><td>{d.month}/{d.day}/{d.year}</td></tr></table>"})
+    h, _ = engine.check_release_schedule(dict(press), {}, True)
+    assert h.startswith("ok (1 products · 1 upcoming"), h
+    titles = [e["title"] for e in engine.state["events"].values() if e["kind"] == "pokemon"]
+    assert len(titles) == 1 and "Delta Reign Elite Trainer Box" in titles[0]     # same box from 2 sources = once
+
+
+def test_release_dates_on_calendar_board(engine):
+    from rip_radar.engine import CT
+    engine._add_pokemon_release("Pokémon TCG: Mega Evolution—Delta Reign Elite Trainer Box",
+                                datetime.now(CT) + timedelta(days=5), "https://press.pokemon.com/s", "press")
+    engine._add_pokemon_release("Mega Evolution Delta Reign Elite Trainer Box", datetime.now(CT) + timedelta(days=5),
+                                "https://pokemon.com/a", "article")
+    engine._add_pokemon_release("Pokémon TCG: 30th Celebration Ultra-Premium Collection",
+                                datetime.now(CT) + timedelta(days=40), "https://press.pokemon.com/s", "press")
+    assert len(engine.state["events"]) == 2
+    title, body = engine._render_calendar()
+    assert "🎴 [Mega Evolution—Delta Reign Elite Trainer Box]" in body
+    assert "Pokémon releases after that" in body and "30th Celebration Ultra-Premium Collection" in body

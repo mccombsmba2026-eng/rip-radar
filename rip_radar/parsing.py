@@ -124,7 +124,7 @@ def best_time_for(text, day=None, now=None):
     return None
 
 
-def iter_when(text, now=None):
+def iter_when(text, now=None, horizon_days=60, past_hours=12):
     now = now or datetime.now(CT)
     clean = NOISE.sub(" ", text or "")
     for rx in (RE_MONTH_DAY, RE_SLASH):
@@ -155,7 +155,7 @@ def iter_when(text, now=None):
                 has_time = True
             else:
                 local = d.replace(hour=9, tzinfo=CT)
-            if now - timedelta(hours=12) <= local <= now + timedelta(days=60):
+            if now - timedelta(hours=past_hours) <= local <= now + timedelta(days=horizon_days):
                 yield local, has_time, tz_note
 
 
