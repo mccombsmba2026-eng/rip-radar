@@ -244,11 +244,21 @@ class LiveBoard:
         if not hook.startswith("http") or (time.time() < self.next and not force and not repost):
             return False
         self.next = time.time() + self.every
-        body = self._body(render)
+        parts = render()
+        saved = self.state.get(self.key) or {}
+        if parts is None:          # nothing to show (e.g. no raffles): no message at all - take an old one down
+            if saved.get("id"):
+                try:
+                    requests.delete(f"{saved['hook']}/messages/{saved['id']}", timeout=15)
+                except requests.RequestException:
+                    pass
+                self.state.pop(self.key, None)
+            self.last_body = None
+            return False
+        body = self._body(lambda: parts)
         sig = json.dumps([(e["title"], e["description"]) for e in body["embeds"]])
         if sig == self.last_body and not force and not repost:
             return False
-        saved = self.state.get(self.key) or {}
         try:
             if saved.get("hook") == hook and saved.get("id"):
                 if repost:

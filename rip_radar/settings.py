@@ -42,6 +42,7 @@ DEFAULTS = {
     "blocked_products": [],      # ❌ in Discord / `block <words>` in #watch: never posted
     "quiet_hours": [2, 6],           # store pages half as often 2-6 AM CT (queue + drawings stay full speed)
     "site_budgets": {},              # override pages-per-hour per site, e.g. {"walmart.com": 120}               # #watch channel: product-name watches (typed in Discord)            # eBay sold median on product posts
+    "queue_window": {"days": [0, 1, 2, 3, 4], "start": 9, "end": 15},   # PC usual drop window (CT): queue every 30 s; "days": [] = off
     "health_hour": 9,                # daily 🩺 health check in #app-status at this hour (CT); -1 = off
     "recap_hour": 21,                # daily recap in #app-status at this hour (CT); -1 = off             # OFF unless M turns it on: ask Windows not to sleep while Rip Radar runs
     "topps_all_products": True,      # Topps: every product line (Disney, F1, soccer...) - not just your sports

@@ -427,6 +427,55 @@ class Engine:
         scanners paused so the queue check is the only Pokémon Center traffic (fewer bot walls)."""
         return max(0, int(float(settings_mod.load().get("drop_mode_until") or 0) - time.time()))
 
+    QUEUE_WINDOW = {"days": [0, 1, 2, 3, 4], "start": 9, "end": 15}
+
+    def queue_window(self, now=None):
+        """Pokémon Center's usual drop window (tcgdropradar's log: weekdays ~10 AM-4 PM ET, never weekends, 2026
+        median 11:12 AM CT) = weekdays 9 AM-3 PM CT by default (Settings `queue_window`, "days": [] = off). Inside it the
+        queue is checked every 30 s, like drop mode, and Pokémon Center product scans run half as often so the queue
+        check is most of our Pokémon Center traffic."""
+        w = settings_mod.load().get("queue_window", self.QUEUE_WINDOW)
+        if not w:
+            return False
+        now = now or datetime.now(CT)
+        return now.weekday() in w.get("days", []) and int(w.get("start", 9)) <= now.hour < int(w.get("end", 15))
+
+    def _queue_count(self, blocked):
+        """How many Pokémon Center queue checks got through, per day (and inside the drop window)."""
+        day = datetime.now(CT).date().isoformat()
+        qc = self.state.setdefault("queue_checks", {})
+        d = qc.setdefault(day, {"n": 0, "blocked": 0, "win_n": 0, "win_blocked": 0})
+        d["n"] += 1
+        d["blocked"] += bool(blocked)
+        if self.queue_window():
+            d["win_n"] += 1
+            d["win_blocked"] += bool(blocked)
+        for k in sorted(qc)[:-14]:
+            qc.pop(k, None)
+
+    def _queue_day_line(self, days_ago):
+        day = (datetime.now(CT) - timedelta(days=days_ago)).date().isoformat()
+        d = self.state.get("queue_checks", {}).get(day)
+        if not d or not d["n"]:
+            return ""
+        ok = d["n"] - d["blocked"]
+        out = f"{ok} of {d['n']} checks got through ({100 * ok // d['n']}%)"
+        if d.get("win_n"):
+            wok = d["win_n"] - d["win_blocked"]
+            out += f" · in the drop window {wok} of {d['win_n']} ({100 * wok // d['win_n']}%)"
+        return out
+
+    def queue_reliability(self):
+        d = self.state.get("queue_checks", {}).get(datetime.now(CT).date().isoformat())
+        if not d or not d["n"]:
+            return ""
+        ok = d["n"] - d["blocked"]
+        line = f"today {ok} of {d['n']} checks got through ({100 * ok // d['n']}%)"
+        if d.get("win_n"):
+            wok = d["win_n"] - d["win_blocked"]
+            line += f" · drop window {wok} of {d['win_n']} ({100 * wok // d['win_n']}%)"
+        return line
+
     def set_drop_mode(self, hours):
         until = time.time() + float(hours) * 3600 if hours else 0
         settings_mod.update({"drop_mode_until": until})
@@ -443,7 +492,8 @@ class Engine:
                         self._run_target(t, {})
                     except Exception as e:
                         log.warning("queue watch: %s", e)
-            every = 30 if self.drop_mode() else 60
+            fast = bool(self.drop_mode()) or self.queue_window()
+            every = 30 if fast else 60
             try:
                 self._queue_self_heal()
             except Exception as e:
@@ -452,7 +502,7 @@ class Engine:
             if streak >= 3:
                 # Pokémon Center keeps turning the check away: check less often so its bot check cools off
                 # (the product scans there are already paused) - hammering it keeps us blocked longer
-                every = 60 if self.drop_mode() else (180 if streak >= 8 else 120)
+                every = 60 if fast else (180 if streak >= 8 else 120)
             self._stop.wait(max(5, every - (time.time() - started)))
 
     SELF_HEAL_STREAK = 5          # ~10 min of blocked checks (they slow to 2 min apart once blocked)
@@ -606,6 +656,8 @@ class Engine:
                     iv = t.get("interval_seconds", default_iv)
                     if t["type"] not in ("walmart_drawings",) and not t.get("track_duration"):
                         iv *= self._slow_factor()
+                        if "pokemoncenter.com" in t.get("url", "") and self.queue_window():
+                            iv *= 2         # the drop window: leave Pokémon Center to the queue check
                     self.next_due[t["name"]] = time.time() + iv * random.uniform(0.85, 1.15)
                 self._save_state()
                 time.sleep(random.uniform(1, 2.5))
@@ -858,6 +910,7 @@ class Engine:
         self._save_debug(f"{slug}-queue-last-check", f"<!-- {final} -->\n" + (html or ""))
         if slug == "pokemon-center":                 # bot-check posts: Pokémon Center only
             self._watch_bot_check(t, st, wall_kind(status, html) if (blocked and not active) else "", now)
+            self._queue_count(blocked and not active)
         if active:
             self._save_debug(f"{slug}-queue-page", f"<!-- {final} -->\n" + (html or ""))
         if blocked and not active:
@@ -1013,8 +1066,18 @@ class Engine:
         if not active:
             # one self-editing line so you can see it's watching; nothing new is posted until a queue goes up
             left = self.drop_mode()
-            mode = (f"\n🚨 **DROP MODE** until {self._clock(now + timedelta(seconds=left))} CT · checking every 30 s"
-                    if left else "\n-# Checked every minute.")
+            if left:
+                mode = f"\n🚨 **DROP MODE** until {self._clock(now + timedelta(seconds=left))} CT · checking every 30 s"
+            elif self.queue_window():
+                w = settings_mod.load().get("queue_window", self.QUEUE_WINDOW)
+                end = int(w.get("end", 15))
+                mode = (f"\n🔴 **Drop window** (weekdays, when Pokémon Center usually drops) until "
+                        f"{end % 12 or 12} {'PM' if end >= 12 else 'AM'} CT · checking every 30 s")
+            else:
+                mode = "\n-# Checked every minute · every 30 s on weekdays 9 AM–3 PM CT (the usual drop window)."
+            rel_line = self.queue_reliability() if slug == "pokemon-center" else ""
+            if rel_line:
+                mode += f"\n-# Reliability: {rel_line}"
             self._queue_watch(t, st, f"⚪ **No {site} queue right now** · last checked {self._clock(now)} CT"
                                      f"{mode} You'll get an @everyone the moment a queue goes up.",
                               repost=was is True)
@@ -3010,7 +3073,8 @@ class Engine:
                        if datetime.fromisoformat(a["at"]).timestamp() >= day_ago and a.get("level") == "urgent")
         lines += ["", "**Features**",
                   f"🎟️ Pokémon Center queue check: {qst.get('health') or 'not run'} · last good check {ago(qst.get('last_ok_at'))}"
-                  + (f" · ⚠️ blocked {qst.get('blocked_streak')} in a row" if qst.get("blocked_streak") else ""),
+                  + (f" · ⚠️ blocked {qst.get('blocked_streak')} in a row" if qst.get("blocked_streak") else "")
+                  + (f"\n   ↳ yesterday: {self._queue_day_line(1)}" if self._queue_day_line(1) else ""),
                   self.stock_health(), self.topps_fast_health(), self.resale.health(),
                   f"💸 Price list: {n_priced} of {len(cells)} priced · last run {self.state.get('price_list_day') or 'never'}",
                   f"🤖 Discord bot: {getattr(self.bot, 'state', '') or 'not started'}",
@@ -3172,7 +3236,7 @@ class Engine:
         live = [r for r in items if r.get("live")]
         out = [r for r in items if not r.get("live")]
         parts = []
-        if store == "walmart":
+        if store == "walmart" and self._drawings_section(only_store="walmart"):
             parts.append(self._drawings_section(only_store="walmart"))
         parts.append(self._section(f"🟢 In stock at {name} · {len(live)}", [self._item_line(r) for r in live]))
         parts.append(self._section(f"⚪ Out of stock / not buyable yet · {len(out)}",
@@ -3204,10 +3268,24 @@ class Engine:
                     if str(rec.get("status", "")).startswith("Drawing") and now - rec.get("seen", 0) < 3 * 3600:
                         lines.append(f"• 🎟️ {STORE_NAMES.get(t['store'], t['store'])} · "
                                      f"[{rec['name'][:70]}]({rec['url']}) · {rec.get('price', '')} · open")
-        return self._section(f"🎟️ Drawings & raffles right now · {len(lines)}", lines)
+        if only_store in (None, "topps"):          # Topps raffles on EQL (open or opening soon)
+            for u, r in (self.state.get("eql_launches") or {}).items():
+                if r.get("status") not in ("Open", "Coming soon"):
+                    continue
+                when = ""
+                if r.get("status") == "Coming soon" and r.get("opens"):
+                    when = f"⏰ opens **{fmt_when(datetime.fromisoformat(r['opens']))} CT**"
+                elif r.get("closes"):
+                    when = f"🟢 OPEN · closes {fmt_when(datetime.fromisoformat(r['closes']))} CT"
+                else:
+                    when = "🟢 OPEN"
+                lines.append(f"• 🎟️ Topps (EQL) · [{r.get('name', '')[:70]}]({u}) · {r.get('price', '')} · {when}")
+        return self._section(f"🎟️ Drawings & raffles right now · {len(lines)}", lines) if lines else None
 
     def _render_drawings(self):
-        return [self._drawings_section()]
+        """#drawings: the board exists ONLY while a raffle / drawing is caught - no 'nothing right now' message."""
+        sec = self._drawings_section()
+        return [sec] if sec else None
 
     def _render_formats(self):
         lines = []

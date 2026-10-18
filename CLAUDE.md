@@ -246,6 +246,13 @@ captchas, and never automates purchases. Keep it that way.
   the exact EQL link ("🎟️ ENTER THE RAFFLE ON EQL"); open + close times on the drop calendar. `_note_eql_links` picks
   launch links off Topps calendar / product pages too. EQL has no public all-brands list; its other card launches
   are Australian Pokémon shops - not tracked.
+- 1.0.65: #drawings board exists ONLY while a raffle / drawing is caught (`_render_drawings` -> None when empty;
+  `LiveBoard.tick`: render() None = delete the old message, post nothing); EQL raffles (open / coming soon) are on it.
+  PC QUEUE DROP WINDOW (`Engine.queue_window`, setting `queue_window` {"days": [0-4], "start": 9, "end": 15} CT,
+  "days": [] = off; from tcgdropradar's log: weekdays ~10 AM-4 PM ET, median 11:12 AM CT - a summary, no live feed /
+  per-drop log to follow): queue every 30 s (60 s when blocked 3+), PC product scans x2 slower. Reliability counts
+  (`state["queue_checks"]` per day: checks / blocked, in-window) on the #pokemon-queue status line and in the health
+  check (`queue_reliability`, `_queue_day_line`).
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT
@@ -363,7 +370,8 @@ captchas, and never automates purchases. Keep it that way.
   reuses the parent's deleted _MEI folder: "Failed to load Python DLL". CI's "Relaunch check" step guards this.
 - Never commit secrets (webhooks, bot tokens, Twilio keys). The repo is public. They belong in the
   app's Settings screen only.
-- Keep scan intervals ≥ 60 s per source (exception: the Pokémon Center queue at 30 s while drop mode is on).
+- Keep scan intervals ≥ 60 s per source (exception: the Pokémon Center queue at 30 s in drop mode and in the weekday
+  drop window, 1.0.65).
 - pywebview 6.x: `closing` handlers returning False cancel the close (used for hide-to-tray);
   `load_url`/`evaluate_js` block until the window is shown/ready (hidden windows still fire `shown`).
 - topps.com returns 403 to plain HTTP from data-center IPs (the build machine's selftest always shows

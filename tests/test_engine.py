@@ -428,3 +428,31 @@ def test_release_dates_on_calendar_board(engine):
     title, body = engine._render_calendar()
     assert "🎴 [Mega Evolution—Delta Reign Elite Trainer Box]" in body
     assert "Pokémon releases after that" in body and "30th Celebration Ultra-Premium Collection" in body
+
+
+def test_queue_drop_window(engine):
+    from rip_radar.engine import CT
+    assert engine.queue_window(datetime(2026, 10, 20, 11, 30, tzinfo=CT))          # Tuesday 11:30 AM
+    assert not engine.queue_window(datetime(2026, 10, 20, 15, 5, tzinfo=CT))       # after 3 PM
+    assert not engine.queue_window(datetime(2026, 10, 18, 11, 0, tzinfo=CT))       # Sunday
+    settings.update({"queue_window": {"days": []}})
+    assert not engine.queue_window(datetime(2026, 10, 20, 11, 30, tzinfo=CT))
+    engine._queue_count(False)
+    engine._queue_count(True)
+    assert engine.queue_reliability().startswith("today 1 of 2 checks got through (50%)")
+
+
+def test_drawings_board_only_when_a_raffle_is_caught(engine, monkeypatch):
+    from rip_radar import notify
+    assert engine._render_drawings() is None
+    calls = []
+    monkeypatch.setattr(notify.requests, "delete", lambda url, **kw: calls.append(("DELETE", url)))
+    monkeypatch.setattr(notify.requests, "post", lambda url, **kw: calls.append(("POST", url)))
+    engine.drawings_board.hook = lambda: "https://hook"
+    engine.state["board_drawings"] = {"hook": "https://hook", "id": "55"}
+    engine.drawings_board.tick(engine._render_drawings, force=True, repost=True)
+    assert calls == [("DELETE", "https://hook/messages/55")] and "board_drawings" not in engine.state
+    engine.state["eql_launches"] = {"https://launches.topps.com/en-US/launch/x": {"name": "2026 Topps Chrome F1",
+                                                                                "status": "Open", "price": "$479.99"}}
+    (title, body), = engine._render_drawings()
+    assert "Topps (EQL)" in body and "Chrome F1" in body
