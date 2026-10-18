@@ -456,3 +456,32 @@ def test_drawings_board_only_when_a_raffle_is_caught(engine, monkeypatch):
                                                                                 "status": "Open", "price": "$479.99"}}
     (title, body), = engine._render_drawings()
     assert "Topps (EQL)" in body and "Chrome F1" in body
+
+
+ARCHIVE = """<html><body><a href="/tcgdropradar/archive/">Archive</a>
+<a href="https://buttondown.com/tcgdropradar/archive/pokemon-center-queue-just-opened-delta-reign/"><h3>Pokémon Center queue
+ just opened — Delta Reign likely next</h3><p>Sep 30</p></a>
+<a href="/tcgdropradar/archive/rgb-mew-vs-mewtwo-fur/"><h3>RGB Mew vs Mewtwo FUR — the $3k secret</h3></a></body></html>"""
+
+
+def test_dropradar_archive(engine):
+    calls = []
+    engine.notify.send = lambda level, title, url="", fields=None, desc="", **kw: calls.append((title, fields, kw))
+    t = {"name": "TCG Drop Radar posts", "type": "dropradar_archive", "url": "https://buttondown.com/tcgdropradar/archive/",
+         "rss": ["https://buttondown.com/tcgdropradar/rss"]}
+    st = {}
+    engine.fetcher = MapFetch({t["url"]: ARCHIVE})                       # no RSS -> the archive page
+    assert engine.check_dropradar_archive(dict(t), st, True)[0] == "ok (2 posts)"
+    assert calls == []
+    more = ARCHIVE + ('<a href="/tcgdropradar/archive/pokemon-center-queue-is-live-right-now/"><h3>Pokémon Center queue '
+                      'is live right now</h3></a><a href="/tcgdropradar/archive/walmart-drawing-oct-21/"><h3>Walmart drawing '
+                      'Oct 21 at 5pm ET — Delta Reign Elite Trainer Box</h3></a><a href="/tcgdropradar/archive/best-pulls/">'
+                      '<h3>Best pulls of the week</h3></a>')
+    engine.fetcher = MapFetch({t["url"]: more})
+    engine.check_dropradar_archive(dict(t), st, False)
+    titles = {c[0]: c for c in calls}
+    q = titles["📰 TCG Drop Radar: Pokémon Center queue is live right now"]
+    assert q[2]["ping"] is True and "NOT seen" in q[1]["Our queue check"]
+    w = titles["📰 TCG Drop Radar: Walmart drawing Oct 21 at 5pm ET — Delta Reign Elite Trainer Box"]
+    assert w[2]["channel"] == ["walmart", "pokemon"] and w[2]["copy_to"] == ["drawings"] and w[2]["ping"] is True
+    assert len(calls) == 2                                               # the pulls article is skipped

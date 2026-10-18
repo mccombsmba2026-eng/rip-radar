@@ -255,6 +255,11 @@ captchas, and never automates purchases. Keep it that way.
   queue check is our only Pokémon Center traffic there (~60 requests/h). Reliability counts
   (`state["queue_checks"]` per day: checks / blocked, in-window) on the #pokemon-queue status line and in the health
   check (`queue_reliability`, `_queue_day_line`).
+- 1.0.67 TCG DROP RADAR POSTS (`dropradar_archive`, plain HTTP, 120 s): buttondown.com/tcgdropradar - the archive is
+  PUBLIC (no login; never handle M's password). RSS (`rss:` list) first, else archive links /tcgdropradar/archive/<slug>.
+  New post with drop words (`RE_DROP_POST`) -> `_dropradar_post`: "Pokémon Center … queue" = second opinion on our
+  queue check -> #pokemon-queue, @everyone (#watch) only if our checker hasn't seen a queue in the last hour; drawing /
+  raffle / invite -> store channel + #drawings (@everyone for ETB/UPC); restock / loaded -> store channel. Articles skipped.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

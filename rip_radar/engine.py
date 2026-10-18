@@ -2486,6 +2486,75 @@ class Engine:
                          channel="topps", copy_to=["drawings"], ping=True, image=r.get("image", ""),
                          links=[("🎟️ ENTER THE RAFFLE ON EQL", u)])
 
+    # ------------------------------------------------------------ TCG Drop Radar's public post archive (1.0.67)
+    RE_DROP_POST = re.compile(r"queue|restock|drop|drawing|raffle|lottery|invite|in stock|stock is loaded|loaded|"
+                              r"pre-?orders?|live|went up|is up|window", re.I)
+
+    def check_dropradar_archive(self, t, st, first):
+        """buttondown.com/tcgdropradar: their posts ("Pokémon Center queue is live right now", "Walmart drawing Sept 23
+        at 5pm ET", "Amazon invite: …"). The archive is public - no account / login. RSS first, else the archive page.
+        A queue post = a second opinion on our own queue check: @everyone (#watch) + #pokemon-queue unless our checker
+        already saw a queue in the last hour. Drawings / invites -> the store's channel + #drawings; restocks / loaded
+        stock -> the store's channel. Card-collecting articles (pulls, prices) are skipped."""
+        posts, status = {}, 0
+        for url in t.get("rss", []):
+            status, final, body = self.fetcher.get(url, False)
+            low_body = (body or "").lower()
+            if status < 400 and ("<item" in low_body or "<entry" in low_body):
+                for e in feedparser.parse(body).entries:
+                    if e.get("link"):
+                        posts[e["link"].split("?")[0].rstrip("/")] = " ".join((e.get("title") or "").split())
+                if posts:
+                    break
+        if not posts:
+            status, final, html = self._fetch(t, st)
+            if looks_blocked(status, html):
+                return "blocked", status
+            if status >= 400:
+                return "error", status
+            soup = BeautifulSoup(html, "html.parser")
+            pat = re.compile(r"/tcgdropradar/archive/[a-z0-9][a-z0-9-]+/?$", re.I)
+            for a in soup.find_all("a", href=True):
+                u = urljoin(final, a["href"].split("?")[0].split("#")[0]).rstrip("/")
+                if not pat.search(u + "/"):
+                    continue
+                head = a.find(["h1", "h2", "h3", "h4", "strong"])
+                text = " ".join((head.get_text(" ") if head else a.get_text(" ")).split())
+                if len(text) > len(posts.get(u, "")):
+                    posts[u] = text[:200]
+        if not posts:
+            return "ok (0 posts found)", status
+        seen = set(st.get("seen", []))
+        if not first:
+            for u, title in [(u, ti) for u, ti in posts.items() if u not in seen][:5]:
+                self._dropradar_post(title or u.rsplit("/", 1)[-1].replace("-", " "), u)
+        st["seen"] = list(seen | set(posts))[-500:]
+        return f"ok ({len(posts)} posts)", status
+
+    def _dropradar_post(self, title, url):
+        low = title.lower()
+        if not self.RE_DROP_POST.search(low) or blocked_by(title, self._blocklist()):
+            return
+        store = store_in(title)
+        if "pokemon center" in low.replace("é", "e") and "queue" in low:
+            q = next((x for x in self.targets() if x.get("track_duration") and "pokemoncenter" in x.get("url", "")), {})
+            qst = self.state.get("targets", {}).get(q.get("name", ""), {})
+            hist = self.state.get("queue_history", [])
+            recent = qst.get("active") or any(
+                datetime.now(CT) - datetime.fromisoformat(h.get("end") or h["start"]) < timedelta(hours=1) for h in hist[-3:])
+            ours = ("✅ our checker saw it too" if recent else
+                    f"⚠️ our checker has NOT seen it ({qst.get('health') or 'not run yet'}) - open Pokémon Center now")
+            self.notify.send("urgent", f"📰 TCG Drop Radar: {title}"[:250], url,
+                             {"Our queue check": ours, "Open": "[pokemoncenter.com](https://www.pokemoncenter.com/)"},
+                             channel=["pokemon_queue", "pokemon"], ping=not recent,
+                             links=[("Open Pokémon Center", "https://www.pokemoncenter.com/")])
+            return
+        raffle = bool(re.search(r"drawing|raffle|lottery|invite", low))
+        self.notify.send("urgent" if raffle else "normal", f"📰 TCG Drop Radar: {title}"[:250], url,
+                         {"Store": STORE_NAMES.get(store, store or "—"), "Source": "TCG Drop Radar"},
+                         channel=[store, "pokemon"] if store else ["drawings" if raffle else "pokemon"],
+                         copy_to=["drawings"] if raffle and store else None, ping=raffle and is_etb_or_upc(title))
+
     def _quiet_topps_calendar(self, changes, t):
         """Status / time / removed changes: the board is edited where it is - no new post, no ping."""
         for c in changes:

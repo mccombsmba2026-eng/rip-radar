@@ -64,6 +64,14 @@ targets:
     browser: true
     interval_seconds: 300
 
+  # TCG Drop Radar's posts (public archive - no account): queue live / drawings / invites / restocks. A queue post is
+  # a second opinion on our own queue check (@everyone only if our checker hasn't seen that queue).
+  - name: TCG Drop Radar posts
+    type: dropradar_archive
+    url: https://buttondown.com/tcgdropradar/archive/
+    rss: [https://buttondown.com/tcgdropradar/rss]
+    interval_seconds: 120
+
   # ===== POKEMON RELEASE DATES -> drop calendar (🎴) =====
   # pokemon.com's monthly "Check Out Every Pokémon TCG Product Release in <Month> <Year>" (this month + next)
   - name: Pokémon releases (pokemon.com monthly)
