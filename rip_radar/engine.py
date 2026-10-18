@@ -431,9 +431,8 @@ class Engine:
 
     def queue_window(self, now=None):
         """Pokémon Center's usual drop window (tcgdropradar's log: weekdays ~10 AM-4 PM ET, never weekends, 2026
-        median 11:12 AM CT) = weekdays 9 AM-3 PM CT by default (Settings `queue_window`, "days": [] = off). Inside it the
-        queue is checked every 30 s, like drop mode, and Pokémon Center product scans run half as often so the queue
-        check is most of our Pokémon Center traffic."""
+        median 11:12 AM CT) = weekdays 9 AM-3 PM CT by default (Settings `queue_window`, "days": [] = off). Inside it
+        Pokémon Center product scans rest, so the once-a-minute queue check is the only Pokémon Center traffic."""
         w = settings_mod.load().get("queue_window", self.QUEUE_WINDOW)
         if not w:
             return False
@@ -492,8 +491,10 @@ class Engine:
                         self._run_target(t, {})
                     except Exception as e:
                         log.warning("queue watch: %s", e)
-            fast = bool(self.drop_mode()) or self.queue_window()
-            every = 30 if fast else 60
+            fast = bool(self.drop_mode())
+            # 1.0.66 (M: "it's gonna get the IP banned on PKC"): never faster than once a minute unless M turns on
+            # drop mode himself; overnight quiet hours (2-6 AM) every 2 min
+            every = 30 if fast else 60 * self._slow_factor()
             try:
                 self._queue_self_heal()
             except Exception as e:
@@ -622,7 +623,9 @@ class Engine:
                 continue
             report = {}
             pass_started = time.time()
-            pc_rest = self.drop_mode() or self._queue_blocked_streak() >= 2
+            # Pokémon Center product scans rest during drop mode, the weekday drop window (the queue check is then our
+            # ONLY Pokémon Center traffic: 60 requests an hour) and while the queue check is being turned away
+            pc_rest = self.drop_mode() or self.queue_window() or self._queue_blocked_streak() >= 2
             targets = [t for t in self.targets()
                        if not (t.get("track_duration") and self._queue_has_own_loop())
                        and not (pc_rest and t.get("store") == "pokemon")]
@@ -656,8 +659,6 @@ class Engine:
                     iv = t.get("interval_seconds", default_iv)
                     if t["type"] not in ("walmart_drawings",) and not t.get("track_duration"):
                         iv *= self._slow_factor()
-                        if "pokemoncenter.com" in t.get("url", "") and self.queue_window():
-                            iv *= 2         # the drop window: leave Pokémon Center to the queue check
                     self.next_due[t["name"]] = time.time() + iv * random.uniform(0.85, 1.15)
                 self._save_state()
                 time.sleep(random.uniform(1, 2.5))
@@ -1072,9 +1073,10 @@ class Engine:
                 w = settings_mod.load().get("queue_window", self.QUEUE_WINDOW)
                 end = int(w.get("end", 15))
                 mode = (f"\n🔴 **Drop window** (weekdays, when Pokémon Center usually drops) until "
-                        f"{end % 12 or 12} {'PM' if end >= 12 else 'AM'} CT · checking every 30 s")
+                        f"{end % 12 or 12} {'PM' if end >= 12 else 'AM'} CT · checked every minute, and it's the only "
+                        f"thing Rip Radar asks Pokémon Center for (product scans rest)")
             else:
-                mode = "\n-# Checked every minute · every 30 s on weekdays 9 AM–3 PM CT (the usual drop window)."
+                mode = "\n-# Checked every minute (every 2 min 2-6 AM)."
             rel_line = self.queue_reliability() if slug == "pokemon-center" else ""
             if rel_line:
                 mode += f"\n-# Reliability: {rel_line}"

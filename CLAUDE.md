@@ -250,7 +250,9 @@ captchas, and never automates purchases. Keep it that way.
   `LiveBoard.tick`: render() None = delete the old message, post nothing); EQL raffles (open / coming soon) are on it.
   PC QUEUE DROP WINDOW (`Engine.queue_window`, setting `queue_window` {"days": [0-4], "start": 9, "end": 15} CT,
   "days": [] = off; from tcgdropradar's log: weekdays ~10 AM-4 PM ET, median 11:12 AM CT - a summary, no live feed /
-  per-drop log to follow): queue every 30 s (60 s when blocked 3+), PC product scans x2 slower. Reliability counts
+  per-drop log to follow). 1.0.66 (M: worried about an IP ban): the window does NOT speed the queue up - it stays 60 s
+  (120 s in quiet hours 2-6 AM; 30 s ONLY in drop mode M turns on) and PC product scans REST in the window, so the
+  queue check is our only Pokémon Center traffic there (~60 requests/h). Reliability counts
   (`state["queue_checks"]` per day: checks / blocked, in-window) on the #pokemon-queue status line and in the health
   check (`queue_reliability`, `_queue_day_line`).
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
@@ -370,8 +372,8 @@ captchas, and never automates purchases. Keep it that way.
   reuses the parent's deleted _MEI folder: "Failed to load Python DLL". CI's "Relaunch check" step guards this.
 - Never commit secrets (webhooks, bot tokens, Twilio keys). The repo is public. They belong in the
   app's Settings screen only.
-- Keep scan intervals ≥ 60 s per source (exception: the Pokémon Center queue at 30 s in drop mode and in the weekday
-  drop window, 1.0.65).
+- Keep scan intervals ≥ 60 s per source (exception: the Pokémon Center queue at 30 s while drop mode is on - only
+  when M turns it on). Pokémon Center traffic stays minimal: M's home IP must never get banned there.
 - pywebview 6.x: `closing` handlers returning False cancel the close (used for hide-to-tray);
   `load_url`/`evaluate_js` block until the window is shown/ready (hidden windows still fire `shown`).
 - topps.com returns 403 to plain HTTP from data-center IPs (the build machine's selftest always shows
