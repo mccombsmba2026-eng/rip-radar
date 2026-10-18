@@ -344,7 +344,7 @@ def test_run_target_records_last_found(engine):
 def test_topps_launch_watcher_pings_new_raffle(engine):
     import yaml
     from rip_radar import paths as _p
-    src = next(t for t in yaml.safe_load(open("rip_radar/targets.yaml"))["targets"] if t["name"].startswith("Topps launches"))
+    src = next(t for t in yaml.safe_load(open("rip_radar/targets.yaml", encoding="utf-8"))["targets"] if t["name"].startswith("Topps launches"))
     calls = []
     engine.notify.send = lambda level, title, url="", fields=None, desc="", **kw: calls.append((title, url, kw))
     page1 = ('<a href="/en-US/">all</a><a href="/en-US/launch/2026-topps-tribute-baseball-hobby-box">Tribute</a>'
