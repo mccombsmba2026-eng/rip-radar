@@ -978,7 +978,7 @@ class Engine:
             st.pop("session_msg", None)
             self.notify.send("urgent", t.get("alert_title", "🚨 POKÉMON CENTER QUEUE IS LIVE"), t["url"],
                              {"Went up (CT)": self._clock(now), "Detected": detected},
-                             links=[("Join the queue", t["url"])], ping=True)
+                             links=[("Join the queue", t["url"])], ping=True, everyone_ok=True)
             if settings_mod.load().get("open_browser_on_queue", True):
                 # open the site in M's own Chrome right away, so the line is already up on screen when he
                 # gets to the PC - he joins it himself (the app never enters queues)
@@ -1274,6 +1274,12 @@ class Engine:
                     self.cards.retire(store, x["id"])
                     rec["carded"] = False
             for x, rec, event, ping in changed:
+                if ping and self.notify.everyone_only_in_watch():
+                    self.notify.everyone_copy(f"{event}: {x['name']}"[:250], x["url"],
+                                              {"Store": label, "Price": x.get("price"), "Stock": rec.get("stock") or
+                                               x.get("status"), "Focus": rec.get("focus")},
+                                              image=x.get("image", ""), links=self._buy_links(x), store=store)
+                    ping = False
                 self.cards.request(store, x["id"], rec, bump=bool(event), ping=ping, headline=event or "")
                 rec["carded"] = True
             # a post whose product hasn't been on the store page for 30+ min: say its price may be out of date
@@ -1861,12 +1867,17 @@ class Engine:
             key = f"{q.lower()}|{store}|{x['id']}|{event.split(' at ')[0]}"
             if key in sent:
                 continue
+            seen_ping = self.notify.__dict__.get("_everyone_recent", {}).get(x["url"].split("?")[0], 0)
+            if time.time() - seen_ping < 600:
+                sent[key] = time.time()                 # this drop already pinged #watch in the last 10 min
+                continue
             sent[key] = time.time()
             self.notify.send("urgent", f"👀 {event}: {x['name']}"[:250], x["url"],
                              {"Watching": q, "Price": x.get("price"), "Stock": rec.get("stock") or x.get("status"),
                               "💰 Deal": "", "Limit": x.get("limit")},
                              image=x.get("image", ""), links=self._buy_links(x), channel="watch", strict=True,
-                             store=store, product=True, ping=True, record=False)
+                             store=store, product=True, ping=True, record=False, everyone_ok=True)
+            self.notify.__dict__.setdefault("_everyone_recent", {})[x["url"].split("?")[0]] = time.time()
         if len(sent) > 5000:
             for k in sorted(sent, key=sent.get)[:1000]:
                 sent.pop(k)
@@ -2354,7 +2365,14 @@ class Engine:
                 rec.pop("sold_out_at", None)
             quiet_sold_out = rec["status"] == "Sold out" and not rec.get("carded")   # old sell-outs: no card
             if use_cards and not quiet_sold_out:
-                self.cards.request("topps", h, rec, bump=bool(event), ping=bool(event), headline=event)
+                tping = bool(event)
+                if tping and self.notify.everyone_only_in_watch():
+                    self.notify.everyone_copy(f"{event}: {rec['name']}"[:250], rec["url"],
+                                              {"Store": "Topps", "Price": rec.get("price"), "Status": rec.get("status"),
+                                               "Limit": rec.get("limit")}, image=rec.get("image", ""),
+                                              links=self._buy_links(rec), store="topps")
+                    tping = False
+                self.cards.request("topps", h, rec, bump=bool(event), ping=tping, headline=event)
                 rec["carded"] = True
             elif event:
                 self.notify.send("urgent", f"{event}: {rec['name']}", rec["url"],

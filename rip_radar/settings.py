@@ -37,6 +37,7 @@ DEFAULTS = {
     "resale_check": True,
     "watch_terms": [],
     "price_list_hour": 8,        # daily eBay price list refresh (CT hour); -1 = off
+    "everyone_only_in_watch": True,   # @everyone only in #watch (store channels post quietly); queue alerts excepted
     "watch_tcins": [],           # Target product IDs watched from #watch (`watch tcin 94681234`)
     "blocked_products": [],      # ❌ in Discord / `block <words>` in #watch: never posted
     "quiet_hours": [2, 6],           # store pages half as often 2-6 AM CT (queue + drawings stay full speed)

@@ -1155,3 +1155,22 @@ def test_price_list_lookup_jumps_the_background_line():
     rc.lookup("Pokémon Prismatic Evolutions Elite Trainer Box", priority=1)  # price list asks again
     pris = sorted(item[0] for item in list(rc.q.queue))
     assert pris == [1, 2]
+
+
+def test_everyone_only_in_watch(monkeypatch):
+    from rip_radar import notify as notify_mod
+    s = {"webhooks": {"walmart": "https://discord.com/api/webhooks/1/w", "watch": "https://discord.com/api/webhooks/2/x",
+                      "drawings": "https://discord.com/api/webhooks/3/d"}}
+    n = notify_mod.Notifier(lambda: s)
+    posted = []
+    monkeypatch.setattr(n, "_post_discord", lambda hook, payload, *a: posted.append((hook, payload.get("content"))) or True)
+    n.send("urgent", "🟢 IN STOCK: Pokémon TCG: Prismatic ETB", "https://www.walmart.com/ip/1", channel="walmart",
+           store="walmart", product=True, ping=True)
+    n.send("urgent", "🎟️ DRAWING: Pokémon TCG: Prismatic ETB", "https://www.walmart.com/ip/1", channel="drawings",
+           store="walmart", product=True, ping=True)
+    pings = [h for h, c in posted if c == "@everyone"]
+    assert pings == ["https://discord.com/api/webhooks/2/x"]                       # one @everyone, in #watch only
+    assert ("https://discord.com/api/webhooks/1/w", None) in posted and ("https://discord.com/api/webhooks/3/d", None) in posted
+    n.send("urgent", "🚨 POKÉMON CENTER QUEUE IS LIVE", "https://www.pokemoncenter.com/", channel="walmart",
+           ping=True, everyone_ok=True)
+    assert posted[-1] == ("https://discord.com/api/webhooks/1/w", "@everyone")    # queue alerts keep their ping

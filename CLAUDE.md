@@ -204,6 +204,12 @@ captchas, and never automates purchases. Keep it that way.
   waiting (+ the last eBay problem); failed items re-asked every 30 min (`_price_retry_at`); a refresh waits up to 45
   min before posting; fewer rows: high-end lines (`HOBBY_ONLY`: Impeccable, National Treasures, Crown Royale, Court
   Kings, Contenders, Prizm Draft Picks, Bowman University...) get Hobby only, and a bare "2025-26 Topps" row is dropped.
+- 1.0.60 @EVERYONE ONLY IN #WATCH (M, 10/18: store channels kept pinging): `settings["everyone_only_in_watch"]` (default
+  on, needs the watch webhook). `Notifier.send(ping=True)` to any channel other than #watch posts there QUIETLY and
+  makes ONE `Notifier.everyone_copy` in #watch (deduped per product link for 10 min, so store + #drawings +
+  #presales copies ping once). Product cards (stores + Topps) post quietly; the engine sends the #watch copy.
+  `_watch_alerts` posts count as that item's ping (and skip if it already pinged). Exceptions (`everyone_ok=True`):
+  the queue-live alerts (Pokémon Center / Crunchyroll) and the Topps calendar re-post (LiveBoard content).
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT
@@ -303,6 +309,7 @@ captchas, and never automates purchases. Keep it that way.
   Parser tests with fixtures live in `tests/test_retail.py`.
 
 ## Rules
+- Since 1.0.60 every product @everyone below lands in #watch only (store channels quiet) - see 1.0.60 note.
 - @everyone (`ping=True`) ONLY for: Pokémon Center queue going live; every Topps calendar change (as ONE re-posted
   calendar with the list of changes), Topps drops going live / 15-min / open now (in #topps); Topps formats listed or going live; and any ETB / UPC
   (`parsing.is_etb_or_upc`) loaded-not-in-stock, in stock, back in stock, or drawing - in any channel, incl. news;

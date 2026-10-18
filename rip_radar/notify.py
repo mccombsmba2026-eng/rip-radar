@@ -78,8 +78,28 @@ class Notifier:
     def set_channel(self, channel):
         self._local.channel = channel
 
+    EVERYONE_CHANNELS = {"watch"}           # where @everyone is allowed when everyone_only_in_watch is on
+
+    def everyone_only_in_watch(self):
+        s = self.get_settings()
+        return bool(s.get("everyone_only_in_watch", True)) and str((s.get("webhooks") or {}).get("watch") or "").startswith("http")
+
+    def everyone_copy(self, title, url="", fields=None, image="", links=None, store=None, desc=""):
+        """The ONE @everyone for a product event: posted in #watch (once per product link per 10 min, so a drop
+        that also goes to #drawings / #presales doesn't ping three times)."""
+        now = time.time()
+        recent = self.__dict__.setdefault("_everyone_recent", {})
+        for k in [k for k, t in recent.items() if now - t > 600]:
+            recent.pop(k)
+        key = (url or title).split("?")[0]
+        if key in recent:
+            return False
+        recent[key] = now
+        return self.send("urgent", title, url, fields, desc=desc, channel="watch", strict=True, image=image,
+                         links=links, store=store, product=bool(store), ping=True, record=False, everyone_ok=True)
+
     def send(self, level, title, url="", fields=None, desc="", channel=None, image="", links=None, strict=False,
-             record=True, copy_to=None, store=None, product=False, ping=False):
+             record=True, copy_to=None, store=None, product=False, ping=False, everyone_ok=False):
         """links: [(label, url)] shown as a row of clickable links (Add to cart, Buy now...). image: thumbnail.
         strict: only post if one of the wanted channels has its own webhook (never fall back to main).
         record: also show it in the app's alert list.
@@ -88,6 +108,12 @@ class Notifier:
         fields = {k: v for k, v in (fields or {}).items() if v}
         links = [(lbl, u) for lbl, u in (links or []) if u]
         channel = channel or getattr(self._local, "channel", None)
+        if ping and not everyone_ok and self.everyone_only_in_watch():
+            # M's rule: @everyone only in #watch. The post still goes to its channel (quietly) + one ping in #watch.
+            wanted0 = channel if isinstance(channel, (list, tuple)) else [channel]
+            if "watch" not in wanted0:
+                ping = False
+                self.everyone_copy(title, url, fields, image=image, links=links, store=store, desc=desc)
         if isinstance(channel, str):
             channel = channel_of(channel)
         log.info("ALERT [%s] %s %s", level, title, url)
