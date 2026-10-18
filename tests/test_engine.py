@@ -339,3 +339,23 @@ def test_run_target_records_last_found(engine):
     engine.check_fake = lambda t, st, first: ("ok (3 card products)", 200)
     engine._run_target(t, {})
     assert st.get("last_found_at")
+
+
+def test_topps_launch_watcher_pings_new_raffle(engine):
+    import yaml
+    from rip_radar import paths as _p
+    src = next(t for t in yaml.safe_load(open("rip_radar/targets.yaml"))["targets"] if t["name"].startswith("Topps launches"))
+    calls = []
+    engine.notify.send = lambda level, title, url="", fields=None, desc="", **kw: calls.append((title, url, kw))
+    page1 = ('<a href="/en-US/">all</a><a href="/en-US/launch/2026-topps-tribute-baseball-hobby-box">Tribute</a>'
+             '<a href="/en-US/launch/2026-topps-tribute-baseball-hobby-box/login">log in</a>')
+    st = {}
+    engine.fetcher = FakeFetch(page1, "https://launches.topps.com/en-US/")
+    engine.check_listing(dict(src), st, True)
+    assert calls == []
+    engine.fetcher = FakeFetch(page1 + '<a href="/en-US/launch/2026-topps-chrome-spongebob-hobby-box">2026 Topps Chrome '
+                               'SpongeBob - Hobby Box</a>', "https://launches.topps.com/en-US/")
+    engine.check_listing(dict(src), st, False)
+    (title, url, kw), = calls
+    assert "TOPPS RAFFLE" in title and "SpongeBob" in title and url.endswith("spongebob-hobby-box")
+    assert kw["ping"] is True and kw["copy_to"] == ["drawings"]

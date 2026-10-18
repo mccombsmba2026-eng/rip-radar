@@ -51,6 +51,23 @@ targets:
     link_pattern: "/(products|pages)/"
     include: [basketball, baseball, football, bowman]
 
+  # Topps' raffle / entry site (EQL): Topps runs its most wanted hobby boxes here (SpongeBob Chrome, Chrome F1,
+  # Tribute, Pristine, Definitive...) - you ENTER during a window instead of racing checkout. A new launch page
+  # = @everyone (in #watch) + #topps + #drawings. Alert only: M enters himself.
+  - name: Topps launches (EQL raffles)
+    channel: topps
+    type: listing
+    url: https://launches.topps.com/en-US/
+    browser: true
+    interval_seconds: 300
+    level: urgent
+    link_pattern: "/en-US/launch/[a-z0-9][a-z0-9-]+/?$"
+    label: "🎟️ TOPPS RAFFLE (EQL) open"
+    link_label: "ENTER ON TOPPS / EQL"
+    ping: true
+    copy_to: [drawings]
+    debug: true
+
   # ===== POKEMON CENTER =====
   # Checked every minute. @everyone the moment the queue (waiting room) is up, a message that keeps
   # counting how long it's been up, and the total time when it closes. Own channel if set, else Pokémon Center.
@@ -418,6 +435,17 @@ targets:
     interval_seconds: 180
     category: Pokémon
     must_have: [raffle, drawing, lottery, invite, entry, queue, pre-order, preorder, drop]
+    urgent_if: ["live now", "is live", "now open", "open now", "starts today", "today at", "tonight"]
+
+  # PokeBeach: usually first with Pokémon Center invite-only / lottery news. Same rule as every news feed: posted only
+  # when the headline is about cards AND a raffle / drawing / lottery / invite.
+  - name: News · PokeBeach
+    type: feed
+    route_by_store: true
+    url: https://www.pokebeach.com/feed
+    interval_seconds: 300
+    category: Pokémon
+    must_have: [raffle, drawing, lottery, invite, invitation, early access]
     urgent_if: ["live now", "is live", "now open", "open now", "starts today", "today at", "tonight"]
 
   - name: News · Pokémon Center queue & preorders

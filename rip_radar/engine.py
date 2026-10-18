@@ -812,8 +812,14 @@ class Engine:
                 name = found[h] or h
                 fields = {"Source": t["name"], "Category": t.get("category") or categorize(name + " " + h)}
                 self._when_fields(name[:120], h, extract_when(name), fields)
-                label = "New card product" if t.get("tcg_only") else "New product"
-                self.notify.send(t.get("level", "urgent"), f"{label} on {t['name']}: {name[:120]}", h, fields)
+                label = t.get("label") or ("New card product" if t.get("tcg_only") else "New product")
+                if blocked_by(name, self._blocklist()):
+                    continue
+                self.notify.send(t.get("level", "urgent"), f"{label} on {t['name']}: {name[:120]}", h, fields,
+                                 ping=bool(t.get("ping")), copy_to=t.get("copy_to"),
+                                 links=[(t.get("link_label", "Open"), h)] if t.get("link_label") else None)
+        if t.get("debug"):
+            self._save_debug(t["name"], html)
         st["links"] = list(seen | set(found))[-3000:]
         return f"ok ({len(found)} {'card ' if t.get('tcg_only') else ''}products)", status
 
@@ -1080,7 +1086,7 @@ class Engine:
             about_cards = bool(re.search(r"pok[eé]mon (?:tcg|cards?|center|trading)|pok[eé]mon\b.*\b(?:etb|elite trainer|"
                                          r"booster|collection|set|expansion|tin|bundle)|topps|bowman|trading card|\btcg\b|"
                                          r"elite trainer|booster (?:box|bundle|pack)", head))
-            is_raffle = any(w in head for w in ("drawing", "raffle", "lottery", "invite", "sweepstakes"))
+            is_raffle = any(w in head for w in ("drawing", "raffle", "lottery", "invite", "sweepstakes", "early access", " eql"))
             is_announcement = bool(re.search(
                 r"pre-?orders?|release date|releases?\b|releasing|launch(?:es|ing)?|revealed?|announce[sd]?|first look|"
                 r"coming (?:soon|to|in|this|next)|arriv(?:es|ing)|restock(?:ed|s|ing)?|back in stock|goes on sale|on sale "

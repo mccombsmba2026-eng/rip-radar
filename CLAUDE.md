@@ -227,6 +227,11 @@ captchas, and never automates purchases. Keep it that way.
   ✅ / 🟡 loads-but-found-nothing for 24 h (`st["last_found_at"]`: health "ok (N" with N>0, or ok without a count) /
   ❌ failing (since `bad_since`, last worked `last_ok_at`), plus queue, Target counts, Topps fast check, eBay, price
   list, bot, alerts in 24 h.
+- 1.0.63 NEW SOURCES: "Topps launches (EQL raffles)" = `listing` source on launches.topps.com/en-US/ (browser, 300 s,
+  link_pattern /en-US/launch/<slug>): Topps' entry-window raffles for its hottest hobby boxes; a new launch page =
+  "🎟️ TOPPS RAFFLE (EQL) open" in #topps + #drawings + @everyone (#watch). `listing` sources now take `label`,
+  `link_label`, `ping`, `copy_to`, `debug` (saves the page for diagnostics) and respect the ❌ blocklist.
+  "News · PokeBeach" RSS (Pokémon Center invite-only / lottery news first). News raffle words + "early access", "eql".
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT
