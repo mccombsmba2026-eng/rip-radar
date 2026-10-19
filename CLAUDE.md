@@ -291,6 +291,14 @@ captchas, and never automates purchases. Keep it that way.
   (`_product_date` also for presale). One-time `gamestop_rebaseline_1072` re-initialises GameStop sources so the
   Listed -> In stock switch isn't read as restocks. CVS -> /shop/brand-shop/p/pokemon. Stale "⏳ checking eBay…" lines
   are dropped when resale_check is off (`resale_cleanup_1072`).
+- 1.0.73 #WATCH = HOME OF THE FILTERED ITEMS (M, 10/19: "filtered items only in #watch, not the normal channels"):
+  a product that is ETB / UPC, a 🔥 focus-set box/bundle/ETB, on the @everyone list, or matches a typed #watch term
+  (`_watch_term_hit`) gets `rec["to_watch"]`; `ProductCards.hook_for` posts its ONE self-editing card in #watch
+  (watch webhook) instead of the store channel - footer/colour still say the store. A card whose routing changes is
+  deleted from the old channel and re-posted (`process` compares `old["hook"]`); retire deletes via the saved hook.
+  Events on a #watch card bump it with @everyone (no separate everyone_copy, no separate 👀 `_watch_alerts` post).
+  Same for Topps formats on the focus / @everyone list. Without a watch webhook nothing changes. #drawings /
+  #presales copies and Mat local restocks still post as before.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

@@ -146,6 +146,16 @@ class ProductCards:
     def enabled(self, store):
         return self.hook(store).startswith("http")
 
+    def watch_hook(self):
+        return (self.get_settings().get("webhooks") or {}).get("watch") or ""
+
+    def hook_for(self, store, rec):
+        """Products matching M's filters (ETB / UPC, 🔥 focus sets, @everyone products, #watch terms) live in #watch
+        ONLY (1.0.73) - one self-editing card there instead of the store channel."""
+        if rec and rec.get("to_watch") and self.watch_hook().startswith("http"):
+            return self.watch_hook()
+        return self.hook(store)
+
     def saved(self):
         return self.state.setdefault("product_cards", {})
 
@@ -230,16 +240,19 @@ class ProductCards:
     def process(self, key, store, rec, bump, ping, headline):
         saved = self.saved()
         old = saved.get(key) or {}
-        hook = self.hook(store)
-        if not hook.startswith("http"):
-            return
-        same_hook = old.get("hook") == hook and old.get("id")
         if rec is None:                                   # product gone from the store's listings
-            if same_hook:
-                self._call("DELETE", f"{hook}/messages/{old['id']}")
+            if old.get("id") and str(old.get("hook", "")).startswith("http"):
+                self._call("DELETE", f"{old['hook']}/messages/{old['id']}")
             with self.state_lock:
                 saved.pop(key, None)
             return
+        hook = self.hook_for(store, rec)
+        if not hook.startswith("http"):
+            return
+        same_hook = old.get("hook") == hook and old.get("id")
+        if old.get("id") and str(old.get("hook", "")).startswith("http") and old.get("hook") != hook:
+            # moved between a store channel and #watch: take the old message down so it lives in one place
+            self._call("DELETE", f"{old['hook']}/messages/{old['id']}")
         body = build_card(store, rec, headline if bump else "")
         sig = signature(build_card(store, rec))
         if same_hook and not bump:

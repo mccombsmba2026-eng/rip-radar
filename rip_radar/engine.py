@@ -1346,6 +1346,7 @@ class Engine:
             big = is_etb_or_upc(x["name"]) or focus["ping"]     # ETB / UPC / M's @everyone list: @everyone
             if store == "amazon" and x["status"].startswith("Drawing"):
                 big = True                                      # Amazon invite requests: always @everyone
+            to_watch = big or bool(self._watch_term_hit(x["name"], store))   # 1.0.73: lives in #watch only
             listed_at = (prev or {}).get("first_seen")
             up_before = ""
             if listed_at and not (prev or {}).get("live"):
@@ -1422,9 +1423,11 @@ class Engine:
                                     {**extra, "Releases": rel.group(1) if rel else ""}, channel="presale", store=store,
                                     ping=False, strict=True, record=False)
                 rec["presale_posted"] = True
-            if event:
+            rec["to_watch"] = to_watch
+            in_watch = to_watch and use_cards and self.cards.watch_hook().startswith("http")
+            if event and not in_watch:                  # a #watch card already says it (with @everyone)
                 self._watch_alerts(store, x, rec, event)
-            changed.append((x, rec, event, big and bool(event)))
+            changed.append((x, rec, event, (big or in_watch) and bool(event)))
         if store == "target":
             self._refresh_target_stock(html, [c for c in changed], st)
         elif t.get("stock_pages", 2):
@@ -1440,7 +1443,9 @@ class Engine:
                     self.cards.retire(store, x["id"])
                     rec["carded"] = False
             for x, rec, event, ping in changed:
-                if ping and self.notify.everyone_only_in_watch():
+                if ping and rec.get("to_watch") and self.cards.watch_hook().startswith("http"):
+                    pass                                # its card IS in #watch: that post carries the @everyone
+                elif ping and self.notify.everyone_only_in_watch():
                     self.notify.everyone_copy(f"{event}: {x['name']}"[:250], x["url"],
                                               {"Store": label, "Price": x.get("price"), "Stock": rec.get("stock") or
                                                x.get("status"), "Focus": rec.get("focus")},
@@ -2041,6 +2046,16 @@ class Engine:
                         "use fewer words, or it may not be carried right now (a watch still catches it later)."]
             return [f"🔎 `{rest}` would catch **{len(hits)}** ({live} in stock):\n" + "\n".join(lines)]
         return [self.WATCH_HELP]
+
+    def _watch_term_hit(self, name, store):
+        """The #watch term (typed `watch …`) a product name matches, if any."""
+        for q in settings_mod.load().get("watch_terms") or []:
+            try:
+                if watch_match(parse_watch(q), name, store):
+                    return q
+            except Exception:
+                continue
+        return ""
 
     def _watch_alerts(self, store, x, rec, event):
         """A product with news (loaded / in stock / back / drawing) that matches a #watch term -> @everyone there."""
@@ -2797,7 +2812,9 @@ class Engine:
                     self.cards.retire("topps", h)
                     rec["carded"] = False
                 continue
-            rec["focus"] = self._focus(rec.get("name", ""))["focus"]
+            fm = self._focus(rec.get("name", ""))
+            rec["focus"] = fm["focus"]
+            rec["to_watch"] = bool(fm["ping"] or self._watch_term_hit(rec.get("name", ""), "topps"))
             event = ""
             if new and not rec.get("baseline"):
                 rec["loaded_before_stock"] = not rec["live"]
@@ -2813,7 +2830,9 @@ class Engine:
             quiet_sold_out = rec["status"] == "Sold out" and not rec.get("carded")   # old sell-outs: no card
             if use_cards and not quiet_sold_out:
                 tping = bool(event)
-                if tping and self.notify.everyone_only_in_watch():
+                if rec["to_watch"] and self.cards.watch_hook().startswith("http"):
+                    pass                                # its card lives in #watch and carries the @everyone
+                elif tping and self.notify.everyone_only_in_watch():
                     self.notify.everyone_copy(f"{event}: {rec['name']}"[:250], rec["url"],
                                               {"Store": "Topps", "Price": rec.get("price"), "Status": rec.get("status"),
                                                "Limit": rec.get("limit")}, image=rec.get("image", ""),

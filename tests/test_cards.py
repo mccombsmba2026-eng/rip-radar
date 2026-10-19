@@ -1204,3 +1204,19 @@ def test_target_bot_check_pauses_all_stock_requests():
     finally:
         stock.GUARD.clear()
         stock.GUARD.update(saved)
+
+
+def test_filtered_products_live_in_watch_only():
+    state = {}
+    cards = ProductCards(lambda: {"webhooks": {"walmart": "https://wm", "watch": "https://watch"}}, state, pace=0)
+    cards.http = d = FakeDiscord()
+    rec = {"name": "Pokémon TCG: Delta Reign Elite Trainer Box", "url": "u", "price": "$49.99", "live": True,
+           "status": "In stock"}
+    cards.process("walmart:1", "walmart", rec, False, False, "")                    # posted before 1.0.73: #walmart
+    assert d.calls[-1][:2] == ("POST", "https://wm?wait=true")
+    cards.process("walmart:1", "walmart", {**rec, "to_watch": True}, False, False, "")   # now a filtered item
+    assert [c[:2] for c in d.calls[-2:]] == [("DELETE", "https://wm/messages/m1"), ("POST", "https://watch?wait=true")]
+    cards.process("walmart:1", "walmart", {**rec, "to_watch": True}, True, True, "🟢 BACK IN STOCK at Walmart")
+    assert d.calls[-1][1] == "https://watch?wait=true" and d.calls[-1][2]["content"] == "@everyone"
+    cards.process("walmart:1", "walmart", None, False, False, "")
+    assert d.calls[-1][:2] == ("DELETE", "https://watch/messages/m3")
