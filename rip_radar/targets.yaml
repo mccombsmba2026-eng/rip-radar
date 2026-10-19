@@ -88,6 +88,7 @@ targets:
     interval_seconds: 21600
   # pokemonrestock.com's drop calendar (Target / Walmart / Walmart Draw / Pokémon Center) - drawn in the browser
   - name: Drop tracker calendar (pokemonrestock.com)
+    disabled: true   # 1.0.71: it's a log of PAST drops ("Recent Drops · Oct 9 (16 items)"), never upcoming ones
     type: release_schedule
     grid: true
     url: https://pokemonrestock.com/
@@ -225,7 +226,7 @@ targets:
     browser: true
     channel: dicks
     verify_pages: 1
-    interval_seconds: 300
+    interval_seconds: 900     # 1.0.71: Dick's blocked M's home IP for 12 h on 10/18 - check gently
 
   - name: Dick's · sports cards
     type: retail_search
@@ -236,7 +237,7 @@ targets:
     browser: true
     channel: dicks
     verify_pages: 1
-    interval_seconds: 300
+    interval_seconds: 900     # 1.0.71: Dick's blocked M's home IP for 12 h on 10/18 - check gently
 
   - name: Best Buy · Pokémon cards
     type: retail_search
@@ -321,6 +322,7 @@ targets:
     interval_seconds: 420
 
   - name: CVS · trading cards
+    disabled: true   # 1.0.71: CVS's search never draws its product grid for the scanner (10/18 diagnostics: an empty grid only)
     type: retail_search
     store: cvs
     products: cards
@@ -422,6 +424,7 @@ targets:
   # Crunchyroll Store (shares the Hot Topic channel + webhook). Sells Pokémon TCG, no sports cards: one scan of its
   # trading-cards collection (search is robots-blocked), plus a queue watcher like Pokémon Center's.
   - name: Crunchyroll · Pokémon cards
+    disabled: true   # 1.0.71: Crunchyroll's store moved to crunchyroll.com/store and dropped its trading-cards section; the old link now opens all 657 anime products
     type: retail_search
     store: crunchyroll
     cards_only: true

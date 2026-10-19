@@ -518,3 +518,19 @@ def test_dropradar_falls_back_to_browser(engine):
     t = {"name": "TCG Drop Radar posts", "type": "dropradar_archive", "url": "https://buttondown.com/tcgdropradar/archive/",
          "rss": ["https://buttondown.com/tcgdropradar/rss"]}
     assert engine.check_dropradar_archive(t, {}, True)[0] == "ok (2 posts)"
+
+
+def test_site_ban_page_pauses_the_site(engine):
+    sent = []
+    engine.notify.send = lambda level, title, url="", fields=None, desc="", **kw: sent.append(title)
+    ban = ("<html><head><title>Site Unavailable</title></head><body><h1>Site Unavailable</h1><p>We're sorry! The site is "
+           "currently unavailable. Our team is working to resolve the issue. Please try again after 12 hours. Thank you "
+           "for your patience and understanding.</p><p>Error: 0.abc IP: 203.0.113.9</p></body></html>")
+    t = {"name": "Dick's · Pokémon cards", "type": "retail_search", "store": "dicks", "browser": True,
+         "url": "https://www.dickssportinggoods.com/search/SearchDisplay?searchTerm=pokemon+cards"}
+    engine.fetcher = FakeFetch(ban, t["url"])
+    status, _, _ = engine._fetch(t, {})
+    assert status == 403 and engine._site_banned(t)
+    assert sent and sent[0].startswith("⛔ Dick's has blocked your home internet for 12 h")
+    engine._fetch(t, {})
+    assert len(sent) == 1                                   # said once

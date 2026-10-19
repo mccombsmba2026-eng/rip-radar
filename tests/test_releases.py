@@ -93,3 +93,28 @@ def test_eql_links_and_page():
 def test_similar():
     assert similar("Pokémon TCG: Mega Evolution—Delta Reign Elite Trainer Box", "Mega Evolution Delta Reign Elite Trainer Box")
     assert not similar("Delta Reign Elite Trainer Box", "Delta Reign Booster Bundle")
+
+
+PRESS_REAL = """<table class="tableSchedule"><tbody>
+<tr class=""><td class="td-prod"><a class="prod-name" href="/en/products/Pokemon-TCG-Mega-EvolutionDelta-Reign">Pokémon TCG:
+ Mega Evolution—Delta Reign</a></td><td class="td-plat"> </td><td class="td-date">
+November 6, 2026
+</td></tr>
+<tr class=""><td class="td-prod"><a class="prod-name" href="/en/products/Pokemon-TCG-30th-Celebration">Pokémon TCG: 30th
+ Celebration</a></td><td class="td-plat"> </td><td class="td-date">September 16, 2026</td></tr></tbody></table>"""
+
+
+def test_press_schedule_sets():
+    from rip_radar.releases import press_schedule
+    got = press_schedule(PRESS_REAL, "https://press.pokemon.com/en/Items/Schedule/Pokemon-Trading-Card-Game")
+    assert [(g["name"], g["when"].month, g["when"].day, g["set"]) for g in got] == [
+        ("Pokémon TCG: Mega Evolution—Delta Reign", 11, 6, True), ("Pokémon TCG: 30th Celebration", 9, 16, True)]
+    assert got[0]["url"] == "https://press.pokemon.com/en/products/Pokemon-TCG-Mega-EvolutionDelta-Reign"
+
+
+def test_article_skips_related_story_links():
+    html = ("<h2>October 2</h2><ul><li>Pokémon TCG: 30th Celebration Mini Tin</li></ul>"
+            "<a href='/x'>Highlighting 10 Cards from the Pokémon TCG: 30th Celebration Classic Collection</a><p>October 14</p>"
+            "<a href='/y'>Sneak a Peek at Cards from the Mega Evolution—Delta Reign Expansion</a><p>October 5</p>")
+    names = {i["name"] for i in dated_products(html, "https://pokemon.com/a", NOW)}
+    assert names == {"Pokémon TCG: 30th Celebration Mini Tin"}

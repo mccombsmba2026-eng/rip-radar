@@ -73,7 +73,7 @@ def dated_products(html, base_url="", now=None):
 
     def add(i, when):
         name = _clean_name(blocks[i]["text"])
-        if not name or not _is_product(name) or (name.lower(), when.date()) in used:
+        if not name or not _is_product(name) or RE_NOT_A_RELEASE.search(name) or (name.lower(), when.date()) in used:
             return
         used.add((name.lower(), when.date()))
         found.append({"name": name, "when": when,
@@ -108,6 +108,34 @@ def dated_products(html, base_url="", now=None):
                 continue                           # its own date line follows - handled there
             add_i(i, last_date)
     return found
+
+
+RE_NOT_A_RELEASE = re.compile(r"^(?:highlighting|sneak a peek|check out|get a look|take a look|meet|discover|learn|"
+                              r"see |explore|watch|read|how |why |what |top \d|\d+ cards|a look at|first look)|cards from",
+                              re.I)
+
+
+def press_schedule(html, base_url=""):
+    """press.pokemon.com's product schedule: a table of SETS (td.td-prod a.prod-name + td.td-date "November 6, 2026").
+    -> [{"name", "when", "url", "set": True}] (every row; the caller keeps the future ones)."""
+    soup = BeautifulSoup(html or "", "html.parser")
+    out = []
+    for tr in soup.select("tr"):
+        a = tr.select_one("td.td-prod a, a.prod-name")
+        d = tr.select_one("td.td-date")
+        if not a or not d:
+            continue
+        txt = " ".join(d.get_text(" ").split())
+        m = re.search(r"([A-Z][a-z]+)\.?\s+(\d{1,2}),\s*(20\d\d)", txt)
+        if not m or m.group(1)[:3].lower() not in MONTHS:
+            continue
+        try:
+            when = datetime(int(m.group(3)), MONTHS[m.group(1)[:3].lower()], int(m.group(2)), 9, tzinfo=CT)
+        except ValueError:
+            continue
+        name = " ".join(a.get_text(" ").split())
+        out.append({"name": name, "when": when, "url": urljoin(base_url, a.get("href", "")), "set": True})
+    return out
 
 
 def article_anchor(url, html=""):

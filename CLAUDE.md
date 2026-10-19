@@ -270,6 +270,19 @@ captchas, and never automates purchases. Keep it that way.
   ["queue"]. `notify.last_sms_error` keeps Twilio's last refusal. 1.0.69: HTTP header values must be latin-1 - the
   1.0.68 ntfy "Title" had 🚨 and raised UnicodeEncodeError (not a RequestException), killing the alarm AND the text
   after Discord had posted. Titles are ASCII now (emoji via ntfy `Tags`), and both phone sends catch every Exception.
+- 1.0.71 (M's 10/18 7:25 PM diagnostics): DICK'S BANNED M's IP ("Site Unavailable ... Please try again after 12 hours
+  ... IP: …") -> `_note_ban` (in `_fetch`: "try again after/in N hours" on a short page) = `state["site_bans"][site]`
+  for N h (≤24), `_site_banned` skips that site's sources, one "⛔ … has blocked your home internet" post; "site
+  unavailable" / "please try again after" are BLOCK_MARKERS; Dick's interval 900 s. PC QUEUE: Imperva "Request
+  unsuccessful" from ~6 PM through 2 self-heal restarts (each restart's first pass also hit PC product pages) ->
+  any blocked PC check (queue or product) sets `state["pc_cooldown_until"]` +1 h (PC product scans rest, survives
+  restarts); queue blocked 8+ in a row -> every 5 min (3 min in the drop window). PRESS SITE = a table of SETS
+  (`releases.press_schedule`: td.td-prod a.prod-name + td.td-date) -> "<set> (set release)" on the calendar
+  (`_add_pokemon_release(set_release=True)`); newest Delta Reign Nov 6. pokemon.com: related-story links
+  ("Highlighting 10 Cards…", "Sneak a Peek…") skipped (`RE_NOT_A_RELEASE`); next month's article 404s until published.
+  `disabled: true` in targets.yaml turns a built-in source off: CVS (grid never draws), Crunchyroll cards (store moved to
+  crunchyroll.com/store/products/<slug>/<UPC>, no trading-cards section - id regex updated anyway), pokemonrestock
+  (a log of past drops). Diagnostics zip: Discord webhook / Twilio account ids in the log are replaced by <hidden>.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

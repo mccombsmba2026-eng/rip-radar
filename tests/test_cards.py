@@ -308,7 +308,7 @@ def test_new_store_product_links_and_shared_pharmacy_channel(engine):
     cards = ProductCards(lambda: {"webhooks": {"pharmacy": "https://ph"}}, {})
     assert cards.hook("cvs") == cards.hook("walgreens") == "https://ph"
     names = {t["name"] for t in engine.targets()}
-    assert {"Costco · Pokémon cards", "Sam's Club · sports cards", "CVS · trading cards", "Walgreens · trading cards",
+    assert {"Costco · Pokémon cards", "Sam's Club · sports cards", "Walgreens · trading cards",
             "Ace Hardware · Pokémon cards", "Barnes & Noble · trading cards"} <= names
 
 
@@ -317,7 +317,7 @@ def test_new_store_etb_gets_everyone(engine):
     queued = []
     engine.cards.request = lambda store, pid, rec, bump=False, ping=False, headline="": queued.append((store, pid, ping))
     engine.notify.send = lambda *a, **k: None
-    t = next(x for x in engine.targets() if x["name"] == "CVS · trading cards")
+    t = next(x for x in engine.builtin["targets"] if x["name"] == "CVS · trading cards")   # disabled in 1.0.71
 
     def tile(pid, name, price):
         return (f'<div><a href="/shop/{name.lower().replace(" ", "-")}-prodid-{pid}"><img alt="{name}" src="https://i/{pid}.jpg">'
@@ -953,7 +953,12 @@ def test_crunchyroll_store_and_queue(engine):
     assert engine._queue_site(cr) == ("Crunchyroll Store", "crunchyroll-store") and cr["channel"] == "hottopic"
     pc = next(t for t in q if "pokemoncenter" in t["url"])
     assert engine._queue_site(pc) == ("Pokémon Center", "pokemon-center")
-    assert any(t.get("store") == "crunchyroll" and t["type"] == "retail_search" for t in engine.targets())
+    # 1.0.71: Crunchyroll dropped its trading-cards section - the product scan is off, the queue watch stays
+    assert not any(t.get("store") == "crunchyroll" and t["type"] == "retail_search" for t in engine.targets())
+    from rip_radar.parsing import RETAIL_STORES
+    import re as _re
+    assert _re.search(RETAIL_STORES["crunchyroll"]["id"],
+                      "https://www.crunchyroll.com/store/products/pokemon-tcg-etb/196214112345").group(1) == "196214112345"
 
 
 SOLD_HTML = "<ul>" + "".join(

@@ -293,7 +293,12 @@ class Api:
                     z.write(f, f"pages/{f.name}")
                 for f in (paths.LOG_FILE, paths.TOPPS_CSV):
                     if f.exists():
-                        z.write(f, f.name)
+                        # the log can quote a Discord webhook address in an error line: never ship those
+                        import re as _re
+                        txt = f.read_text(encoding="utf-8", errors="ignore")
+                        txt = _re.sub(r"(discord(?:app)?\.com/api/webhooks/)\d+/[\w-]+", r"\1<hidden>", txt)
+                        txt = _re.sub(r"(api\.twilio\.com/[^\s]*Accounts/)\w+", r"\1<hidden>", txt)
+                        z.writestr(f.name, txt)
                 snap = self._app.engine.snapshot()
                 z.writestr("status.json", json.dumps({"version": snap["version"], "health": snap["health"],
                                                       "topps": snap["topps"], "topps_formats": snap["topps_formats"],

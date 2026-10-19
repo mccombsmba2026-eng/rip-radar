@@ -14,7 +14,7 @@ CT = ZoneInfo("America/Chicago")
 BLOCK_MARKERS = ["robot or human", "access denied", "incapsula", "px-captcha",
                  "verify you are human", "are you a robot", "request unsuccessful",
                  "captcha", "pardon our interruption", "just a moment", "attention required",
-                 "checking your browser", "cf-chl"]
+                 "checking your browser", "cf-chl", "site unavailable", "please try again after"]
 # pages a real browser gets past on its own if we wait a few seconds
 CHALLENGE_MARKERS = ["just a moment", "checking your browser", "cf-chl", "please wait while we verify",
                      "pardon our interruption"]
@@ -591,7 +591,7 @@ RETAIL_STORES = {
     # store.crunchyroll.com/products/<name>-<UPC>.html (the name part can be empty: /products/-0196214132474.html)
     # collectorstore.com (Shopify): read through the collection's products.json, ids = Shopify product ids
     "collectorstore": {"label": "Collector Store", "id": r"/products/([a-z0-9-]+)", "shopify": True},
-    "crunchyroll": {"label": "Crunchyroll Store", "id": r"/products/[^/?#]*?(\d{10,14})\.html"},
+    "crunchyroll": {"label": "Crunchyroll Store", "id": r"/products/[^?#]*?[-/](\d{10,14})(?:\.html)?(?:[/?#]|$)"},
 }
 LIVE_WORDS = ("add to cart", "add to bag", "add for shipping", "add for pickup", "add for delivery", "buy now",
               "ship it", "pick it up", "deliver it", "add to basket")

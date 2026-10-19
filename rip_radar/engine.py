@@ -512,7 +512,9 @@ class Engine:
             if streak >= 3:
                 # Pokémon Center keeps turning the check away: check less often so its bot check cools off
                 # (the product scans there are already paused) - hammering it keeps us blocked longer
-                every = 60 if fast else (180 if streak >= 8 else 120)
+                # 1.0.71: a long block (Imperva "Request unsuccessful" on 10/18 for 1.5 h+) -> every 5 min outside
+                # the weekday drop window, so we stop feeding the block; TCG Drop Radar is the backup meanwhile
+                every = 60 if fast else (120 if streak < 8 else (180 if self.queue_window() else 300))
             self._stop.wait(max(5, every - (time.time() - started)))
 
     SELF_HEAL_STREAK = 5          # ~10 min of blocked checks (they slow to 2 min apart once blocked)
@@ -589,7 +591,7 @@ class Engine:
     def targets(self):
         s = settings_mod.load()
         disabled = set(s.get("disabled_sources", []))
-        out = [dict(t) for t in self.builtin["targets"] if t["name"] not in disabled]
+        out = [dict(t) for t in self.builtin["targets"] if t["name"] not in disabled and not t.get("disabled")]
         presets = self.builtin.get("watch_presets", {})
         for p in s.get("watch_pages", []):
             if not p.get("enabled", True) or not p.get("url", "").startswith("http"):
@@ -634,7 +636,8 @@ class Engine:
             pass_started = time.time()
             # Pokémon Center product scans rest during drop mode, the weekday drop window (the queue check is then our
             # ONLY Pokémon Center traffic: 60 requests an hour) and while the queue check is being turned away
-            pc_rest = self.drop_mode() or self.queue_window() or self._queue_blocked_streak() >= 2
+            pc_rest = (self.drop_mode() or self.queue_window() or self._queue_blocked_streak() >= 2
+                       or time.time() < self.state.get("pc_cooldown_until", 0))
             targets = [t for t in self.targets()
                        if not (t.get("track_duration") and self._queue_has_own_loop())
                        and not (pc_rest and t.get("store") == "pokemon")]
@@ -649,7 +652,8 @@ class Engine:
                        and (t["type"] == "walmart_drawings" or t.get("track_duration")   # never paused
                             or (now >= self.host_backoff.get(self._host(t), (0, 0))[0]
                                 and now >= self.host_backoff.get(self._site(t.get("url", "")), (0, 0))[0]
-                                and not self._over_budget(t)))]
+                                and not self._over_budget(t)
+                                and not self._site_banned(t)))]
                 if not due:
                     break
                 due.sort(key=lambda t: -(now - self.next_due.get(t["name"], 0)) / t.get("interval_seconds", default_iv))
@@ -776,6 +780,10 @@ class Engine:
             status, final, html = self.fetcher.get(t["url"], True)
         if getattr(getattr(self.fetcher, "browser_fetch", None), "last_challenge", False):
             self._ease_off(t["url"], "made the scanner wait on a bot check")
+        if self._note_ban(t, html):
+            return 403, final, html          # counts as blocked, not "empty"
+        if "pokemoncenter.com" in t.get("url", "") and looks_blocked(status, html):
+            self.state["pc_cooldown_until"] = time.time() + 3600   # PC product scans rest an hour (even over restarts)
         return status, final, html
 
     # ------------------------------------------------------------ staying under the radar (one home IP, no proxies)
@@ -807,6 +815,32 @@ class Engine:
         b = dict(self.SITE_BUDGET)
         b.update(settings_mod.load().get("site_budgets") or {})
         return int(b.get(site, b["default"]))
+
+    RE_BAN = re.compile(r"try again (?:after|in) (\d{1,2}) hours?", re.I)
+
+    def _note_ban(self, t, html):
+        """A site's own 'come back in N hours' page (Dick's, 10/18: 'Site Unavailable ... Please try again after 12
+        hours ... IP: <M's IP>') = it has blocked this home connection. Stop asking that site for those hours - every
+        request while banned can extend it - and say so once."""
+        m = self.RE_BAN.search(BeautifulSoup(html or "", "html.parser").get_text(" ")[:5000]) if len(html or "") < 20000 else None
+        if not m:
+            return False
+        site = self._site(t.get("url", ""))
+        hours = min(24, max(1, int(m.group(1))))
+        bans = self.state.setdefault("site_bans", {})
+        if bans.get(site, 0) > time.time():
+            return True
+        bans[site] = time.time() + hours * 3600
+        until = datetime.now(CT) + timedelta(hours=hours)
+        self.notify.send("system", f"⛔ {STORE_NAMES.get(t.get('store'), site)} has blocked your home internet for "
+                                   f"{hours} h", t.get("url", ""),
+                         {"Rip Radar stops checking it until": f"{fmt_when(until)} CT",
+                          "Why": "Its own page says to try again in a few hours. Asking again while blocked can make "
+                                 "the block longer, so the app leaves it alone."})
+        return True
+
+    def _site_banned(self, t):
+        return self.state.get("site_bans", {}).get(self._site(t.get("url", "")), 0) > time.time()
 
     def _over_budget(self, t):
         """A site's hourly page budget is spent: hold its sources until the oldest page ages out (drawings exempt)."""
@@ -925,6 +959,8 @@ class Engine:
             self._save_debug(f"{slug}-queue-page", f"<!-- {final} -->\n" + (html or ""))
         if blocked and not active:
             st["blocked_streak"] = st.get("blocked_streak", 0) + 1
+            if slug == "pokemon-center":
+                self.state["pc_cooldown_until"] = time.time() + 3600
             if was is not True:
                 self._queue_watch(t, st, f"⚠️ **Couldn't check the {site} queue** at {self._clock(now)} CT · the "
                                          f"site turned the check away. Retrying every minute.")
@@ -2345,13 +2381,15 @@ class Engine:
                              channel=["topps", "main"], ping=True, record=False)
 
     # ------------------------------------------------------------ Pokémon release dates (1.0.64)
-    def _add_pokemon_release(self, name, when, url, source, store=""):
+    def _add_pokemon_release(self, name, when, url, source, store="", set_release=False):
         """An official / announced Pokémon release date -> the drop calendar (🎴). The same product from another
         source (press site vs pokemon.com vs a drop tracker) is kept once."""
         if when < datetime.now(CT) - timedelta(days=1) or blocked_by(name, self._blocklist()):
             return False
-        if not is_card_only(name) and not re.search(r"booster|elite trainer|collection|tin|bundle|box|blister|deck",
-                                                      name, re.I):
+        if set_release:          # press site: a whole set's release day ("Mega Evolution—Delta Reign")
+            name = f"{name} (set release)"
+        elif not is_card_only(name) and not re.search(r"booster|elite trainer|collection|tin|bundle|box|blister",
+                                                        name, re.I):
             return False
         for ev in self.state.get("events", {}).values():
             if ev.get("kind") == "pokemon" and ev["start"][:10] == when.date().isoformat() and \
@@ -2405,8 +2443,9 @@ class Engine:
             st["items"] = len(items)
             return (f"ok ({len(items)} drops on the calendar · {len(future)} upcoming · {new} new)" if items
                     else "ok (0 drops listed on the calendar)"), status
-        items = rel.dated_products(html, final, now - timedelta(days=30))
-        new = sum(self._add_pokemon_release(i["name"], i["when"], i["url"], t["name"]) for i in items)
+        items = rel.press_schedule(html, final) or rel.dated_products(html, final, now - timedelta(days=30))
+        new = sum(self._add_pokemon_release(i["name"], i["when"], i["url"], t["name"], set_release=i.get("set", False))
+                  for i in items)
         future = [i for i in items if i["when"].date() >= now.date()]
         latest = max((i["when"] for i in items), default=None)
         st["latest"] = latest.date().isoformat() if latest else ""
