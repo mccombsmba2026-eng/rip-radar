@@ -136,3 +136,25 @@ def test_ace_hardware_pokemon_page():
                                           "Pokemon Prismatic Evolutions Elite Trainer Box Trading Cards",
                                           "Pokemon Pitch Black 3-Booster Blister Trading Cards"]
     assert all(x["live"] and is_pokemon_product(x["name"]) for x in tiles)
+
+
+def test_gamestop_preorders_from_page_data():
+    import html as _h
+    import json as _j
+    from rip_radar.parsing import parse_retail_tiles
+
+    def tile(pid, name, pre, avail, rel):
+        d = {"id": pid, "url": f"/toys-games/trading-cards/products/{name.lower().replace(' ', '-')}/{pid}.html",
+             "name": name, "price": {"base": "89.99", "sale": None}, "releaseDate": rel,
+             "availability": {"readyToOrder": avail, "available": avail, "preorder": pre},
+             "image": {"base": f"https://media.gamestop.com/i/gamestop/{pid}/x?"}}
+        return (f'<div class="product-tile"><a href="{d["url"]}" aria-label="{name}" data-gtmdata="{_h.escape(_j.dumps(d))}">'
+                f'{name}</a><div class="render-tile-release-date">Release Date {rel}</div></div>')
+    page = (tile("452550", "Pokemon Trading Card Game: Delta Reign Elite Trainer Box", True, True, "11/27/2026")
+            + tile("421999", "Pokemon Trading Card Game: Perfect Order Booster Bundle", False, True, "")
+            + tile("421998", "Pokemon Trading Card Game: 30th Celebration Knock Out Collection", False, False, ""))
+    t = {x["id"]: x for x in parse_retail_tiles(page, "https://www.gamestop.com/search/?q=pokemon", "gamestop")}
+    assert t["452550"]["status"] == "Pre-order" and t["452550"]["presale"] and t["452550"]["live"]
+    assert "Release Date 11/27/2026" in t["452550"]["text"] and t["452550"]["price"] == "$89.99"
+    assert t["421999"]["status"] == "In stock" and not t["421999"]["presale"]
+    assert t["421998"]["status"] == "Out of stock" and not t["421998"]["live"]

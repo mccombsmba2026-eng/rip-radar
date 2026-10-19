@@ -128,3 +128,23 @@ def test_drop_calendar_reposts_only_for_new_links(engine):
     engine._add_event("Walmart drawing: UPC", "https://walmart.com/ip/2", d, True, "drawing", "walmart")
     engine.calendar_tick()
     assert posted == [True]
+
+
+def test_gamestop_preorder_gets_one_quiet_presale_copy(engine):
+    import html as _h
+    import json as _j
+    d = {"id": "452550", "url": "/toys-games/trading-cards/products/delta-reign-etb/452550.html",
+         "name": "Pokemon Trading Card Game: Delta Reign Elite Trainer Box", "price": {"base": "89.99"},
+         "releaseDate": "11/27/2030", "availability": {"available": True, "preorder": True}}
+    pg = (f'<div class="product-tile"><a href="{d["url"]}" data-gtmdata="{_h.escape(_j.dumps(d))}">{d["name"]}</a>'
+          f'<div>Release Date 11/27/2030</div></div>' + PAD)
+    t = {"name": "GameStop · Pokémon cards", "type": "retail_search", "store": "gamestop", "products": "pokemon",
+         "url": "https://www.gamestop.com/search/?q=pokemon"}
+    calls = []
+    engine._product_alert = lambda level, title, x, label, extra=None, channel=None, **kw: calls.append((title, channel, kw))
+    st = {}
+    engine.fetcher = FakeFetch(pg, t["url"])
+    engine.check_retail_search(t, st, True)          # already up on the first look: still one quiet #presales copy
+    engine.check_retail_search(t, st, False)
+    pres = [c for c in calls if c[1] == "presale"]
+    assert len(pres) == 1 and pres[0][0].startswith("🛍️ PRESALE") and pres[0][2]["ping"] is False

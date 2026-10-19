@@ -126,6 +126,13 @@ class Engine:
                         if isinstance(rec, dict) and rec.get("resale") in (self.RESALE_WAIT, self.RESALE_FAIL):
                             rec.pop("resale", None)
                             rec["resale_cleared"] = True        # its card is re-edited on the next change
+        if not self.state.get("gamestop_rebaseline_1072"):
+            # 1.0.72 reads GameStop's page data: tiles that only said "Listed" now say In stock / Pre-order. Look
+            # again quietly once, so that switch isn't mistaken for a wave of restocks.
+            self.state["gamestop_rebaseline_1072"] = True
+            for name, st in (self.state.get("targets") or {}).items():
+                if name.startswith("GameStop"):
+                    st["initialized"] = False
         if not self.state.get("alarm_1068"):
             # texts / ntfy used to fire for every urgent alert: now only the queue going live (M, 10/18)
             self.state["alarm_1068"] = True
@@ -1383,12 +1390,12 @@ class Engine:
                 rec["up_before"] = up_before
             elif not rec["live"]:
                 rec.pop("up_before", None)
-            # an announced date on a product that isn't buyable yet -> drop calendar, linked to the product
-            if not x["live"]:
-                self._product_date(x, store, label)
             # copies: anything that's a raffle / drawing -> #drawings, anything PRESALE / pre-order -> #presales
             raffle = x["status"].startswith("Drawing") or is_raffle(x["name"])
             presale = (bool(x.get("presale")) or is_presale(x["name"], x["status"])) and channel_of(store) != "presale"
+            # an announced date on a product that isn't buyable yet (or a pre-order's release date) -> drop calendar
+            if not x["live"] or presale:
+                self._product_date(x, store, label)
             if event and not use_cards:
                 title = f"{event}: {x['name']}{warn}"
                 self._product_alert("urgent" if x["live"] else "normal", title, x, label, extra,
@@ -1406,6 +1413,15 @@ class Engine:
                     self._product_alert("urgent" if x["live"] else "normal", f"🛍️ PRESALE · {event}: {x['name']}{warn}",
                                         x, label, extra, channel="presale", store=store, ping=big, strict=True,
                                         record=False)
+                    rec["presale_posted"] = True
+            if presale and not rec.get("presale_posted") and x["live"]:
+                # a pre-order the store only marks in its page data (GameStop: no "pre-order" in the name) or one
+                # that was already up when we first looked: one quiet copy in #presales
+                rel = re.search(r"Release Date (\d{1,2}/\d{1,2}/\d{4})", x.get("text", ""))
+                self._product_alert("normal", f"🛍️ PRESALE · {label}: {x['name']}{warn}", x, label,
+                                    {**extra, "Releases": rel.group(1) if rel else ""}, channel="presale", store=store,
+                                    ping=False, strict=True, record=False)
+                rec["presale_posted"] = True
             if event:
                 self._watch_alerts(store, x, rec, event)
             changed.append((x, rec, event, big and bool(event)))

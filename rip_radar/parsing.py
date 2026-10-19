@@ -756,6 +756,8 @@ def parse_retail_tiles(html, base_url, store, live_if_price=False):
         tiles = _merge_data_items(tiles, bestbuy_page_items(html))
     elif store == "ace":
         tiles = _merge_data_items(tiles, ace_page_items(html))
+    elif store == "gamestop":
+        tiles = _merge_data_items(tiles, gamestop_page_items(html, base_url))
     if not tiles:
         tiles = title_tiles(soup, base_url, store, live_if_price)
     return tiles
@@ -1183,6 +1185,38 @@ def _merge_data_items(tiles, items):
         merged["text"] = (old.get("text", "") + " " + it.get("text", "")).strip()[:1200]
         by_id[it["id"]] = merged
     return list(by_id.values())
+
+
+def gamestop_page_items(html, base_url="https://www.gamestop.com/"):
+    """GameStop tiles carry their product data in data-gtmdata: availability {available, preorder}, releaseDate
+    "11/13/2026", price {base, sale}. Pre-orders never say so in the name (M, 10/19: GameStop pre-orders weren't
+    reaching #presales) - this is where it shows."""
+    soup = BeautifulSoup(html or "", "html.parser")
+    out, seen = [], set()
+    for tag in soup.find_all(attrs={"data-gtmdata": True}):
+        raw = tag.get("data-gtmdata") or ""
+        if '"availability"' not in raw:
+            continue
+        try:
+            d = json.loads(raw)
+        except ValueError:
+            continue
+        pid = str(d.get("id") or "")
+        if not pid or pid in seen:
+            continue
+        seen.add(pid)
+        av = d.get("availability") or {}
+        pre, avail = bool(av.get("preorder")), bool(av.get("available") or av.get("readyToOrder"))
+        status, live = (("Pre-order", True) if pre and avail else ("In stock", True) if avail else ("Out of stock", False))
+        price = (d.get("price") or {})
+        amount = price.get("sale") or price.get("base")
+        rel = str(d.get("releaseDate") or "")
+        img = (d.get("image") or {}).get("base") or ""
+        item = {"id": pid, "name": str(d.get("name") or "")[:200], "url": urljoin(base_url, d.get("url") or ""),
+                "image": img, "price": f"${amount}" if amount else "", "status": status, "live": live,
+                "presale": pre, "text": f"{status} · Release Date {rel}" if rel else status}
+        out.append({k: v for k, v in item.items() if v not in ("", None) or k in ("live", "presale")})
+    return out
 
 
 BESTBUY_BUTTONS = {"ADD_TO_CART": ("In stock", True), "PRE_ORDER": ("Pre-order", True),

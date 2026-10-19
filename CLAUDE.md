@@ -283,6 +283,14 @@ captchas, and never automates purchases. Keep it that way.
   `disabled: true` in targets.yaml turns a built-in source off: CVS (grid never draws), Crunchyroll cards (store moved to
   crunchyroll.com/store/products/<slug>/<UPC>, no trading-cards section - id regex updated anyway), pokemonrestock
   (a log of past drops). Diagnostics zip: Discord webhook / Twilio account ids in the log are replaced by <hidden>.
+- 1.0.72 (queued): GAMESTOP PRE-ORDERS - names never say "pre-order"; each tile's `data-gtmdata` JSON has
+  availability {available, preorder}, releaseDate "11/27/2026", price {base, sale}, image -> `parsing.gamestop_page_items`
+  merged in `parse_retail_tiles` (status Pre-order / In stock / Out of stock instead of "Listed", `presale` flag, text
+  "Release Date …"). Any live presale product not yet copied gets ONE quiet "🛍️ PRESALE · …" in #presales
+  (`rec["presale_posted"]`, incl. ones already up at the first look); pre-orders' release dates go on the calendar
+  (`_product_date` also for presale). One-time `gamestop_rebaseline_1072` re-initialises GameStop sources so the
+  Listed -> In stock switch isn't read as restocks. CVS -> /shop/brand-shop/p/pokemon. Stale "⏳ checking eBay…" lines
+  are dropped when resale_check is off (`resale_cleanup_1072`).
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT
