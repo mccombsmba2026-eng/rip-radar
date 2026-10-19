@@ -283,7 +283,7 @@ captchas, and never automates purchases. Keep it that way.
   `disabled: true` in targets.yaml turns a built-in source off: CVS (grid never draws), Crunchyroll cards (store moved to
   crunchyroll.com/store/products/<slug>/<UPC>, no trading-cards section - id regex updated anyway), pokemonrestock
   (a log of past drops). Diagnostics zip: Discord webhook / Twilio account ids in the log are replaced by <hidden>.
-- 1.0.72 (queued): GAMESTOP PRE-ORDERS - names never say "pre-order"; each tile's `data-gtmdata` JSON has
+- 1.0.72: GAMESTOP PRE-ORDERS - names never say "pre-order"; each tile's `data-gtmdata` JSON has
   availability {available, preorder}, releaseDate "11/27/2026", price {base, sale}, image -> `parsing.gamestop_page_items`
   merged in `parse_retail_tiles` (status Pre-order / In stock / Out of stock instead of "Listed", `presale` flag, text
   "Release Date …"). Any live presale product not yet copied gets ONE quiet "🛍️ PRESALE · …" in #presales
