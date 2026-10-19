@@ -534,3 +534,10 @@ def test_site_ban_page_pauses_the_site(engine):
     assert sent and sent[0].startswith("⛔ Dick's has blocked your home internet for 12 h")
     engine._fetch(t, {})
     assert len(sent) == 1                                   # said once
+
+
+def test_no_stale_ebay_line_when_lookups_off(engine):
+    settings.update({"resale_check": False})
+    rec = {"name": "Pokémon TCG: Delta Reign Elite Trainer Box", "resale": engine.RESALE_WAIT}
+    engine._attach_resale([({"id": "1"}, rec, "", None)], "target")
+    assert "resale" not in rec

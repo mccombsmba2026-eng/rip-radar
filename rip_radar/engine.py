@@ -117,6 +117,15 @@ class Engine:
                            restart=self.request_restart)
         self.started = datetime.now(CT)
         self.TOPPS_FAST = {"state": "starting", "fails": 0}
+        if not self.state.get("resale_cleanup_1072") and not settings_mod.load().get("resale_check", True):
+            # posts carded before 1.0.61 still said "⏳ checking eBay sold listings…" - those lookups never run now
+            self.state["resale_cleanup_1072"] = True
+            for st in (self.state.get("targets") or {}).values():
+                for bucket in ("items", "products"):
+                    for rec in (st.get(bucket) or {}).values():
+                        if isinstance(rec, dict) and rec.get("resale") in (self.RESALE_WAIT, self.RESALE_FAIL):
+                            rec.pop("resale", None)
+                            rec["resale_cleared"] = True        # its card is re-edited on the next change
         if not self.state.get("alarm_1068"):
             # texts / ntfy used to fire for every urgent alert: now only the queue going live (M, 10/18)
             self.state["alarm_1068"] = True
@@ -1620,6 +1629,10 @@ class Engine:
         if not getattr(self, "resale", None):
             return
         if not self.resale.enabled():
+            # per-product eBay lookups are off (1.0.61): never leave a "checking eBay…" line that won't resolve
+            for _, rec, _, _ in changed:
+                if rec.get("resale") in (self.RESALE_WAIT, self.RESALE_FAIL):
+                    rec.pop("resale", None)
             return
         for x, rec, event, _ in changed:
             name = rec.get("name", "")
