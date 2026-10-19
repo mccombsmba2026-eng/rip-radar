@@ -299,6 +299,19 @@ captchas, and never automates purchases. Keep it that way.
   Events on a #watch card bump it with @everyone (no separate everyone_copy, no separate 👀 `_watch_alerts` post).
   Same for Topps formats on the focus / @everyone list. Without a watch webhook nothing changes. #drawings /
   #presales copies and Mat local restocks still post as before.
+- 1.0.74 TRAFFIC DIET (one home IP got blocked by Pokémon Center, Target, Dick's and eBay within a day at ~645 browser
+  page loads/h): no more 3-browser halving of retail intervals; new intervals in targets.yaml (Target / Walmart
+  Pokémon 300 s, their sports 600 s, Best Buy / Amazon 600-900 s, GameStop 600 / 1200 s, Costco / Sam's / CVS / Walgreens
+  / Ace / B&N / Dick's 1800 s, Hot Topic 1200 s, PC product scans 1200-1800 s, Topps calendar 300 s, sitemap 180 s,
+  product pages 120 s, homepage 900 s, news 600-1800 s, Walmart drawings 300 s) = ~184 page loads/h incl. the PC queue.
+  SITE_BUDGET ~1/3 of before; `_fill_images` 1/run (24 h retry), `stock_pages` default 1, GameStop verify_pages 1.
+  Crunchyroll queue disabled (members-only store, M has no membership). EBAY: any 403 / 429 / bot check ->
+  `ResaleChecker.blocked`: pause 3 h, then 6 / 12 / 24 h (count forgiven after a quiet day), persisted in
+  `state["resale_block"]`; no plain-HTTP second request after a browser answer; price-list retries every 3 h, ≤8 items,
+  never while paused; the daily run skips eBay while paused. DEAD-MAN'S SWITCH: Settings `heartbeat_url`
+  (healthchecks.io ping URL) pinged every 5 min from the scanner loop (`_heartbeat`, own thread); `heartbeat_health`
+  in the health check. SETTINGS BACKUP: Settings → "Back up settings" (`Api.export_settings`: settings.json + marker to
+  the Desktop) / "Restore settings" (`Api.import_settings`: file dialog -> settings.update -> engine.reload).
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

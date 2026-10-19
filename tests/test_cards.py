@@ -948,12 +948,13 @@ def time_now():
 def test_crunchyroll_store_and_queue(engine):
     from rip_radar.notify import channel_of
     assert channel_of("crunchyroll") == "hottopic"
-    q = [t for t in engine.targets() if t.get("track_duration")]
+    q = [t for t in engine.builtin["targets"] if t.get("track_duration")]
     cr = next(t for t in q if "crunchyroll" in t["url"])
+    assert cr.get("disabled") and cr not in engine.targets()      # 1.0.74: members-only store, M has no membership
     assert engine._queue_site(cr) == ("Crunchyroll Store", "crunchyroll-store") and cr["channel"] == "hottopic"
     pc = next(t for t in q if "pokemoncenter" in t["url"])
     assert engine._queue_site(pc) == ("Pokémon Center", "pokemon-center")
-    # 1.0.71: Crunchyroll dropped its trading-cards section - the product scan is off, the queue watch stays
+    # 1.0.71: Crunchyroll dropped its trading-cards section - the product scan is off
     assert not any(t.get("store") == "crunchyroll" and t["type"] == "retail_search" for t in engine.targets())
     from rip_radar.parsing import RETAIL_STORES
     import re as _re

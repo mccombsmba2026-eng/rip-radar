@@ -317,6 +317,11 @@ details summary{cursor:pointer;font-weight:600}
         <p class="hint">Free. A loud phone alarm the moment the Pokémon Center queue goes live (only that). Install the ntfy app, subscribe to a long random topic name, and enter the same name here. Sources → "Test queue alert" sends a test.</p>
         <label>Topic <input type="text" id="sNtfy"></label>
       </details>
+      <details>
+        <summary>If the PC goes down (free)</summary>
+        <p class="hint">If this PC sleeps, crashes or loses internet, Rip Radar can't post anything, and silence looks the same as "nothing dropped". Make a free check at healthchecks.io (Period 5 minutes, Grace 10 minutes), connect it to your email or the ntfy app there, and paste its ping URL here. Rip Radar checks in every 5 minutes; if it misses 10, healthchecks.io alerts you.</p>
+        <label>Ping URL <input type="text" id="sBeat" placeholder="https://hc-ping.com/…"></label>
+      </details>
       <div class="row"><button class="btn primary" id="sSave">Save settings</button><span class="msg" id="sSaveMsg" role="status"></span></div>
 
       <h2>App</h2>
@@ -325,6 +330,8 @@ details summary{cursor:pointer;font-weight:600}
         <button class="btn" data-open="folder">Open data folder</button>
         <button class="btn" data-open="log">Open log</button>
         <button class="btn" id="sDiag">Save diagnostics</button>
+        <button class="btn" id="sBackup">Back up settings</button>
+        <button class="btn" id="sRestore">Restore settings</button>
         <button class="btn danger" id="sQuit">Quit Rip Radar</button>
       </div>
       <p class="msg" id="sUpdMsg" role="status"></p>
@@ -495,7 +502,7 @@ function renderSettings(){
   $("#sStores").innerHTML = Object.entries(S.channels||{}).map(([k,label]) =>
     `<label>${esc(label)} <input type="url" data-hook="${esc(k)}" id="sHook-${esc(k)}" placeholder="optional" value="${esc(hooks[k]||"")}"></label>`).join("");
   $("#sAuto").checked = !!s.start_with_windows; $("#sAutoUpd").checked = s.auto_update !== false;
-  $("#sKeep").checked = !!s.keep_running_when_closed; $("#sBot").value = s.bot_token||""; $("#sBotTrig").value = (s.bot_triggers||[]).join(", "); $("#sBotChan").value = s.bot_channel||""; $("#sBotReply").value = s.bot_reply||""; $("#sNtfy").value = s.ntfy_topic||""; $("#sZip").value = s.zip||""; $("#sMiles").value = s.restock_miles||30;
+  $("#sKeep").checked = !!s.keep_running_when_closed; $("#sBot").value = s.bot_token||""; $("#sBotTrig").value = (s.bot_triggers||[]).join(", "); $("#sBotChan").value = s.bot_channel||""; $("#sBotReply").value = s.bot_reply||""; $("#sNtfy").value = s.ntfy_topic||""; $("#sBeat").value = s.heartbeat_url||""; $("#sZip").value = s.zip||""; $("#sMiles").value = s.restock_miles||30;
   $("#sTwSid").value = tw.account_sid||""; $("#sTwTok").value = tw.auth_token||""; $("#sTwFrom").value = tw.from||""; $("#sTwTo").value = tw.to||"";
   document.querySelectorAll("#sSports input").forEach(i => i.checked = (s.sports||[]).includes(i.value));
   $("#sToppsAll").checked = s.topps_all_products !== false;
@@ -544,7 +551,7 @@ async function saveSettings(quiet){
   await api.save_settings({
     discord_webhook: $("#sHook").value.trim(), discord_webhook_urgent: $("#sHookUrgent").value.trim(),
     webhooks: Object.fromEntries([...document.querySelectorAll("[data-hook]")].map(i => [i.dataset.hook, i.value.trim()])),
-    start_with_windows: $("#sAuto").checked, auto_update: $("#sAutoUpd").checked, keep_running_when_closed: $("#sKeep").checked, bot_token: $("#sBot").value.trim(), bot_triggers: $("#sBotTrig").value.split(",").map(x=>x.trim()).filter(Boolean), bot_channel: $("#sBotChan").value.trim(), bot_reply: $("#sBotReply").value, ntfy_topic: $("#sNtfy").value.trim(), zip: $("#sZip").value.trim(), restock_miles: parseInt($("#sMiles").value)||30,
+    start_with_windows: $("#sAuto").checked, auto_update: $("#sAutoUpd").checked, keep_running_when_closed: $("#sKeep").checked, bot_token: $("#sBot").value.trim(), bot_triggers: $("#sBotTrig").value.split(",").map(x=>x.trim()).filter(Boolean), bot_channel: $("#sBotChan").value.trim(), bot_reply: $("#sBotReply").value, ntfy_topic: $("#sNtfy").value.trim(), heartbeat_url: $("#sBeat").value.trim(), zip: $("#sZip").value.trim(), restock_miles: parseInt($("#sMiles").value)||30,
     sports: sports.length ? sports : ["Baseball","Basketball","Football"], topps_all_products: $("#sToppsAll").checked,
     focus_sets: $("#sFocusSets").value.split("\n").map(x=>x.trim()).filter(Boolean),
     everyone_products: $("#sEveryone").value.split("\n").map(x=>x.trim()).filter(Boolean), open_browser_on_queue: $("#sOpenQueue").checked, keep_awake: $("#sAwake").checked, resale_check: $("#sResale").checked, recap_hour: parseInt($("#sRecap").value),
@@ -601,6 +608,16 @@ $("#sUpd").onclick = async () => {
   refresh();
 };
 $("#sQuit").onclick = () => api.quit_app();
+$("#sBackup").onclick = async () => {
+  const r = await api.export_settings();
+  msg($("#sUpdMsg"), r.ok ? "Backup saved to your Desktop (RipRadar-settings-backup .json). It holds your webhooks and bot token - keep it private (e.g. a USB stick or your own cloud drive)." : r.error, r.ok?"good":"bad");
+};
+$("#sRestore").onclick = async () => {
+  if (!confirm("Restore settings from a backup file? Its webhooks, token and lists replace the ones here.")) return;
+  const r = await api.import_settings();
+  msg($("#sUpdMsg"), r.ok ? "Settings restored. Rip Radar is using them now." : r.error, r.ok?"good":"bad");
+  if (r.ok) { settingsLoaded = false; }
+};
 $("#sDiag").onclick = async () => {
   msg($("#sUpdMsg"),"Saving…");
   const r = await api.save_diagnostics();

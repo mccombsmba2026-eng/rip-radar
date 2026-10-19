@@ -130,6 +130,9 @@ class ResaleChecker:
         self.debug_save = None               # (name, html): the last eBay page goes into Save diagnostics
         self.stats = {"ok": 0, "priced": 0, "fail": 0, "fail_streak": 0, "last_error": "", "last_ok": 0,
                       "via": ""}
+        # 1.0.74: eBay's block survives restarts, so the pause does too (state["resale_block"])
+        blk = state.setdefault("resale_block", {"until": 0, "count": 0, "last": 0})
+        self.stats["paused_until"] = blk.get("until", 0)
         self.cache = state.setdefault("resale", {})
         self.q = queue.PriorityQueue()       # live drops (priority 0) jump ahead of background valuing (1)
         self.on_result = on_result or (lambda key, result: None)
@@ -181,6 +184,24 @@ class ResaleChecker:
 
     BLOCK_PAUSE = 3600          # eBay showed a bot check: no lookups for an hour (retrying straight away makes it worse)
 
+    def blocked(self, why):
+        """eBay refused (403 / 429 / bot check): stop asking for 3 h, then 6, 12, 24 h on repeats (forgiven after
+        a day without one). Every request while blocked tells eBay we're still at it (M's 10/18-19 logs: 403 on
+        every request, browser and plain)."""
+        blk = self.state.setdefault("resale_block", {"until": 0, "count": 0, "last": 0})
+        if time.time() - blk.get("last", 0) > 86400:
+            blk["count"] = 0
+        blk["count"] = blk.get("count", 0) + 1
+        blk["last"] = time.time()
+        hours = min(24, 3 * 2 ** (blk["count"] - 1))
+        blk["until"] = time.time() + hours * 3600
+        self.stats["paused_until"] = blk["until"]
+        self.stats["last_page"] = f"{why} - eBay lookups paused {hours} h"
+        log.info("resale: %s - pausing eBay lookups for %d h", why, hours)
+
+    def paused(self):
+        return time.time() < self.stats.get("paused_until", 0)
+
     def _run(self):
         while True:
             while time.time() < self.stats.get("paused_until", 0):
@@ -226,14 +247,13 @@ class ResaleChecker:
                 low = (html or "").lower()
                 if html and ("pardon our interruption" in low or "/splashui/captcha" in low
                              or "verify yourself" in low):
-                    self.stats["last_page"] = "eBay showed a bot check"
-                    self.stats["paused_until"] = time.time() + self.BLOCK_PAUSE
-                    log.info("resale: eBay bot check - pausing eBay lookups for %d min", self.BLOCK_PAUSE // 60)
+                    self.blocked("eBay showed a bot check")
                     return 403, html, "browser"
                 if html and (any(k in html for k in ("s-item", "s-card", "srp-results")) or RE_ITM.search(html)
                              or "no exact matches found" in low or "results for" in low):
                     return status, html, "browser"
                 self.stats["last_page"] = f"unexpected eBay page ({len(html or '')} bytes)"
+                return (status if status >= 400 else 520), html, "browser"   # no second (plain) request
             except Exception as e:
                 log.info("resale browser: %s", e)
         r = self.s.get(url, timeout=20)
@@ -258,13 +278,15 @@ class ResaleChecker:
         else:
             self._failed(f"eBay HTTP {status}")
             log.info("resale: eBay HTTP %s (%s)", status, how)
+            if status in (403, 429) and not self.paused():
+                self.blocked(f"eBay answered HTTP {status}")
         return res
 
     def health(self):
         """One line for the startup message / status: is eBay answering?"""
         st = self.stats
         if time.time() < st.get("paused_until", 0):
-            return (f"💸 Resale values: ⏸️ eBay showed a bot check - lookups paused until "
+            return (f"💸 Resale values: ⏸️ eBay is blocking this connection - lookups paused until "
                     f"{time.strftime('%I:%M %p', time.localtime(st['paused_until'])).lstrip('0')}")
         if st["fail"] >= 5 and st["fail"] > st["ok"]:
             return (f"💸 Resale values: ❌ eBay is turning lookups away ({st['fail']} failed, {st['ok']} answered · "

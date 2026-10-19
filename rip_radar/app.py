@@ -178,7 +178,7 @@ class Api:
                    "status_every_minutes", "sports", "start_with_windows", "zip", "restock_miles", "topps_all_products",
                    "open_browser_on_queue", "keep_awake", "focus_sets", "everyone_products",
                    "resale_check", "recap_hour", "health_hour", "queue_window", "price_list_hour", "everyone_only_in_watch",
-                   "bot_triggers", "bot_reply", "bot_channel"}
+                   "bot_triggers", "bot_reply", "bot_channel", "heartbeat_url"}
         s = settings.update({k: v for k, v in (changes or {}).items() if k in allowed})
         winsys.set_autostart(bool(s.get("start_with_windows")))
         self._app.engine.reload()
@@ -279,6 +279,47 @@ class Api:
             return {"ok": False, "error": "No update available."}
         threading.Thread(target=self._app.install_update, daemon=True).start()
         return {"ok": True}
+
+    def export_settings(self):
+        """Settings → Back up settings: every webhook, token, focus list and watch term in one file on the Desktop,
+        so a new PC / reinstall is one click (Restore). The file holds secrets - keep it private."""
+        from datetime import datetime
+        out = winsys.desktop_dir() / f"RipRadar-settings-backup-{datetime.now():%Y%m%d-%H%M}.json"
+        try:
+            data = settings.load()
+            data["_ripradar_backup"] = {"version": __version__, "saved": datetime.now().isoformat()}
+            out.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except OSError as e:
+            return {"ok": False, "error": f"Couldn't save: {e}"}
+        winsys.reveal(out)
+        return {"ok": True, "path": str(out)}
+
+    def import_settings(self):
+        """Settings → Restore settings: pick a backup file; its settings replace these (webhooks, tokens, lists)."""
+        try:
+            import webview                    # pywebview 6: FileDialog.OPEN (OPEN_DIALOG is the old name)
+            kind = getattr(getattr(webview, "FileDialog", None), "OPEN", None) or webview.OPEN_DIALOG
+        except ImportError:
+            kind = 10
+        try:
+            picked = self._app.window.create_file_dialog(kind, allow_multiple=False,
+                                                         file_types=("Rip Radar backup (*.json)", "All files (*.*)"))
+        except Exception as e:
+            return {"ok": False, "error": f"Couldn't open the file picker: {e}"}
+        if not picked:
+            return {"ok": False, "error": "No file chosen."}
+        path = picked[0] if isinstance(picked, (list, tuple)) else picked
+        try:
+            data = json.loads(open(path, encoding="utf-8").read())
+        except (OSError, ValueError) as e:
+            return {"ok": False, "error": f"That file isn't a Rip Radar backup ({e})."}
+        if not isinstance(data, dict) or not ("webhooks" in data or "_ripradar_backup" in data):
+            return {"ok": False, "error": "That file isn't a Rip Radar settings backup."}
+        data.pop("_ripradar_backup", None)
+        settings.update(data)
+        winsys.set_autostart(bool(settings.load().get("start_with_windows")))
+        self._app.engine.reload()
+        return {"ok": True, "path": str(path)}
 
     def save_diagnostics(self):
         """Zip what each source last saw + the log to the Desktop, for tuning. Never includes settings/webhooks."""

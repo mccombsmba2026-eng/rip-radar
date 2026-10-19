@@ -621,9 +621,8 @@ class Engine:
                         "alert_title": f"{pre.get('alert', '🚨 PAGE LIVE')}: {p['name']}", "user": True,
                         "channel": pre.get("channel") or store_in(p["url"])})
         for t in out:
-            if t["type"] == "retail_search" and len(getattr(self, "_fetchers", [])) > 1 and t.get("store") != "pokemon":
-                # 3 browsers in parallel: store pages come round about twice as often (never under 2 min)
-                t["interval_seconds"] = max(120, int(t.get("interval_seconds", 300) * 0.5))
+            # 1.0.74 traffic diet: no more "3 browsers = every store twice as often" - one home connection made
+            # ~700 page loads an hour and got blocked by Pokémon Center, Target, Dick's and eBay within a day
             if t["type"] == "topps_calendar":
                 t["sports"] = s.get("sports") or ["Baseball", "Basketball", "Football"]
                 t["all_products"] = s.get("topps_all_products", True)
@@ -714,6 +713,7 @@ class Engine:
                 self.notify.send("system", f"Rip Radar {__version__} started · source check",
                                  desc="\n".join(lines)[:4000])
             self._clock_ticks()
+            self._heartbeat()
             try:
                 self.recap_tick()
                 self.health_tick()
@@ -803,8 +803,9 @@ class Engine:
         return status, final, html
 
     # ------------------------------------------------------------ staying under the radar (one home IP, no proxies)
-    SITE_BUDGET = {"default": 150, "topps.com": 240, "target.com": 150, "walmart.com": 150,
-                   "pokemoncenter.com": 160, "amazon.com": 120}
+    # pages per hour per site (1.0.74: about a third of before; queue + drawings don't count against it)
+    SITE_BUDGET = {"default": 40, "topps.com": 150, "target.com": 40, "walmart.com": 60,
+                   "pokemoncenter.com": 20, "amazon.com": 30, "gamestop.com": 30, "bestbuy.com": 30}
 
     @staticmethod
     def _site(url):
@@ -1430,7 +1431,7 @@ class Engine:
             changed.append((x, rec, event, (big or in_watch) and bool(event)))
         if store == "target":
             self._refresh_target_stock(html, [c for c in changed], st)
-        elif t.get("stock_pages", 2):
+        elif t.get("stock_pages", 1):
             self._refresh_page_stock(t, st, changed)
         self._fill_images(t, st, changed)
         self._attach_resale(changed, store)
@@ -1626,7 +1627,7 @@ class Engine:
         s = settings_mod.load()
         return self._section(f"🏬 In-store restocks · within {s.get('restock_miles', 30)} mi of {s.get('zip', '')}", rows)
 
-    def _fill_images(self, t, st, changed, per_run=2, retry_hours=6):
+    def _fill_images(self, t, st, changed, per_run=1, retry_hours=24):
         """Tiles without a picture: open the product page and take its main image (og:image), a couple per run,
         new / just-changed products first, so every post has a big product picture."""
         now = time.time()
@@ -1713,7 +1714,7 @@ class Engine:
         now = time.time()
         todo = [c for c in changed if c[1].get("live") and (c[2] or now - c[1].get("stock_at", 0) > every)]
         todo.sort(key=lambda c: (not c[2], c[1].get("stock_at", 0)))
-        for x, rec, event, _ in todo[: t.get("stock_pages", 2)]:
+        for x, rec, event, _ in todo[: t.get("stock_pages", 1)]:
             rec["stock_at"] = now
             try:
                 ps, pf, ph = self._fetch({"name": t["name"], "url": x["url"], "browser": t.get("browser")}, st)
@@ -3084,19 +3085,26 @@ class Engine:
         hour = int(settings_mod.load().get("price_list_hour", 8))
         due = hour >= 0 and now.hour >= hour and self.state.get("price_list_day") != now.date().isoformat()
         if not force and not due:
-            # items eBay didn't answer for: ask again every 30 min (in the background, ahead of other valuing)
-            if time.time() - getattr(self, "_price_retry_at", 0) > 1800:
+            # items eBay didn't answer for: ask again every 3 h, 8 at a time, never while eBay is blocking us
+            # (1.0.74: the old every-30-min retry of all 70 kept eBay's block alive all day)
+            if time.time() - getattr(self, "_price_retry_at", 0) > 3 * 3600 and not self.resale.paused():
                 self._price_retry_at = time.time()
+                n = 0
                 for *_, q, _ in self.price_list_items():
                     hit = self.resale.cache.get(self.resale.key(q)) or {}
-                    if hit.get("ok") is False and time.time() - hit.get("at", 0) > 1800:
+                    if hit.get("ok") is False and time.time() - hit.get("at", 0) > 3 * 3600 and n < 8:
                         self.resale.cache.pop(self.resale.key(q), None)
                         self.resale.lookup(q, priority=1, force=True)
+                        n += 1
             if getattr(self, "_prices_dirty", False):         # a late answer: edit today's list
                 self._prices_dirty = False
                 self.prices_board.tick(self._render_prices, force=True)
             return 0
         self.state["price_list_day"] = now.date().isoformat()
+        if self.resale.paused() and not force:
+            # eBay is blocking this connection: don't ask (it only extends the block) - the list says so instead
+            self.prices_board.tick(self._render_prices, force=True)
+            return 0
         pending = []
         for *_, q, _ in self.price_list_items():
             k = self.resale.key(q)
@@ -3202,6 +3210,37 @@ class Engine:
     # ------------------------------------------------------------ daily health check (1.0.62)
     HEALTH_NOTHING_HOURS = 24      # a source that loads but hasn't found a single product for this long gets 🟡
 
+    HEARTBEAT_EVERY = 300
+
+    def _heartbeat(self, force=False):
+        """Dead-man's switch: ping Settings → heartbeat_url (healthchecks.io) every 5 min from the scanner loop. When
+        the PC sleeps / crashes / loses internet the pings stop and THAT service alerts M - the one alert that works
+        when Rip Radar can't send any."""
+        url = str(settings_mod.load().get("heartbeat_url") or "").strip()
+        if not url.startswith("https://"):
+            return False
+        now = time.time()
+        if not force and now - getattr(self, "_beat_at", 0) < self.HEARTBEAT_EVERY:
+            return False
+        self._beat_at = now
+
+        def go():
+            try:
+                r = requests.get(url, timeout=10)
+                self._beat_ok = r.status_code < 400
+            except requests.RequestException as e:
+                self._beat_ok = False
+                log.info("heartbeat: %s", e)
+        threading.Thread(target=go, daemon=True, name="heartbeat").start()
+        return True
+
+    def heartbeat_health(self):
+        if not str(settings_mod.load().get("heartbeat_url") or "").startswith("https://"):
+            return "💓 PC-down alert: off (Settings → If the PC goes down)"
+        ok = getattr(self, "_beat_ok", None)
+        return "💓 PC-down alert: " + ("✅ checking in every 5 min" if ok else "⏳ starting" if ok is None else
+                                        "❌ the ping URL didn't answer - check it in Settings")
+
     def health_tick(self):
         """Once a day (Settings health_hour, 9 AM CT by default): one report card in #app-status."""
         hour = int(settings_mod.load().get("health_hour", 9))
@@ -3262,6 +3301,7 @@ class Engine:
                   self.stock_health(), self.topps_fast_health(), self.resale.health(),
                   f"💸 Price list: {n_priced} of {len(cells)} priced · last run {self.state.get('price_list_day') or 'never'}",
                   f"🤖 Discord bot: {getattr(self.bot, 'state', '') or 'not started'}",
+                  self.heartbeat_health(),
                   f"📣 Alerts in the last 24 h: {n_alerts}"]
         return f"🩺 Daily health check · {now:%a %b} {now.day}", "\n".join(lines)[:4000]
 

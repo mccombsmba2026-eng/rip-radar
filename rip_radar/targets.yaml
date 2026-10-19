@@ -15,7 +15,7 @@ targets:
     channel: [topps_calendar, topps]
     type: topps_calendar
     url: https://www.topps.com/release-calendar
-    interval_seconds: 90
+    interval_seconds: 300
     remind_minutes_before: 15
 
   # Every product topps.com loads (its product sitemaps list them the moment they're added): sealed formats of
@@ -25,7 +25,7 @@ targets:
     channel: topps
     type: topps_sitemap
     url: https://www.topps.com/products/sitemap.xml
-    interval_seconds: 90
+    interval_seconds: 180
     sitemaps: 2
     max_pages_per_run: 4
     hot_seconds: 60
@@ -38,7 +38,7 @@ targets:
     type: topps_products
     times_only: true
     url: https://www.topps.com/release-calendar
-    interval_seconds: 60
+    interval_seconds: 120
     idle_minutes: 15
     max_pages_per_run: 4
 
@@ -46,7 +46,7 @@ targets:
     channel: topps
     type: listing
     url: https://www.topps.com/
-    interval_seconds: 300
+    interval_seconds: 900
     level: normal
     link_pattern: "/(products|pages)/"
     include: [basketball, baseball, football, bowman]
@@ -70,7 +70,7 @@ targets:
     type: dropradar_archive
     url: https://buttondown.com/tcgdropradar/archive/
     rss: [https://buttondown.com/tcgdropradar/rss]
-    interval_seconds: 120
+    interval_seconds: 180
 
   # ===== POKEMON RELEASE DATES -> drop calendar (🎴) =====
   # pokemon.com's monthly "Check Out Every Pokémon TCG Product Release in <Month> <Year>" (this month + next)
@@ -118,6 +118,7 @@ targets:
   # Crunchyroll Store queue (waiting room for big drops) -> #hottopic: @everyone when it's up, a line that keeps
   # counting how long, and the total when it closes. Runs in the queue browser alongside the Pokémon Center one.
   - name: Crunchyroll queue
+    disabled: true   # 1.0.74: the store is members-only (Mega / Ultimate) and M has no membership
     type: keywords
     site: Crunchyroll Store
     url: https://store.crunchyroll.com/
@@ -144,7 +145,7 @@ targets:
     channel: pokemon
     alert_new_listed: true
     verify_pages: 1
-    interval_seconds: 420
+    interval_seconds: 1200
 
   - name: Pokémon Center · Elite Trainer Boxes
     type: retail_search
@@ -155,7 +156,7 @@ targets:
     channel: pokemon
     alert_new_listed: true
     verify_pages: 1
-    interval_seconds: 900
+    interval_seconds: 1800
 
   - name: Pokémon Center · boxed sets
     type: retail_search
@@ -166,7 +167,7 @@ targets:
     channel: pokemon
     alert_new_listed: true
     verify_pages: 1
-    interval_seconds: 900
+    interval_seconds: 1800
 
   # ===== STORES: every Pokémon / sports-card product on their search pages.
   # Pings only when a card product is in stock (new, or back in stock), with picture, price and cart links.
@@ -179,7 +180,7 @@ targets:
     url: https://www.target.com/s?searchTerm=pokemon+trading+cards&sortBy=newest
     browser: true
     channel: target
-    interval_seconds: 240
+    interval_seconds: 300
 
   - name: Target · sports cards
     type: retail_search
@@ -188,7 +189,7 @@ targets:
     url: https://www.target.com/s?searchTerm=sports+trading+cards&sortBy=newest
     browser: true
     channel: target
-    interval_seconds: 300
+    interval_seconds: 600
 
   # Walmart's limited-time drawings (lotteries). Pings when a card item is listed, 15 min before entries
   # open, when they open, and 30 min before they close. Posts in #walmart AND #drawings.
@@ -197,7 +198,7 @@ targets:
     url: https://www.walmart.com/shop/collectibles/draw
     browser: true
     channel: walmart
-    interval_seconds: 120
+    interval_seconds: 300
 
   - name: Walmart · Pokémon cards
     type: retail_search
@@ -206,7 +207,7 @@ targets:
     url: https://www.walmart.com/search?q=pokemon+trading+cards&sort=new&facet=retailer_type%3AWalmart
     browser: true
     channel: walmart
-    interval_seconds: 240
+    interval_seconds: 300
 
   - name: Walmart · sports cards
     type: retail_search
@@ -215,7 +216,7 @@ targets:
     url: https://www.walmart.com/search?q=sports+trading+cards&sort=new&facet=retailer_type%3AWalmart
     browser: true
     channel: walmart
-    interval_seconds: 300
+    interval_seconds: 600
 
   - name: Dick's · Pokémon cards
     type: retail_search
@@ -226,7 +227,7 @@ targets:
     browser: true
     channel: dicks
     verify_pages: 1
-    interval_seconds: 900     # 1.0.71: Dick's blocked M's home IP for 12 h on 10/18 - check gently
+    interval_seconds: 1800     # 1.0.71: Dick's blocked M's home IP for 12 h on 10/18 - check gently
 
   - name: Dick's · sports cards
     type: retail_search
@@ -237,7 +238,7 @@ targets:
     browser: true
     channel: dicks
     verify_pages: 1
-    interval_seconds: 900     # 1.0.71: Dick's blocked M's home IP for 12 h on 10/18 - check gently
+    interval_seconds: 1800     # 1.0.71: Dick's blocked M's home IP for 12 h on 10/18 - check gently
 
   - name: Best Buy · Pokémon cards
     type: retail_search
@@ -246,7 +247,7 @@ targets:
     url: https://www.bestbuy.com/site/searchpage.jsp?st=pokemon+trading+cards&intl=nosplash
     browser: true
     channel: bestbuy
-    interval_seconds: 300
+    interval_seconds: 600
 
   - name: Best Buy · sports cards
     type: retail_search
@@ -255,7 +256,7 @@ targets:
     url: https://www.bestbuy.com/site/searchpage.jsp?st=sports+trading+cards&intl=nosplash
     browser: true
     channel: bestbuy
-    interval_seconds: 300
+    interval_seconds: 900
 
   - name: Amazon · Pokémon cards
     type: retail_search
@@ -266,7 +267,7 @@ targets:
     browser: true
     channel: amazon
     live_if_price: true
-    interval_seconds: 300
+    interval_seconds: 600
 
   - name: Amazon · sports cards
     type: retail_search
@@ -277,7 +278,7 @@ targets:
     browser: true
     channel: amazon
     live_if_price: true
-    interval_seconds: 300
+    interval_seconds: 900
 
   # ===== MORE STORES (each has its own channel; CVS + Walgreens share one). Same rules as above: pings when a
   # Pokémon / sports-card product loads or comes in stock, @everyone for ETBs and UPCs.
@@ -290,7 +291,7 @@ targets:
     browser: true
     channel: costco
     verify_pages: 1
-    interval_seconds: 360
+    interval_seconds: 1800
 
   - name: Costco · sports cards
     type: retail_search
@@ -301,7 +302,7 @@ targets:
     browser: true
     channel: costco
     verify_pages: 1
-    interval_seconds: 420
+    interval_seconds: 1800
 
   - name: Sam's Club · Pokémon cards
     type: retail_search
@@ -310,7 +311,7 @@ targets:
     url: https://www.samsclub.com/s/pokemon%20trading%20cards
     browser: true
     channel: samsclub
-    interval_seconds: 360
+    interval_seconds: 1800
 
   - name: Sam's Club · sports cards
     type: retail_search
@@ -319,7 +320,7 @@ targets:
     url: https://www.samsclub.com/s/sports%20trading%20cards
     browser: true
     channel: samsclub
-    interval_seconds: 420
+    interval_seconds: 1800
 
   - name: CVS · trading cards
     type: retail_search
@@ -331,7 +332,7 @@ targets:
     browser: true
     channel: pharmacy
     verify_pages: 1
-    interval_seconds: 900
+    interval_seconds: 1800
 
   - name: Walgreens · trading cards
     type: retail_search
@@ -341,7 +342,7 @@ targets:
     browser: true
     channel: pharmacy
     verify_pages: 1
-    interval_seconds: 360
+    interval_seconds: 1800
 
   - name: Ace Hardware · Pokémon cards
     type: retail_search
@@ -351,7 +352,7 @@ targets:
     browser: true
     channel: ace
     verify_pages: 1
-    interval_seconds: 300
+    interval_seconds: 1800
 
   - name: Ace Hardware · trading card games
     type: retail_search
@@ -361,7 +362,7 @@ targets:
     browser: true
     channel: ace
     verify_pages: 1
-    interval_seconds: 420
+    interval_seconds: 1800
 
   # B&N's Pokémon pages are books / LEGO / DVDs (it doesn't sell Pokémon cards online), so it has ONE scan:
   # the collectible-card-games collection, keeping Pokémon and sports cards from it.
@@ -374,7 +375,7 @@ targets:
     browser: true
     channel: barnes
     verify_pages: 1
-    interval_seconds: 420
+    interval_seconds: 1800
 
   - name: GameStop · Pokémon cards
     type: retail_search
@@ -384,8 +385,8 @@ targets:
     url: https://www.gamestop.com/search/?q=pokemon%20trading%20card%20game
     browser: true
     channel: gamestop
-    verify_pages: 3
-    interval_seconds: 300
+    verify_pages: 1
+    interval_seconds: 600
 
   - name: GameStop · sports cards
     type: retail_search
@@ -395,8 +396,8 @@ targets:
     url: https://www.gamestop.com/search/?q=sports%20trading%20cards
     browser: true
     channel: gamestop
-    verify_pages: 3
-    interval_seconds: 420
+    verify_pages: 1
+    interval_seconds: 1200
 
   - name: Hot Topic · sports cards
     type: retail_search
@@ -407,7 +408,7 @@ targets:
     browser: true
     channel: hottopic
     verify_pages: 1
-    interval_seconds: 300
+    interval_seconds: 1200
 
   # Collector Store (Shopify): the coming-soon / pre-order list -> #presales. Read from the collection's own
   # products.json (small, has availability + price + a real add-to-cart link), so no browser is needed.
@@ -420,7 +421,7 @@ targets:
     channel: presale
     alert_new_listed: true
     stock_pages: 0
-    interval_seconds: 180
+    interval_seconds: 300
 
   # Crunchyroll Store (shares the Hot Topic channel + webhook). Sells Pokémon TCG, no sports cards: one scan of its
   # trading-cards collection (search is robots-blocked), plus a queue watcher like Pokémon Center's.
@@ -446,14 +447,14 @@ targets:
     browser: true
     channel: hottopic
     verify_pages: 1
-    interval_seconds: 360
+    interval_seconds: 1200
 
   # ===== NEWS + REDDIT (raffle announcements and drop times anywhere) =====
   - name: News · Walmart Pokémon drawings
     type: feed
     route_by_store: true
     url: https://news.google.com/rss/search?q=walmart+pokemon+(drawing+OR+lottery+OR+raffle)+when:2d&hl=en-US&gl=US&ceid=US:en
-    interval_seconds: 180
+    interval_seconds: 600
     category: Pokémon
     must_have: [drawing, lottery, raffle, entry, enter]
     urgent_if: ["live now", "is live", "now open", "open now", "starts today", "today at", "tonight"]
@@ -462,7 +463,7 @@ targets:
     type: feed
     route_by_store: true
     url: https://news.google.com/rss/search?q=pokemon+(raffle+OR+drawing+OR+lottery+OR+invite)+(%2230th+Celebration%22+OR+%22Delta+Reign%22+OR+%22elite+trainer%22)+when:2d&hl=en-US&gl=US&ceid=US:en
-    interval_seconds: 180
+    interval_seconds: 600
     category: Pokémon
     must_have: [raffle, drawing, lottery, invite, entry, queue, pre-order, preorder, drop]
     urgent_if: ["live now", "is live", "now open", "open now", "starts today", "today at", "tonight"]
@@ -473,7 +474,7 @@ targets:
     type: feed
     route_by_store: true
     url: https://www.pokebeach.com/feed
-    interval_seconds: 300
+    interval_seconds: 900
     category: Pokémon
     must_have: [raffle, drawing, lottery, invite, invitation, early access]
     urgent_if: ["live now", "is live", "now open", "open now", "starts today", "today at", "tonight"]
@@ -482,7 +483,7 @@ targets:
     type: feed
     route_by_store: true
     url: https://news.google.com/rss/search?q=%22pokemon+center%22+(queue+OR+preorder+OR+%22pre-order%22+OR+restock+OR+drop)+when:2d&hl=en-US&gl=US&ceid=US:en
-    interval_seconds: 180
+    interval_seconds: 600
     category: Pokémon
     must_have: [queue, preorder, pre-order, restock, drop, live]
     urgent_if: ["live now", "is live", "queue is", "now open", "right now"]
@@ -491,7 +492,7 @@ targets:
     type: feed
     route_by_store: true
     url: https://news.google.com/rss/search?q=pokemon+cards+(target+OR+amazon+OR+%22best+buy%22)+(drop+OR+invite+OR+raffle+OR+drawing+OR+restock)+when:2d&hl=en-US&gl=US&ceid=US:en
-    interval_seconds: 240
+    interval_seconds: 900
     category: Pokémon
     must_have: [drop, invite, raffle, drawing, restock, queue, release]
     exclude: [review, "price guide"]
@@ -500,14 +501,14 @@ targets:
     type: feed
     route_by_store: true
     url: https://news.google.com/rss/search?q=%22dick%27s+sporting+goods%22+(pokemon+OR+topps+OR+%22trading+cards%22)+(raffle+OR+drawing+OR+entry+OR+release+OR+drop)+when:3d&hl=en-US&gl=US&ceid=US:en
-    interval_seconds: 240
+    interval_seconds: 1800
     must_have: [raffle, drawing, entry, release, drop, enter]
 
   - name: News · Topps preorders & drops
     type: feed
     route_by_store: true
     url: https://news.google.com/rss/search?q=topps+(preorder+OR+%22pre-order%22+OR+drawing+OR+%22release+date%22+OR+%22on+sale%22)+(basketball+OR+baseball+OR+football+OR+bowman)+when:2d&hl=en-US&gl=US&ceid=US:en
-    interval_seconds: 240
+    interval_seconds: 900
     must_have: [preorder, pre-order, drawing, release, sale, drop]
     exclude: [panini, "upper deck", hockey, soccer]
 

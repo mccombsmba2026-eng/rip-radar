@@ -541,3 +541,15 @@ def test_no_stale_ebay_line_when_lookups_off(engine):
     rec = {"name": "Pokémon TCG: Delta Reign Elite Trainer Box", "resale": engine.RESALE_WAIT}
     engine._attach_resale([({"id": "1"}, rec, "", None)], "target")
     assert "resale" not in rec
+
+
+def test_heartbeat_pings_every_5_min(engine, monkeypatch):
+    import rip_radar.engine as eng
+    hits = []
+    monkeypatch.setattr(eng.requests, "get", lambda url, timeout=10: hits.append(url) or type("R", (), {"status_code": 200})())
+    assert engine._heartbeat() is False                         # no URL set: nothing
+    settings.update({"heartbeat_url": "https://hc-ping.com/abc"})
+    assert engine._heartbeat() is True and engine._heartbeat() is False   # once per 5 min
+    import time as _t
+    _t.sleep(0.2)
+    assert hits == ["https://hc-ping.com/abc"] and "✅" in engine.heartbeat_health()
