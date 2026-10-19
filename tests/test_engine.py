@@ -504,3 +504,17 @@ def test_phone_alarm_only_for_queue(engine, monkeypatch):
         v.encode("latin-1")
     import requests as _rq
     _rq.Request("POST", "https://ntfy.sh/rr-test", headers=ntfy[0]["headers"], data=ntfy[0]["data"]).prepare()
+
+
+def test_dropradar_falls_back_to_browser(engine):
+    import requests as _rq
+
+    class CutOff:
+        def get(self, url, browser=False):
+            if not browser:
+                raise _rq.ConnectionError("Remote end closed connection without response")
+            return 200, url, ARCHIVE
+    engine.fetcher = CutOff()
+    t = {"name": "TCG Drop Radar posts", "type": "dropradar_archive", "url": "https://buttondown.com/tcgdropradar/archive/",
+         "rss": ["https://buttondown.com/tcgdropradar/rss"]}
+    assert engine.check_dropradar_archive(t, {}, True)[0] == "ok (2 posts)"

@@ -1117,7 +1117,14 @@ class Engine:
 
     def check_feed(self, t, st, first):
         """News / Reddit RSS: new posts about raffles, drawings, invites, queues or drop times."""
-        status, final, body = self.fetcher.get(t["url"])
+        try:
+            status, final, body = self.fetcher.get(t["url"])
+        except Exception as e:
+            # some sites cut Python's requests off ("Remote end closed connection") - one look via the browser
+            log.info("%s: %s - trying the browser", t["name"], e)
+            status, final, body = self.fetcher.get(t["url"], True)
+            if not re.search(r"<(item|entry)\b", body or "", re.I):
+                return f"error: {type(e).__name__} (site cut the connection)", 0
         if status >= 400:
             return ("blocked" if status in (403, 429) else "error"), status
         feed = feedparser.parse(body)
@@ -2508,7 +2515,11 @@ class Engine:
         stock -> the store's channel. Card-collecting articles (pulls, prices) are skipped."""
         posts, status = {}, 0
         for url in t.get("rss", []):
-            status, final, body = self.fetcher.get(url, False)
+            try:
+                status, final, body = self.fetcher.get(url, False)
+            except Exception as e:          # M's PC 10/18: "Remote end closed connection" -> use the browser below
+                log.info("%s RSS: %s", t["name"], e)
+                continue
             low_body = (body or "").lower()
             if status < 400 and ("<item" in low_body or "<entry" in low_body):
                 for e in feedparser.parse(body).entries:
@@ -2517,7 +2528,12 @@ class Engine:
                 if posts:
                     break
         if not posts:
-            status, final, html = self._fetch(t, st)
+            try:
+                status, final, html = self._fetch(t, st)
+            except Exception as e:          # plain request cut off: the hidden browser reads the archive page
+                log.info("%s: %s - trying the browser", t["name"], e)
+                st["auto_browser"] = True
+                status, final, html = self.fetcher.get(t["url"], True)
             if looks_blocked(status, html):
                 return "blocked", status
             if status >= 400:

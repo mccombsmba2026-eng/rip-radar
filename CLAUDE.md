@@ -260,6 +260,9 @@ captchas, and never automates purchases. Keep it that way.
   New post with drop words (`RE_DROP_POST`) -> `_dropradar_post`: "Pokémon Center … queue" = second opinion on our
   queue check -> #pokemon-queue, @everyone (#watch) only if our checker hasn't seen a queue in the last hour; drawing /
   raffle / invite -> store channel + #drawings (@everyone for ETB/UPC); restock / loaded -> store channel. Articles skipped.
+  1.0.70: on M's PC buttondown + PokeBeach cut plain Python requests ("Remote end closed connection") -> the RSS try is
+  wrapped, the archive falls back to the hidden browser (sticky `auto_browser`); `check_feed` retries once via the
+  browser and only parses it if it holds <item>/<entry>.
 - 1.0.68 PHONE ALARM FOR THE QUEUE: `Notifier.send(alarm=True)` = also a Twilio text and a ntfy push (Priority max,
   "🚨 QUEUE IS UP"). Only the Pokémon Center queue going live (`_track_queue`), the TCG Drop Radar queue post when our
   checker missed it, and Sources → "Test queue alert" are alarms. Settings `sms_for` / `ntfy_for` default ["queue"]
