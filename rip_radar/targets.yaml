@@ -322,15 +322,16 @@ targets:
     interval_seconds: 420
 
   - name: CVS · trading cards
-    disabled: true   # 1.0.71: CVS's search never draws its product grid for the scanner (10/18 diagnostics: an empty grid only)
     type: retail_search
     store: cvs
     products: cards
-    url: https://www.cvs.com/search?searchTerm=trading%20cards
+    # 1.0.72: CVS's own Pokémon brand page (13 products on 10/18: booster packs, tins, 30th Celebration Knockout
+    # Collection) - its search grid never drew for the scanner
+    url: https://www.cvs.com/shop/brand-shop/p/pokemon
     browser: true
     channel: pharmacy
     verify_pages: 1
-    interval_seconds: 360
+    interval_seconds: 900
 
   - name: Walgreens · trading cards
     type: retail_search
