@@ -171,11 +171,14 @@ class Notifier:
         if s.get("ntfy_topic") and wants("ntfy_for", ["queue"]):
             try:
                 requests.post(f"https://ntfy.sh/{s['ntfy_topic']}", data=f"{title}\n{url}".encode("utf-8"),
-                              headers={"Click": url, "Title": "Rip Radar" if not alarm else "🚨 QUEUE IS UP",
+                              # header values must be plain ASCII (an emoji here crashed the 1.0.68 alarm) -
+                              # the 🚨 comes from the "rotating_light" tag instead
+                              headers={"Click": url, "Title": "Rip Radar" if not alarm else "QUEUE IS UP - Pokemon Center",
                                        "Priority": "max" if alarm else ("high" if level == "urgent" else "default"),
                                        "Tags": "rotating_light" if alarm else "bell"}, timeout=15)
-            except requests.RequestException as e:
+            except Exception as e:                       # never let the phone alarm stop the text below
                 log.warning("ntfy failed: %s", e)
+                self.last_ntfy_error = str(e)[:160]
         tw = s.get("twilio") or {}
         if all(tw.get(k) for k in ("account_sid", "auth_token", "from", "to")) and wants("sms_for", ["queue"]):
             try:
@@ -188,7 +191,7 @@ class Notifier:
                     self.last_sms_error = f"HTTP {r.status_code}: {r.text[:160]}"
                 else:
                     self.last_sms_error = ""
-            except requests.RequestException as e:
+            except Exception as e:
                 log.warning("Twilio failed: %s", e)
                 self.last_sms_error = str(e)[:160]
         return all(results) if results else False

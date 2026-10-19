@@ -264,7 +264,9 @@ captchas, and never automates purchases. Keep it that way.
   "🚨 QUEUE IS UP"). Only the Pokémon Center queue going live (`_track_queue`), the TCG Drop Radar queue post when our
   checker missed it, and Sources → "Test queue alert" are alarms. Settings `sms_for` / `ntfy_for` default ["queue"]
   (= alarms only; "urgent" / "all" widen it); one-time migration `alarm_1068` turns an old ["urgent"] sms_for into
-  ["queue"]. `notify.last_sms_error` keeps Twilio's last refusal.
+  ["queue"]. `notify.last_sms_error` keeps Twilio's last refusal. 1.0.69: HTTP header values must be latin-1 - the
+  1.0.68 ntfy "Title" had 🚨 and raised UnicodeEncodeError (not a RequestException), killing the alarm AND the text
+  after Discord had posted. Titles are ASCII now (emoji via ntfy `Tags`), and both phone sends catch every Exception.
 - Captcha detection judges VISIBLE text (+ captcha iframes) only: normal pages load Imperva / reCAPTCHA scripts too.
   3 checks in a row before a 🛡️ post.
 - Store channels (target, walmart, dicks, amazon, bestbuy, pokemon, + the stores above) = ONE self-editing message PER PRODUCT

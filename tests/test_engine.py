@@ -500,3 +500,7 @@ def test_phone_alarm_only_for_queue(engine, monkeypatch):
     ntfy = [kw for u, kw in posts if "ntfy.sh/rr-test" in u]
     sms = [kw for u, kw in posts if "api.twilio.com" in u]
     assert ntfy and ntfy[0]["headers"]["Priority"] == "max" and sms and "QUEUE IS LIVE" in sms[0]["data"]["Body"]
+    for v in ntfy[0]["headers"].values():          # HTTP headers must be latin-1 (an emoji crashed 1.0.68's alarm)
+        v.encode("latin-1")
+    import requests as _rq
+    _rq.Request("POST", "https://ntfy.sh/rr-test", headers=ntfy[0]["headers"], data=ntfy[0]["data"]).prepare()
